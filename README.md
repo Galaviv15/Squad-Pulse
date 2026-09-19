@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Early scaffolding (Phase 0 of the roadmap below). No code has shipped yet — this README exists to give Claude Code (and anyone else) full context before the first line is written.
+**Status:** Early scaffolding (Phase 0 of the roadmap below). The backend, frontend and scraper skeletons exist (empty modules, tooling, smoke tests); no feature code has shipped yet.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -26,7 +26,8 @@ squadpulse/
 │       ├── squad/                    # Players, roster
 │       ├── tactics/                  # Tactical board (Canvas backend)
 │       ├── training/                 # Training calendar & sessions
-│       ├── scrapingintegration/      # Talks to the scraper worker
+│       ├── match/                    # League table, fixtures, lineups (domain data)
+│       ├── scrapingintegration/      # Talks to the scraper worker, feeds match
 │       └── common/                   # Shared: clubId enforcement, error handling, etc.
 ├── frontend/                         # React 19 + TypeScript + Vite + Tailwind
 ├── scraper/                          # Node.js worker (Playwright/Cheerio)
@@ -79,6 +80,15 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 | 4 | Tactical board (Konva.js) |
 | 5 | Scraping service (Node worker, manual/Cron trigger — no message queue yet) |
 | 6+ | Hardening: full RBAC, multi-club load testing, monitoring, deployment |
+
+## Local development
+
+Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
+
+1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET` and `PASSWORD_PEPPER` (at least 32 characters each — the backend refuses to start otherwise).
+2. `docker compose up -d` — MongoDB + Redis.
+3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
+4. Frontend: `cd frontend && npm install && npm run dev`. Checks: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
 
 ## Working with Claude Code
 
