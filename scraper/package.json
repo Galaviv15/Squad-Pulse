@@ -1,0 +1,14 @@
+{
+  "name": "squadpulse-scraper",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Scrapes football.org.il for league table, fixtures, and lineups (see docs/spec.md section 07). Not implemented yet — Phase 5 on the roadmap.",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.2",
+    "cheerio": "^1.0.0"
+  }
+}

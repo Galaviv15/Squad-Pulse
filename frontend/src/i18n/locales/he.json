@@ -1,0 +1,7 @@
+{
+  "app": {
+    "name": "SquadPulse",
+    "welcome": "ברוך הבא ל-SquadPulse",
+    "phaseNote": "שלב 0 — שלד הפרויקט. התוכנית המלאה נמצאת ב-docs/spec.md."
+  }
+}
