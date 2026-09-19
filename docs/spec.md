@@ -172,7 +172,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 
 - **Branches:** `feature/KAN-123-short-desc` / `fix/KAN-124-...` — the ticket number always goes in the branch name.
 - **Commits:** Conventional Commits — `feat(squad): add player creation endpoint (KAN-12)`.
-- **PRs:** one ticket = one PR into main, even when working solo — it forces CI to run and leaves a real review history.
+- **PRs:** one ticket = one PR into master, even when working solo — it forces CI to run and leaves a real review history.
 - **Jira workflow:** Backlog → To Do → In Progress → In Review → Done.
 - **Proposed Epic structure:** Auth & Roles · Squad Management · Tactical Board · Training · Match & Scraping Integration · DevOps & Infra.
 

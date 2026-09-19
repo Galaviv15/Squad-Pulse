@@ -1,10 +1,10 @@
-w# SquadPulse
+# SquadPulse
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
 **Status:** Early scaffolding (Phase 0 of the roadmap below). No code has shipped yet — this README exists to give Claude Code (and anyone else) full context before the first line is written.
 
-**Full spec:** [SquadPulse — full technical spec](https://claude.ai/artifact/WYrcuqFp92aBBwsEZvseRt) *(private artifact — opens with the owner's claude.ai account)*
+**Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
 **Jira project:** `squadpulse.atlassian.net`, project key **`KAN`**
 
@@ -51,7 +51,7 @@ Pool model: shared collections across all clubs, every document tagged with `clu
 
 ## Language
 
-Hebrew is the primary and only supported UI language at launch (RTL-first, via an i18n library from day one — don't hardcode strings). Exception: football terminology already used in English by Israeli coaches — position codes (`GK`, `CB`, `CDM`, ...) and formation notation (`4-3-3`) — stays in English everywhere, including the tactical board. Full detail in spec section 01.
+Hebrew is the primary and only supported UI language at launch (RTL-first, via an i18n library from day one — don't hardcode strings). Exception: football terminology already used in English by Israeli coaches — position codes (`GK`, `CB`, `DM`, ...) and formation notation (`4-3-3`) — stays in English everywhere, including the tactical board. Full detail in spec section 01.
 
 ## Security
 
@@ -65,7 +65,7 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 
 - **Branches:** `feature/KAN-123-short-desc` / `fix/KAN-124-...` — always include the ticket key.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) with the ticket key, e.g. `feat(squad): add player creation endpoint (KAN-12)`.
-- **PRs:** one ticket = one PR into `main`, even solo — keeps CI as a real gate and leaves a review trail.
+- **PRs:** one ticket = one PR into `master`, even solo — keeps CI as a real gate and leaves a review trail.
 - **Jira workflow:** Backlog → To Do → In Progress → In Review → Done. GitHub is connected to Jira, so branches/commits/PRs referencing a ticket key show up automatically on that ticket.
 
 ## Roadmap
