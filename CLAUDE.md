@@ -6,7 +6,7 @@ This file is auto-loaded as standing context for every Claude Code session in th
 
 SquadPulse is a Hebrew-first (RTL) web platform for adult football clubs to manage squad, tactics, training, and match data from one place. Multi-club from day one, fully isolated per club. It's also a deliberate exercise in professional engineering practice: real Git workflow, Jira-driven planning, security, testing, and deployment — done properly, not skipped because it's a side project.
 
-**Status:** Phase 0 (project skeleton). No code has shipped yet.
+**Status:** Phase 0 (project skeleton). The backend, frontend and scraper skeletons exist (empty modules, tooling, smoke tests) — no feature code has shipped yet.
 **Jira:** `squadpulse.atlassian.net`, project key `KAN`.
 **Full spec:** `docs/spec.md` in this repo — always read that (not the old private artifact link) for anything beyond this summary.
 
@@ -14,10 +14,11 @@ SquadPulse is a Hebrew-first (RTL) web platform for adult football clubs to mana
 
 1. **Ask before doing.** Before making a change with real consequences — creating/editing Jira issues, pushing commits, opening PRs, touching CI/deploy config, deleting anything — explain what you're about to do and wait for confirmation. Don't chain multiple actions without checking in. This applies until Gal says otherwise.
 2. **English in code, Hebrew in product.** All code, comments, commit messages, branch names, Jira issues, and docs (including this file and `docs/spec.md`) are in English. The end-user-facing UI is in Hebrew. Never mix these up.
-3. **Exception — football terms stay in English in the UI too.** Position codes (`GK`, `CB`, `CDM`, ...) and formation notation (`4-3-3`) are shown as-is in English even in the Hebrew UI — see spec section 01. Don't "fix" this by translating them.
+3. **Exception — football terms stay in English in the UI too.** Position codes (`GK`, `CB`, `DM`, ...) and formation notation (`4-3-3`) are shown as-is in English even in the Hebrew UI — see spec section 01. Don't "fix" this by translating them.
 4. **`clubId` isolation is the most safety-critical thing in this codebase.** Every query that touches tenant data must go through the central `clubId`-filtering layer in the `common` module (see spec section 03). Any PR touching data access should be checked against this specifically.
 5. **Nothing secret goes into git.** Passwords, the Argon2id pepper, API keys, tokens — env vars / secrets manager only. Never commit them, never hardcode them, never put them in Jira or docs either.
 6. **i18n from day one.** All UI strings go through the i18n library, never hardcoded into components, even though there's currently only one supported language (Hebrew).
+7. **Keep the docs in sync, in the same commit.** When a change affects architecture, module structure, setup/run steps, tooling or dependency versions, or conventions, update `README.md` and this file in that same commit — and re-check them against the change before committing. `docs/spec.md` is Gal's design document: don't edit it silently; if a change makes it out of date, flag exactly what and where, and let Gal decide.
 
 ## Architecture at a glance
 
@@ -31,7 +32,8 @@ squadpulse/
 │       ├── squad/                    # Players, roster
 │       ├── tactics/                  # Tactical board (Canvas backend)
 │       ├── training/                 # Training calendar & sessions
-│       ├── scrapingintegration/      # Talks to the scraper worker
+│       ├── match/                    # League table, fixtures, lineups (domain data)
+│       ├── scrapingintegration/      # Talks to the scraper worker, feeds match
 │       └── common/                   # Shared: clubId enforcement, error handling, etc.
 ├── frontend/                         # React 19 + TypeScript + Vite + Tailwind
 ├── scraper/                          # Node.js worker (Playwright/Cheerio)
