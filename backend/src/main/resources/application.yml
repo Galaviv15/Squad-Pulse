@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: squadpulse-backend
+  # Local dev convenience: load the repo-root .env (git-ignored) so the backend sees the same
+  # values docker-compose uses, whether it's started from backend/ or from the repo root.
+  # Optional, so CI / production (real env vars) are unaffected.
+  config:
+    import:
+      - "optional:file:../.env[.properties]"
+      - "optional:file:./.env[.properties]"
+  # Boot 4 property; the old spring.data.mongodb.uri is deprecated at error level.
+  mongodb:
+    uri: ${MONGODB_URI}
+
+server:
+  port: 8080
+
+# App-specific config — real values come from environment variables / a secrets manager,
+# never hardcoded here (see docs/spec.md section 10, CLAUDE.md standing rule 5).
+# Deliberately no defaults: SecurityProperties validates these at startup, so a missing
+# secret fails fast instead of silently running with an empty JWT secret or pepper.
+squadpulse:
+  security:
+    jwt-secret: ${JWT_SECRET:}
+    password-pepper: ${PASSWORD_PEPPER:}
