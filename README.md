@@ -1,4 +1,4 @@
-# SquadPulse
+w# SquadPulse
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
