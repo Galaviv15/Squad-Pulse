@@ -44,7 +44,7 @@ squadpulse/
 | Database | MongoDB (primary data), Redis (cache, rate limiting, refresh-token blacklist) |
 | Scraper | Node.js, Playwright/Cheerio |
 | Auth | Stateless JWT (Access + Refresh in HttpOnly cookie), Argon2id password hashing + a pepper (env var, never committed) |
-| CI | GitHub Actions (lint, test, build on every push — no CD yet) |
+| CI | GitHub Actions (lint, test, build on PRs to `master` and pushes to `master` — no CD yet) |
 
 ## Multi-tenancy
 
@@ -68,6 +68,15 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) with the ticket key, e.g. `feat(squad): add player creation endpoint (KAN-12)`.
 - **PRs:** one ticket = one PR into `master`, even solo — keeps CI as a real gate and leaves a review trail.
 - **Jira workflow:** Backlog → To Do → In Progress → In Review → Done. GitHub is connected to Jira, so branches/commits/PRs referencing a ticket key show up automatically on that ticket.
+
+## CI
+
+One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. Two independent jobs run in parallel:
+
+- **`backend-ci`** — JDK 21 (Temurin): `./mvnw spotless:check`, then `./mvnw verify`.
+- **`frontend-ci`** — Node 22: `npm ci`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`.
+
+No Docker build, CD, or Mongo/Redis service containers yet (revisit when the first Testcontainers-based tests land in Phase 1). Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches).
 
 ## Roadmap
 
