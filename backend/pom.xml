@@ -74,6 +74,15 @@
       <artifactId>testcontainers-mongodb</artifactId>
       <scope>test</scope>
     </dependency>
+
+    <!-- Enforces at build time that no club-scoped repository declares an unscoped derived query
+         method (see docs/spec.md section 03, CLAUDE.md standing rule 4). -->
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>1.5.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
