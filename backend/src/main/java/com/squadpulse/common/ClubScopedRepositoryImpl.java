@@ -21,10 +21,11 @@ import org.springframework.data.support.PageableExecutionUtils;
  * {@link ClubContext} — into every query, so no repository method can accidentally return or mutate
  * another club's data.
  *
- * <p>Registered globally as the {@code repositoryBaseClass} for every Spring Data MongoDB
- * repository in this application (see {@link MongoRepositoryConfig}), so any repository extending
- * {@code MongoRepository<T, ID>} for a {@link ClubScopedEntity} gets this behavior automatically,
- * with no per-repository opt-in.
+ * <p>Used as the base class for every Spring Data MongoDB repository of a {@link ClubScopedEntity}
+ * in this application (see {@link ClubScopedRepositoryFactory}), so any repository extending {@code
+ * MongoRepository<T, ID>} for a {@link ClubScopedEntity} gets this behavior automatically, with no
+ * per-repository opt-in. The only repositories built without it are those for an entity explicitly
+ * marked {@link NotClubScoped}.
  *
  * <p>{@link Example}-based query methods are intentionally not club-scoped (composing a {@code
  * clubId} criterion into an arbitrary {@link Example} probe isn't a straightforward Spring Data

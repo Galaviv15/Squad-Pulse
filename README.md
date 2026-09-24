@@ -52,6 +52,8 @@ Pool model: shared collections across all clubs, every document tagged with `clu
 
 Custom repository methods bypass that layer, so an ArchUnit test fails the build unless each one has `ClubId` in its name. The only exception is a method explicitly annotated `@GloballyScoped` — reserved for lookups by a system-wide unique value that must run before any club context exists (today: `UserRepository.findByEmail`, for login). Each use should be reviewed on its own merits.
 
+Every repository's entity must either extend `ClubScopedEntity` or be explicitly annotated `@NotClubScoped` — the app refuses to start otherwise, so forgetting the base class on tenant data fails loudly. `@NotClubScoped` is only for data no club owns; today that's `Club` itself, the tenant root.
+
 ## Language
 
 Hebrew is the primary and only supported UI language at launch (RTL-first, via an i18n library from day one — don't hardcode strings). Exception: football terminology already used in English by Israeli coaches — position codes (`GK`, `CB`, `DM`, ...) and formation notation (`4-3-3`) — stays in English everywhere, including the tactical board. Full detail in spec section 01.
@@ -96,10 +98,27 @@ No Docker build, CD, or Mongo/Redis service containers yet (revisit when the fir
 
 Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
 
-1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET` and `PASSWORD_PEPPER` (at least 32 characters each — the backend refuses to start otherwise).
-2. `docker compose up -d` — MongoDB + Redis.
+1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET`, `PASSWORD_PEPPER` and `OWNER_BOOTSTRAP_SECRET` (at least 32 characters each, all different — the backend refuses to start otherwise; `OWNER_BOOTSTRAP_SECRET` is only required by the bootstrap task below).
+2. `docker compose up -d` — MongoDB + Redis. MongoDB runs as a single-node replica set (`rs0`), since MongoDB only supports multi-document transactions on a replica set; the healthcheck initiates it on first start. Keep `directConnection=true` in `MONGODB_URI`.
 3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
 4. Frontend: `cd frontend && npm install && npm run dev`. Checks: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
+
+### Bootstrapping a new club
+
+Only the system owner can create a club, together with its initial Club Manager (`CLUB_MANAGER` / `ADMIN`) — see spec section 09. There's no endpoint for this: it's a one-off run of the backend under the `bootstrap` profile, which starts no web server (so it can run alongside the real one), creates both documents in one transaction, and exits (code `0` on success, `1` otherwise). It's gated by the owner secret, not by RBAC: you're prompted for it, and it's compared with `OWNER_BOOTSTRAP_SECRET` (which only the `bootstrap` profile loads — a normal server never binds it). With a missing or wrong secret nothing is written.
+
+```sh
+cd backend && ./mvnw package -DskipTests
+java -jar target/squadpulse-backend-0.1.0-SNAPSHOT.jar --spring.profiles.active=bootstrap \
+  --club-name="Club name" \
+  --manager-email=manager@example.com \
+  --manager-full-name="Full Name" \
+  --manager-date-of-birth=1985-03-01   # optional, yyyy-MM-dd
+```
+
+It then prompts (no echo) for the owner secret and, only if that's right, for the Club Manager's initial password, twice. Secrets are never accepted as arguments — those are visible to other local users (e.g. via `ps`) and end up in shell history — so `--owner-secret` / `--manager-password` are rejected outright. Run it directly in a terminal: prompting needs one, so it refuses to run through a pipe, `./mvnw spring-boot:run` or an IDE run configuration.
+
+In production, give `OWNER_BOOTSTRAP_SECRET` only to the environment of the bootstrap run, not to the running server's. (Locally, the `.env` import puts it in every process's Spring `Environment` as an unused raw value; nothing outside the `bootstrap` profile reads it.)
 
 ## Working with Claude Code
 
