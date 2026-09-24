@@ -53,7 +53,7 @@ Tech stack: React 19 / TS / Vite / Tailwind / shadcn/ui / TanStack Query / Zusta
 
 ## Roadmap (current phase in bold)
 
-**Phase 0 — Project skeleton** → Phase 1 (backend core: auth + Player entity) → Phase 2 (docker-compose: Mongo + Redis) → Phase 3 (frontend MVP) → Phase 4 (tactical board) → Phase 5 (scraping service) → Phase 6+ (hardening & deployment).
+Phase 0 — Project skeleton →  → Phase 1 (docker-compose: Mongo + Redis) → **Phase 2 (backend core: auth + Player entity)** → Phase 3 (frontend MVP) → Phase 4 (tactical board) → Phase 5 (scraping service) → Phase 6+ (hardening & deployment).
 
 ## When starting a session
 

@@ -1,8 +1,8 @@
 # SquadPulse — Technical & Product Spec
 
 **Version:** v2 · draft
-**Updated:** Sep 8, 2026
-**Status:** Before Phase 0 — no code written yet
+**Updated:** Sep 19, 2026
+**Status:** Phase 0 in progress: backend, frontend and scraper skeletons exist, no feature code.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
 
@@ -53,7 +53,7 @@ RTL is a first-class layout requirement, not an afterthought: the app shell rend
 
 Internally, the codebase stays in English: enum values, field names, API payloads, database fields, and all Git/Jira artifacts (see section 12) use English identifiers (e.g. `GK`, `EDIT_FULL`). For most of these, the presentation layer translates them into Hebrew through the i18n dictionary. This keeps the engineering side of the project in English (consistent with working in an international-style codebase) while the product itself speaks the user's language.
 
-> **Exception: football terminology that's already "English" in Hebrew.** Position abbreviations (`GK`, `CB`, `CDM`, etc.) and formation notation (`4-3-3`, `4-2-3-1`) are displayed **as-is, in English**, everywhere in the UI — including on the tactical board. These aren't translated for the same reason a Hebrew-speaking coach wouldn't translate them out loud: they're the terms actually used pitch-side in Israeli football, and a literal Hebrew translation would be less recognizable than the English shorthand. The i18n layer treats them as pass-through values rather than translated strings — this is a deliberate exception, not a gap in localization.
+> **Exception: football terminology that's already "English" in Hebrew.** Position abbreviations (`GK`, `CB`, `DM`, etc.) and formation notation (`4-3-3`, `4-2-3-1`) are displayed **as-is, in English**, everywhere in the UI — including on the tactical board. These aren't translated for the same reason a Hebrew-speaking coach wouldn't translate them out loud: they're the terms actually used pitch-side in Israeli football, and a literal Hebrew translation would be less recognizable than the English shorthand. The i18n layer treats them as pass-through values rather than translated strings — this is a deliberate exception, not a gap in localization.
 
 Scraped content from `football.org.il` is already in Hebrew, so no translation step is needed for league tables, fixtures, or lineups pulled from there.
 
@@ -63,14 +63,20 @@ Scraped content from `football.org.il` is already in Hebrew, so no translation s
 
 Instead of the original document's design (a separate Gateway plus three microservices plus a message queue), we're moving to a **modular monolith**: one Spring Boot application, split internally into modules with clear boundaries. A real microservices split will only be considered later, once there's a proven need — for example, if the scraping service ends up needing independent scaling or a different release cadence than the rest of the system.
 
+Tech Stack & Versions:
+Backend: Java 21, Spring Boot 4.1, Maven (wrapper included, no local Maven install required), Spring Data MongoDB.
+Frontend / client: React 19, TypeScript, Vite 8, Tailwind CSS, react-i18next (Hebrew RTL — see section 01), Zustand, TanStack Query, Vitest for tests.
+Scraper: Node.js worker (Playwright + Cheerio) — currently a stub, see Phase 5 on the roadmap.
+Infra / local dev: MongoDB + Redis via docker-compose.yml; CI on GitHub Actions.
+
 ```
 Frontend (React + TS + Vite + Tailwind)
             │
             ▼  REST / HTTPS
 ┌─────────────────────────────────────────────┐
-│  SquadPulse API — one Spring Boot monolith   │
-│  auth · squad · tactics · training · match   │
-│  scraping-integration · common               │
+│  SquadPulse API — one Spring Boot monolith  │
+│  auth · squad · tactics · training · match  │
+│  scraping-integration · common              │
 └─────────────────────────────────────────────┘
             │
             ▼
@@ -88,6 +94,7 @@ Frontend (React + TS + Vite + Tailwind)
 ## 03. Multi-tenancy
 
 The system serves multiple clubs at once, with full isolation between them. The chosen approach is the **Pool model**: shared collections across all clubs (no duplicated tables/schemas per club), with every relevant document tagged with a `clubId` field.
+Some Data may be shared for exameple league table (if both clubs are in the same league).
 
 > **How isolation is actually enforced:** `clubId` is included as a claim in the JWT at login. A single central access layer (a Base Repository / Aspect in the `common` module) automatically injects a `clubId` filter into every query — so we don't rely on every endpoint "remembering" to add the filter itself. This is the single most critical thing to check in code review and in tests.
 
@@ -116,7 +123,7 @@ Every user belongs to exactly one club (`clubId` on the User document and in the
 | Full name | Text |
 | Primary position | See position list below |
 | Secondary position | Optional, same list |
-| Jersey number | 1–99, unique within the club |
+| Jersey number | 1–99, unique within the club, Optional |
 | Date of birth / age | 18–99 (adult clubs only) |
 | Height / weight | Numeric |
 | Preferred foot | Right / left / both |
@@ -155,9 +162,9 @@ At this stage, only the system owner (Gal) can add a new club to the database, a
 
 ## 10. Security
 
-- **Authentication:** Stateless JWT — a short-lived Access Token, and a Refresh Token secured in an HttpOnly cookie.
+- **Authentication:** Stateless JWT — a short-lived Access Token, and a Refresh Token secured in an HttpOnly cookie, Also there is a JWT_SECRET env var (must be at least 32 characters).
 - **Password hashing:** Argon2id (instead of bcrypt — more resistant to GPU/ASIC cracking), implemented via Spring Security's `Argon2PasswordEncoder`.
-- **Pepper:** a fixed secret string, stored only as an environment variable (never in the DB or in code), combined with the password before hashing — so a DB leak alone isn't enough to crack it.
+- **Pepper:** a fixed secret string, stored only as an environment variable (must be at least 32 characters & never in the DB or in code), combined with the password before hashing — so a DB leak alone isn't enough to crack it.
 - **RBAC:** enforced by Permission Level (see section 04), combined with `clubId` filtering (see section 03).
 - **Additional protections:** CORS restricted to approved domains, rate limiting via Redis, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI.
 - **Secrets management:** environment variables / a secrets manager only — no key, password, or pepper ever goes into git.
@@ -180,9 +187,9 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 
 | Phase | Goal |
 |---|---|
-| **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. |
-| **1 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. |
-| **2 — Local environment** | Docker Compose with MongoDB + Redis. |
+|✅ **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. | *Except CI Pipeline
+|✅ **1 — Local environment** | Docker Compose with MongoDB + Redis. | 
+| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. |
 | **3 — Frontend MVP** | Dashboard and squad table against the real API — the first "walking skeleton" that runs end to end. |
 | **4 — Tactical board** | The Canvas module with Konva.js. |
 | **5 — Scraping service** | A separate Node worker, fed manually / by Cron — by now there's actually something for it to feed. |
