@@ -40,6 +40,21 @@
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
 
+    <!-- Password hashing: Argon2PasswordEncoder only (see docs/spec.md section 10). Just the crypto
+         module, not spring-boot-starter-security — that would lock down every endpoint before auth
+         is actually wired up. -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+    <!-- Argon2PasswordEncoder delegates the actual Argon2 computation to BouncyCastle, which
+         Spring Security declares only as an optional dependency. Not version-managed by Boot. -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>1.86</version>
+    </dependency>
+
     <!-- Boilerplate reduction -->
     <dependency>
       <groupId>org.projectlombok</groupId>

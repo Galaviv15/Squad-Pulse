@@ -59,7 +59,7 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 ## Security
 
 - JWT: short-lived Access Token + HttpOnly-cookie Refresh Token
-- Passwords: Argon2id + pepper (pepper lives only in an env var, never in the DB or in git)
+- Passwords: Argon2id + pepper (pepper lives only in an env var, never in the DB or in git). The password is HMAC-SHA256'd with the pepper, then hashed with Spring Security's `Argon2PasswordEncoder` (`auth.PepperedPasswordEncoder`). Changing the pepper invalidates every stored hash
 - RBAC: enforced by Permission Level (`ADMIN` / `EDIT_FULL` / `EDIT_PARTIAL` / `VIEW_ONLY`), combined with `clubId` filtering
 - CORS restricted, rate limiting via Redis, input validation on every endpoint, Dependabot in CI
 - **Nothing secret ever goes into git** — env vars / secrets manager only
