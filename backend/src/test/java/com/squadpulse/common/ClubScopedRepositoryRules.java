@@ -74,13 +74,7 @@ final class ClubScopedRepositoryRules {
           .because(
               "a custom method on a club-scoped repository that omits ClubId from its name"
                   + " bypasses club isolation entirely, regardless of whether it's a derived query"
-                  + " or an @Query method, unless it's deliberately marked @GloballyScoped")
-          // No repository in this codebase declares a custom method yet (KAN-15 only lays the
-          // foundation), so this rule legitimately matches zero methods today — that must not
-          // fail the build. ClubScopedRepositoryMethodNamingRuleTest separately proves this exact
-          // rule does catch a violation once one exists, so allowing "no matches" here isn't
-          // masking a broken predicate.
-          .allowEmptyShould(true);
+                  + " or an @Query method, unless it's deliberately marked @GloballyScoped");
 
   private ClubScopedRepositoryRules() {}
 

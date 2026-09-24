@@ -11,6 +11,12 @@ spring:
   # Boot 4 property; the old spring.data.mongodb.uri is deprecated at error level.
   mongodb:
     uri: ${MONGODB_URI}
+  data:
+    mongodb:
+      # Off by default in Spring Data MongoDB, which means @Indexed annotations are silently
+      # ignored. Needed for the globally unique User.email index (KAN-17) — without it, duplicate
+      # emails across clubs would be accepted and login-by-email would become ambiguous.
+      auto-index-creation: true
 
 server:
   port: 8080
