@@ -8,9 +8,10 @@ package com.squadpulse.common;
  *
  * <p>Extending this class only protects the standard {@code MongoRepository} methods (findAll,
  * findById, save, delete, count, ...). Any custom/derived finder a repository interface declares
- * for this entity (e.g. {@code findByEmail(...)}) bypasses {@link ClubScopedRepositoryImpl}
- * entirely and must include {@code ClubId} in its method name — enforced at build time by an
- * ArchUnit test, not by anything at runtime.
+ * for this entity (e.g. {@code findByName(...)}) bypasses {@link ClubScopedRepositoryImpl} entirely
+ * and must include {@code ClubId} in its method name — enforced at build time by an ArchUnit test,
+ * not by anything at runtime. The only exception is a lookup by a globally unique value explicitly
+ * marked {@link GloballyScoped} (e.g. {@code UserRepository.findByEmail} for login).
  */
 public abstract class ClubScopedEntity {
 

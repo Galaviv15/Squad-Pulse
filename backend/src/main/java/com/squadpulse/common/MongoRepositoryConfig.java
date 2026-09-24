@@ -1,6 +1,7 @@
 package com.squadpulse.common;
 
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.mongodb.config.EnableMongoAuditing;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 
 /**
@@ -11,8 +12,12 @@ import org.springframework.data.mongodb.repository.config.EnableMongoRepositorie
  * <p>An explicit {@code @EnableMongoRepositories} here replaces Spring Boot's default repository
  * auto-configuration for the whole app — it backs off automatically once a user-provided one is
  * present.
+ *
+ * <p>{@code @EnableMongoAuditing} makes Spring Data fill in {@code @CreatedDate} /
+ * {@code @LastModifiedDate} fields (e.g. {@code User.createdAt} / {@code updatedAt}) on every save.
  */
 @Configuration
+@EnableMongoAuditing
 @EnableMongoRepositories(
     basePackages = "com.squadpulse",
     repositoryBaseClass = ClubScopedRepositoryImpl.class,

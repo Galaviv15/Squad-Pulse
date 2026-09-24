@@ -6,10 +6,11 @@ import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 
 /**
- * Fails the build if any real repository in this codebase declares a derived query method (e.g.
- * {@code findByEmail(...)}) for a {@link ClubScopedEntity} without {@code ClubId} in its name —
- * such a method would be built by Spring Data directly, bypassing {@link ClubScopedRepositoryImpl}
- * and leaking data across clubs. See that class's Javadoc for why this can't be caught at runtime.
+ * Fails the build if any real repository in this codebase declares a custom query method (e.g.
+ * {@code findByName(...)}) for a {@link ClubScopedEntity} without {@code ClubId} in its name and
+ * without an explicit {@link GloballyScoped} — such a method would be built by Spring Data
+ * directly, bypassing {@link ClubScopedRepositoryImpl} and leaking data across clubs. See that
+ * class's Javadoc for why this can't be caught at runtime.
  *
  * <p>Only scans main sources ({@link ImportOption.DoNotIncludeTests}): this codebase's own
  * test-only fixtures (including the ones deliberately violating this rule in {@code

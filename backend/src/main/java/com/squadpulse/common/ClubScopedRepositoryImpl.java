@@ -32,13 +32,15 @@ import org.springframework.data.support.PageableExecutionUtils;
  * codebase uses them today.
  *
  * <p><b>This class does not, and cannot, protect custom/derived query methods.</b> A repository
- * interface that declares its own finder — e.g. {@code findByEmail(String email)} — gets it built
- * by Spring Data directly against {@link MongoOperations} via query derivation, which never goes
+ * interface that declares its own finder — e.g. {@code findByName(String name)} — gets it built by
+ * Spring Data directly against {@link MongoOperations} via query derivation, which never goes
  * through this class at all. Every such method must include {@code ClubId} in its name (e.g. {@code
- * findByEmailAndClubId(String email, String clubId)}) and the caller must supply the current {@link
- * ClubContext#requireClubId()}. An ArchUnit test enforces this at build time — see {@code
- * ClubScopedRepositoryMethodNamingTest} — but there's no runtime backstop, so review any new finder
- * on a {@link ClubScopedEntity} repository with this in mind.
+ * findByNameAndClubId(String name, String clubId)}) and the caller must supply the current {@link
+ * ClubContext#requireClubId()} — unless it's a lookup by a globally unique value that is explicitly
+ * annotated {@link GloballyScoped} (e.g. {@code UserRepository.findByEmail} for login). An ArchUnit
+ * test enforces this at build time — see {@code ClubScopedRepositoryMethodNamingTest} — but there's
+ * no runtime backstop, so review any new finder on a {@link ClubScopedEntity} repository with this
+ * in mind.
  */
 public class ClubScopedRepositoryImpl<T extends ClubScopedEntity, ID extends Serializable>
     extends SimpleMongoRepository<T, ID> {

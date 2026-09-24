@@ -97,6 +97,8 @@ The system serves multiple clubs at once, with full isolation between them. The 
 Some Data may be shared for exameple league table (if both clubs are in the same league).
 
 > **How isolation is actually enforced:** `clubId` is included as a claim in the JWT at login. A single central access layer (a Base Repository / Aspect in the `common` module) automatically injects a `clubId` filter into every query — so we don't rely on every endpoint "remembering" to add the filter itself. This is the single most critical thing to check in code review and in tests.
+>
+> **The one enforced exception:** custom repository methods bypass that layer, so each must include `ClubId` in its name (enforced at build time by an ArchUnit test). The sole escape hatch is the `@GloballyScoped` annotation, for lookups by a globally unique value when no club context exists yet — today only `UserRepository.findByEmail`, used at login to find out which club the caller belongs to (safe because email is unique across the whole system). Uses should be rare, and each one reviewed individually.
 
 The Silo model (a separate database per club) was considered and rejected for now — the operational overhead (running migrations across N databases) is too high relative to the benefit for a small-to-medium number of clubs.
 
