@@ -52,4 +52,13 @@ class SecurityPropertiesTest {
             "squadpulse.security.password-pepper=" + VALID_SECRET)
         .run(context -> assertThat(context).hasFailed());
   }
+
+  @Test
+  void failsWhenPasswordPepperIsTooShort() {
+    runner
+        .withPropertyValues(
+            "squadpulse.security.jwt-secret=" + VALID_SECRET,
+            "squadpulse.security.password-pepper=too-short")
+        .run(context -> assertThat(context).hasFailed());
+  }
 }
