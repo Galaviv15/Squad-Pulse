@@ -32,6 +32,13 @@ import org.springframework.data.mongodb.repository.MongoRepository;
  * method names against a {@code findBy/countBy/existsBy/deleteBy} prefix regex, which missed both
  * other derivation prefixes (e.g. {@code findFirstBy}, {@code readBy}) and any {@code @Query}
  * method, since those have no naming convention to match at all.
+ *
+ * <p>A method satisfies the rule if <b>either</b> its name includes {@code ClubId} <b>or</b> it's
+ * annotated with {@link GloballyScoped} — the narrow, explicit escape hatch for a lookup by a
+ * globally unique value that must run before any club context exists (e.g. {@code
+ * UserRepository.findByEmail} during login). The annotation is checked per method, so it only ever
+ * exempts the one method it's on, never its siblings or the repository as a whole. See {@link
+ * GloballyScoped} for when it's (rarely) acceptable.
  */
 final class ClubScopedRepositoryRules {
 
@@ -42,18 +49,24 @@ final class ClubScopedRepositoryRules {
                   "are declared directly on a club-scoped repository interface",
                   method -> isClubScopedRepository(method.getOwner())))
           .should(
-              new ArchCondition<JavaMethod>("include \"ClubId\" in the method name") {
+              new ArchCondition<JavaMethod>(
+                  "include \"ClubId\" in the method name or be annotated with @GloballyScoped") {
                 @Override
                 public void check(JavaMethod method, ConditionEvents events) {
-                  boolean satisfied = method.getName().contains("ClubId");
+                  boolean satisfied =
+                      method.getName().contains("ClubId")
+                          || method.isAnnotatedWith(GloballyScoped.class);
                   String message =
                       satisfied
-                          ? method.getFullName() + " is club-scoped"
+                          ? method.getFullName() + " is club-scoped or explicitly @GloballyScoped"
                           : ("%s is a custom method declared directly on a club-scoped repository"
                                   + " interface but its name doesn't include \"ClubId\" — whether"
                                   + " it's a derived query or an @Query method, it would run"
                                   + " unscoped against MongoDB and could leak another club's data."
-                                  + " Rename it to include ClubId, e.g. findByEmailAndClubId(...).")
+                                  + " Rename it to include ClubId, e.g. findByNameAndClubId(...)."
+                                  + " Only if it's a lookup by a globally unique value that must"
+                                  + " run without a club context, annotate it @GloballyScoped"
+                                  + " instead.")
                               .formatted(method.getFullName());
                   events.add(new SimpleConditionEvent(method, satisfied, message));
                 }
@@ -61,7 +74,7 @@ final class ClubScopedRepositoryRules {
           .because(
               "a custom method on a club-scoped repository that omits ClubId from its name"
                   + " bypasses club isolation entirely, regardless of whether it's a derived query"
-                  + " or an @Query method")
+                  + " or an @Query method, unless it's deliberately marked @GloballyScoped")
           // No repository in this codebase declares a custom method yet (KAN-15 only lays the
           // foundation), so this rule legitimately matches zero methods today — that must not
           // fail the build. ClubScopedRepositoryMethodNamingRuleTest separately proves this exact

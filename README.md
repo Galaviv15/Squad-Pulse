@@ -50,6 +50,8 @@ squadpulse/
 
 Pool model: shared collections across all clubs, every document tagged with `clubId`. Isolation is enforced centrally (a base repository / aspect in the `common` module injects the `clubId` filter automatically) — **this is the single most important thing to check in every PR that touches data access.** Full rationale in spec section 03.
 
+Custom repository methods bypass that layer, so an ArchUnit test fails the build unless each one has `ClubId` in its name. The only exception is a method explicitly annotated `@GloballyScoped` — reserved for lookups by a system-wide unique value that must run before any club context exists (today: `UserRepository.findByEmail`, for login). Each use should be reviewed on its own merits.
+
 ## Language
 
 Hebrew is the primary and only supported UI language at launch (RTL-first, via an i18n library from day one — don't hardcode strings). Exception: football terminology already used in English by Israeli coaches — position codes (`GK`, `CB`, `DM`, ...) and formation notation (`4-3-3`) — stays in English everywhere, including the tactical board. Full detail in spec section 01.

@@ -3,6 +3,8 @@ package com.squadpulse.common;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.squadpulse.common.archunitfixture.FixtureClubScopedEntity;
+import com.squadpulse.common.archunitfixture.RepositoryMixingGloballyScopedAndUnscopedFinders;
+import com.squadpulse.common.archunitfixture.RepositoryWithGloballyScopedFinder;
 import com.squadpulse.common.archunitfixture.RepositoryWithScopedFinder;
 import com.squadpulse.common.archunitfixture.RepositoryWithUnscopedFinder;
 import com.tngtech.archunit.core.domain.JavaClasses;
@@ -22,6 +24,10 @@ import org.junit.jupiter.api.Test;
  * lookupSomehow}) — proving the rule's structural "declared directly on this interface" check
  * catches an unscoped method regardless of how it's implemented internally, unlike the prefix-regex
  * this rule used to rely on.
+ *
+ * <p>The {@link GloballyScoped} fixtures prove the escape hatch works in both directions: the
+ * annotation alone satisfies the rule, but only for the exact method it's on — an unannotated
+ * sibling without {@code ClubId} still fails.
  */
 class ClubScopedRepositoryMethodNamingRuleTest {
 
@@ -54,5 +60,36 @@ class ClubScopedRepositoryMethodNamingRuleTest {
             .evaluate(fixture);
 
     assertThat(result.hasViolation()).isFalse();
+  }
+
+  @Test
+  void allowsAGloballyScopedMethodWithoutClubIdInItsName() {
+    JavaClasses fixture =
+        new ClassFileImporter()
+            .importClasses(RepositoryWithGloballyScopedFinder.class, FixtureClubScopedEntity.class);
+
+    EvaluationResult result =
+        ClubScopedRepositoryRules.DERIVED_FINDERS_ON_CLUB_SCOPED_REPOSITORIES_MUST_INCLUDE_CLUB_ID
+            .evaluate(fixture);
+
+    assertThat(result.hasViolation()).isFalse();
+  }
+
+  @Test
+  void stillFailsAnUnannotatedMethodWithoutClubIdNextToAGloballyScopedOne() {
+    JavaClasses fixture =
+        new ClassFileImporter()
+            .importClasses(
+                RepositoryMixingGloballyScopedAndUnscopedFinders.class,
+                FixtureClubScopedEntity.class);
+
+    EvaluationResult result =
+        ClubScopedRepositoryRules.DERIVED_FINDERS_ON_CLUB_SCOPED_REPOSITORIES_MUST_INCLUDE_CLUB_ID
+            .evaluate(fixture);
+
+    assertThat(result.hasViolation()).isTrue();
+    String failureReport = result.getFailureReport().toString();
+    assertThat(failureReport).contains(".findByName(");
+    assertThat(failureReport).doesNotContain(".findByCode(");
   }
 }
