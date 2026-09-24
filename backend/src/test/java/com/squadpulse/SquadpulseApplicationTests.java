@@ -1,7 +1,12 @@
 package com.squadpulse;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.squadpulse.auth.OwnerBootstrapProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 
 /**
  * Smoke test: fails fast if the Spring context can't even start.
@@ -30,5 +35,17 @@ class SquadpulseApplicationTests {
   @Test
   void contextLoads() {
     // Intentionally empty: a failing context load already fails this test.
+  }
+
+  /**
+   * The club bootstrap task (KAN-16) and its owner secret only exist under the {@code bootstrap}
+   * profile — a normal server must never bind or hold that secret.
+   */
+  @Test
+  void bootstrapOnlyBeansAreAbsentFromANormalServer(@Autowired ApplicationContext context) {
+    assertThat(context.getBeanNamesForType(OwnerBootstrapProperties.class)).isEmpty();
+    assertThat(context.containsBean("clubBootstrapService")).isFalse();
+    assertThat(context.containsBean("clubBootstrapRunner")).isFalse();
+    assertThat(context.getEnvironment().getProperty("squadpulse.bootstrap.owner-secret")).isNull();
   }
 }

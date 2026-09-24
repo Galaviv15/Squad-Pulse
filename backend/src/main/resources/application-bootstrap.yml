@@ -1,0 +1,13 @@
+# Profile for the one-off "create a new club" task (auth.ClubBootstrapRunner, KAN-16).
+# It runs alongside the real server, so it must not start a web server of its own (it would also
+# clash on port 8080) — nothing about club bootstrapping is reachable over the network.
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"
+
+# Mapped here rather than in application.yml, so only this profile ever reads the owner secret
+# (see auth.OwnerBootstrapProperties). No default: a missing value fails fast at startup.
+squadpulse:
+  bootstrap:
+    owner-secret: ${OWNER_BOOTSTRAP_SECRET:}

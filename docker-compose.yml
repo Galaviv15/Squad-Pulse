@@ -10,6 +10,9 @@
 #   MONGO_ROOT_USERNAME, MONGO_ROOT_PASSWORD, REDIS_PASSWORD
 
 services:
+  # Runs as a single-node replica set, not a standalone server: MongoDB only supports
+  # multi-document transactions on a replica set (e.g. creating a Club and its first Club Manager
+  # together — see backend common.MongoTransactionConfig). Production MongoDB is a replica set too.
   mongodb:
     image: mongo:7
     container_name: squadpulse-mongodb
@@ -20,13 +23,35 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
       MONGO_INITDB_DATABASE: squadpulse
+    # A replica set with auth enabled requires a keyFile for internal member authentication. With a
+    # single member it's never actually exchanged, so a fresh random one is generated inside the
+    # container on every start rather than kept anywhere on disk or in git.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        openssl rand -base64 756 > /etc/mongo-keyfile
+        chmod 400 /etc/mongo-keyfile
+        chown mongodb:mongodb /etc/mongo-keyfile
+        exec docker-entrypoint.sh "$$@"
+      - mongod-with-keyfile
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/etc/mongo-keyfile"]
     volumes:
       - mongodb_data:/data/db
+    # Also initiates the replica set on first start (rs.initiate is a no-op check afterwards). The
+    # member is registered as localhost:27017 so the backend, connecting from the host through the
+    # published port, can reach it under the same address.
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin --eval
+          "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }"
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 5
+      start_period: 20s
 
   redis:
     image: redis:7-alpine

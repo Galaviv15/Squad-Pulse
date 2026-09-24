@@ -5,9 +5,13 @@ import org.springframework.data.mongodb.config.EnableMongoAuditing;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 
 /**
- * Registers {@link ClubScopedRepositoryImpl} as the base implementation for every Spring Data
- * MongoDB repository in the application, so club isolation applies by default with no
- * per-repository opt-in (see docs/spec.md section 03, CLAUDE.md standing rule 4).
+ * Makes {@link ClubScopedRepositoryImpl} the base implementation for every Spring Data MongoDB
+ * repository of a {@link ClubScopedEntity} in the application, so club isolation applies by default
+ * with no per-repository opt-in (see docs/spec.md section 03, CLAUDE.md standing rule 4).
+ *
+ * <p>The base class is chosen per entity by {@link ClubScopedRepositoryFactory}, not via {@code
+ * repositoryBaseClass} here: an explicit {@code repositoryBaseClass} would override the factory's
+ * choice for every repository, including the one for {@link NotClubScoped} {@code Club}.
  *
  * <p>An explicit {@code @EnableMongoRepositories} here replaces Spring Boot's default repository
  * auto-configuration for the whole app — it backs off automatically once a user-provided one is
@@ -20,6 +24,5 @@ import org.springframework.data.mongodb.repository.config.EnableMongoRepositorie
 @EnableMongoAuditing
 @EnableMongoRepositories(
     basePackages = "com.squadpulse",
-    repositoryBaseClass = ClubScopedRepositoryImpl.class,
     repositoryFactoryBeanClass = ClubScopedRepositoryFactoryBean.class)
 public class MongoRepositoryConfig {}
