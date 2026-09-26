@@ -17,4 +17,10 @@ record InviteUserRequest(
     @NotBlank String fullName,
     @NotNull Title title,
     @NotNull PermissionLevel permissionLevel,
-    @AdultAge LocalDate dateOfBirth) {}
+    @AdultAge LocalDate dateOfBirth) {
+
+  /** Normalized before validation, so {@code @Email} checks the value that will be stored. */
+  InviteUserRequest {
+    email = User.normalizeEmail(email);
+  }
+}
