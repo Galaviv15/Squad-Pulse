@@ -25,6 +25,13 @@ public class GlobalExceptionHandler {
         .body(ApiErrorResponse.of(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage()));
   }
 
+  @ExceptionHandler(UnauthorizedException.class)
+  public ResponseEntity<ApiErrorResponse> handleUnauthorized(UnauthorizedException ex) {
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+        .body(
+            ApiErrorResponse.of(HttpStatus.UNAUTHORIZED.value(), "Unauthorized", ex.getMessage()));
+  }
+
   @ExceptionHandler(CrossClubAccessException.class)
   public ResponseEntity<ApiErrorResponse> handleCrossClubAccess(CrossClubAccessException ex) {
     return ResponseEntity.status(HttpStatus.FORBIDDEN)
