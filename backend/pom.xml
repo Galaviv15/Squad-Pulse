@@ -19,6 +19,7 @@
 
   <properties>
     <java.version>21</java.version>
+    <jjwt.version>0.13.0</jjwt.version>
   </properties>
 
   <dependencies>
@@ -40,12 +41,37 @@
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
 
-    <!-- Password hashing: Argon2PasswordEncoder only (see docs/spec.md section 10). Just the crypto
-         module, not spring-boot-starter-security — that would lock down every endpoint before auth
-         is actually wired up. -->
+    <!-- Stateless JWT auth + RBAC (see docs/spec.md section 10). Also brings spring-security-crypto,
+         which provides Argon2PasswordEncoder. -->
     <dependency>
-      <groupId>org.springframework.security</groupId>
-      <artifactId>spring-security-crypto</artifactId>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <!-- Redis: refresh-token families (see auth.RefreshTokenService). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
+    <!-- Access-token JWTs. Not version-managed by Boot. jjwt-jackson uses Jackson 2, whose version
+         Boot still manages (jackson-2-bom) alongside the Jackson 3 the rest of the app uses. -->
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+      <version>${jjwt.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+      <version>${jjwt.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+      <version>${jjwt.version}</version>
+      <scope>runtime</scope>
     </dependency>
     <!-- Argon2PasswordEncoder delegates the actual Argon2 computation to BouncyCastle, which
          Spring Security declares only as an optional dependency. Not version-managed by Boot. -->
@@ -87,6 +113,25 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-mongodb</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Real-Redis tests for the refresh-token scheme. Version managed by Boot's parent. -->
+    <dependency>
+      <groupId>com.redis</groupId>
+      <artifactId>testcontainers-redis</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- MockMvc slice tests (@WebMvcTest / @AutoConfigureMockMvc) — a separate module since Boot 4 —
+         and Spring Security's test support. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security-test</artifactId>
       <scope>test</scope>
     </dependency>
 
