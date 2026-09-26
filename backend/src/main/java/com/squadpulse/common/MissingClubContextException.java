@@ -4,8 +4,8 @@ package com.squadpulse.common;
  * Thrown when a club-scoped repository method runs with no clubId set in {@link ClubContext}.
  *
  * <p>Reaching this in production means a request hit the data layer without going through
- * club-scoped authentication — a server-side wiring bug, not a client error, since the future JWT
- * filter (KAN-19) is expected to always set a clubId for an authenticated request.
+ * club-scoped authentication — a server-side wiring bug, not a client error, since the JWT filter
+ * ({@code auth.JwtAuthenticationFilter}) always sets a clubId for an authenticated request.
  */
 public class MissingClubContextException extends RuntimeException {
 
