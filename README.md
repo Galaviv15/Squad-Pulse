@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Early scaffolding (Phase 0 of the roadmap below). The backend, frontend and scraper skeletons exist (empty modules, tooling, smoke tests); no feature code has shipped yet.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout — see [Auth API](#auth-api)). No other feature code has shipped yet; the frontend and scraper are still skeletons.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -41,7 +41,7 @@ squadpulse/
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Konva.js (tactical board), Recharts |
 | Backend | Java, Spring Boot (single modular monolith) |
-| Database | MongoDB (primary data), Redis (cache, rate limiting, refresh-token blacklist) |
+| Database | MongoDB (primary data), Redis (refresh-token families today; cache and rate limiting planned) |
 | Scraper | Node.js, Playwright/Cheerio |
 | Auth | Stateless JWT (Access + Refresh in HttpOnly cookie), Argon2id password hashing + a pepper (env var, never committed) |
 | CI | GitHub Actions (lint, test, build on PRs to `master` and pushes to `master` — no CD yet) |
@@ -60,9 +60,10 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 
 ## Security
 
-- JWT: short-lived Access Token + HttpOnly-cookie Refresh Token
+- JWT: short-lived (15 min) HS256 Access Token carrying `sub` (user id), `clubId` and `permissionLevel`, sent as `Authorization: Bearer ...`. `auth.JwtAuthenticationFilter` validates it on every request and puts its `clubId` into `ClubContext` for the request's duration — so a club is always taken from the token, never from the request body or parameters
+- Refresh Token: an opaque random value (not a JWT), 30-day lifetime, only ever in an `HttpOnly; Secure; SameSite=Strict` cookie scoped to `/auth`. Stored in Redis as a SHA-256 hash, grouped into one token *family* per login; every refresh rotates it, and replaying an already-rotated token revokes the whole family (see `auth.RefreshTokenService` for the Redis key scheme)
 - Passwords: Argon2id + pepper (pepper lives only in an env var, never in the DB or in git). The password is HMAC-SHA256'd with the pepper, then hashed with Spring Security's `Argon2PasswordEncoder` (`auth.PepperedPasswordEncoder`). Changing the pepper invalidates every stored hash
-- RBAC: enforced by Permission Level (`ADMIN` / `EDIT_FULL` / `EDIT_PARTIAL` / `VIEW_ONLY`), combined with `clubId` filtering
+- RBAC: enforced by Permission Level (`ADMIN` / `EDIT_FULL` / `EDIT_PARTIAL` / `VIEW_ONLY`), combined with `clubId` filtering. Each level is a Spring Security authority of the same name — restrict an endpoint with `@PreAuthorize("hasAuthority('ADMIN')")` on the controller method, never with a manual check in its body. Every endpoint requires a valid access token unless `auth.SecurityConfig` lists it as public
 - CORS restricted, rate limiting via Redis, input validation on every endpoint, Dependabot in CI
 - **Nothing secret ever goes into git** — env vars / secrets manager only
 
@@ -80,7 +81,7 @@ One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PR
 - **`backend-ci`** — JDK 21 (Temurin): `./mvnw spotless:check`, then `./mvnw verify`.
 - **`frontend-ci`** — Node 22: `npm ci`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`.
 
-No Docker build, CD, or Mongo/Redis service containers yet (revisit when the first Testcontainers-based tests land in Phase 1). Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches).
+No Docker build or CD yet. Integration tests start their own MongoDB and Redis through Testcontainers (using the runner's Docker), so the workflow needs no service containers. Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches).
 
 ## Roadmap
 
@@ -100,8 +101,18 @@ Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
 
 1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET`, `PASSWORD_PEPPER` and `OWNER_BOOTSTRAP_SECRET` (at least 32 characters each, all different — the backend refuses to start otherwise; `OWNER_BOOTSTRAP_SECRET` is only required by the bootstrap task below).
 2. `docker compose up -d` — MongoDB + Redis. MongoDB runs as a single-node replica set (`rs0`), since MongoDB only supports multi-document transactions on a replica set; the healthcheck initiates it on first start. Keep `directConnection=true` in `MONGODB_URI`.
-3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
+3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). It needs both containers: MongoDB for data, Redis (`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`) for login sessions — the Redis connection is only opened on first use, so a missing Redis shows up as failing logins, not a failed startup. Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
 4. Frontend: `cd frontend && npm install && npm run dev`. Checks: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
+
+### Auth API
+
+| Endpoint | Access | What it does |
+|---|---|---|
+| `POST /auth/login` | public | `{ "email", "password" }` → `200` with `{ "accessToken", "tokenType": "Bearer", "expiresIn" }` in the body and the refresh token in the `refresh_token` cookie. Any failure (unknown email, wrong password, no password set yet, deactivated user) is the same generic `401` |
+| `POST /auth/refresh` | public (refresh cookie) | Rotates the refresh cookie and returns a new access token. `401` for a missing / expired / revoked / reused token |
+| `POST /auth/logout` | public (refresh cookie) | Revokes this session's token family (other devices stay logged in) and clears the cookie. Always `204` |
+
+Errors use the same JSON shape as every other endpoint (`common.ApiErrorResponse`). An access token stays valid until it expires (at most 15 minutes) even after logout or revocation — only refresh tokens are revocable.
 
 ### Bootstrapping a new club
 

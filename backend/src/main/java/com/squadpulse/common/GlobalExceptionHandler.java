@@ -3,6 +3,7 @@ package com.squadpulse.common;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -70,6 +71,15 @@ public class GlobalExceptionHandler {
                 "Validation Failed",
                 "Request validation failed",
                 details));
+  }
+
+  /** A missing or unparseable JSON body, or a value of the wrong type (e.g. an unknown enum). */
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ResponseEntity<ApiErrorResponse> handleUnreadableBody(HttpMessageNotReadableException ex) {
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed request body"));
   }
 
   @ExceptionHandler(Exception.class)
