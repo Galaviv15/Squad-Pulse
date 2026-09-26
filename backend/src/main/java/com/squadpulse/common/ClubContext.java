@@ -10,17 +10,18 @@ import org.springframework.stereotype.Component;
  * servlet request thread today as it will for any background/worker thread later, and needs no
  * scoped-proxy machinery.
  *
- * <p>JWT auth (KAN-19) doesn't exist yet, so nothing populates this from a real token yet. {@link
- * #setClubId(String)} and {@link #clear()} are the extension point the future JWT filter will call
- * (inside a try/finally, so the ThreadLocal never leaks across requests on a pooled worker thread)
- * — until then, tests call them directly to simulate an authenticated request.
+ * <p>For an HTTP request, {@code auth.JwtAuthenticationFilter} sets this from the access token's
+ * {@code clubId} claim and clears it in a try/finally once the request completes, so the
+ * ThreadLocal never leaks across requests on a pooled worker thread. Anything else that acts on a
+ * club's behalf (e.g. the club bootstrap task, tests) calls {@link #setClubId(String)} and {@link
+ * #clear()} the same way.
  */
 @Component
 public class ClubContext {
 
   private static final ThreadLocal<String> CURRENT_CLUB_ID = new ThreadLocal<>();
 
-  /** Sets the clubId for the current thread. Called by the future JWT filter (KAN-19). */
+  /** Sets the clubId for the current thread. Called per request by the JWT filter. */
   public void setClubId(String clubId) {
     CURRENT_CLUB_ID.set(clubId);
   }

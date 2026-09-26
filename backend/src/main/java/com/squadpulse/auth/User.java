@@ -34,7 +34,11 @@ public class User extends ClubScopedEntity {
   @Indexed(unique = true)
   private String email;
 
-  /** Argon2id hash of the peppered password. Hashing itself is KAN-18; this is just the field. */
+  /**
+   * Argon2id hash of the peppered password (see {@link PepperedPasswordEncoder}). {@code null} for
+   * an invited user who hasn't set a password yet (see {@link UserInvitationService}) — login
+   * rejects such a user like any other failed login.
+   */
   private String passwordHash;
 
   @NotNull private Title title;
