@@ -6,7 +6,7 @@ This file is auto-loaded as standing context for every Claude Code session in th
 
 SquadPulse is a Hebrew-first (RTL) web platform for adult football clubs to manage squad, tactics, training, and match data from one place. Multi-club from day one, fully isolated per club. It's also a deliberate exercise in professional engineering practice: real Git workflow, Jira-driven planning, security, testing, and deployment — done properly, not skipped because it's a side project.
 
-**Status:** Phase 2 (backend core) in progress. The first real endpoints exist — auth: `/auth/login`, `/auth/refresh`, `/auth/logout` (see README "Auth API"). No other feature code has shipped yet; frontend and scraper are still skeletons.
+**Status:** Phase 2 (backend core) in progress. The first real endpoints exist — auth: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/users/invite` (see README "Auth API"). No other feature code has shipped yet; frontend and scraper are still skeletons.
 **Jira:** `squadpulse.atlassian.net`, project key `KAN`.
 **Full spec:** `docs/spec.md` in this repo — always read that (not the old private artifact link) for anything beyond this summary.
 

@@ -50,6 +50,12 @@ public class GlobalExceptionHandler {
         .body(ApiErrorResponse.of(HttpStatus.FORBIDDEN.value(), "Forbidden", ex.getMessage()));
   }
 
+  @ExceptionHandler(ConflictException.class)
+  public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(ApiErrorResponse.of(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage()));
+  }
+
   @ExceptionHandler(MissingClubContextException.class)
   public ResponseEntity<ApiErrorResponse> handleMissingClubContext(MissingClubContextException ex) {
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

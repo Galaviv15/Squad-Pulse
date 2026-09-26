@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout — see [Auth API](#auth-api)). No other feature code has shipped yet; the frontend and scraper are still skeletons.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout) and inviting users — see [Auth API](#auth-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -111,6 +111,7 @@ Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
 | `POST /auth/login` | public | `{ "email", "password" }` → `200` with `{ "accessToken", "tokenType": "Bearer", "expiresIn" }` in the body and the refresh token in the `refresh_token` cookie. Any failure (unknown email, wrong password, no password set yet, deactivated user) is the same generic `401` |
 | `POST /auth/refresh` | public (refresh cookie) | Rotates the refresh cookie and returns a new access token. `401` for a missing / expired / revoked / reused token |
 | `POST /auth/logout` | public (refresh cookie) | Revokes this session's token family (other devices stay logged in) and clears the cookie. Always `204` |
+| `POST /auth/users/invite` | `ADMIN` | `{ "email", "fullName", "title", "permissionLevel", "dateOfBirth"? }` → `201` with the new user, always in the caller's own club. The user has no password yet, so can't log in until they set one (activation — KAN-21). `403` for non-admins, `409` if the email is taken (in any club) |
 
 Errors use the same JSON shape as every other endpoint (`common.ApiErrorResponse`). An access token stays valid until it expires (at most 15 minutes) even after logout or revocation — only refresh tokens are revocable.
 
