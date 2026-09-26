@@ -1,7 +1,7 @@
 # SquadPulse — Technical & Product Spec
 
 **Version:** v2 · draft
-**Updated:** Sep 19, 2026
+**Updated:** Sep 26, 2026
 **Status:** Phase 0 in progress: backend, frontend and scraper skeletons exist, no feature code.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
@@ -64,10 +64,11 @@ Scraped content from `football.org.il` is already in Hebrew, so no translation s
 Instead of the original document's design (a separate Gateway plus three microservices plus a message queue), we're moving to a **modular monolith**: one Spring Boot application, split internally into modules with clear boundaries. A real microservices split will only be considered later, once there's a proven need — for example, if the scraping service ends up needing independent scaling or a different release cadence than the rest of the system.
 
 Tech Stack & Versions:
-Backend: Java 21, Spring Boot 4.1, Maven (wrapper included, no local Maven install required), Spring Data MongoDB.
+Backend: Java 21, Spring Boot 4.1, Maven (wrapper included, no local Maven install required), Spring Data MongoDB, Spring Security, Spring Data Redis, jjwt (JWT issuing/validation).
 Frontend / client: React 19, TypeScript, Vite 8, Tailwind CSS, react-i18next (Hebrew RTL — see section 01), Zustand, TanStack Query, Vitest for tests.
 Scraper: Node.js worker (Playwright + Cheerio) — currently a stub, see Phase 5 on the roadmap.
 Infra / local dev: MongoDB + Redis via docker-compose.yml; CI on GitHub Actions.
+Email: none yet — behind an EmailSender interface, provider TBD at deployment (Phase 6+).
 
 ```
 Frontend (React + TS + Vite + Tailwind)
@@ -81,8 +82,8 @@ Frontend (React + TS + Vite + Tailwind)
             │
             ▼
    MongoDB                    Redis
-   (Clubs/Users/Players/      (cache · rate limiting ·
-    Matches/Trainings/         refresh-token blacklist)
+   (Clubs/Users/Players/      (refresh-token families —
+    Matches/Trainings/         cache & rate limiting planned)
     TacticalBoards)
             ⇠ ⇢
    Scraper Worker (Node) — Playwright/Cheerio,
@@ -116,7 +117,7 @@ Access is managed along two separate axes: **Title** — the professional role s
 | Analyst | `VIEW_ONLY` | Can be upgraded individually later |
 | Player — future | `VIEW_ONLY` | Not in V1; may not get a login at all in the first phase |
 
-Every user belongs to exactly one club (`clubId` on the User document and in the JWT). Only the Club Manager invites new users and sets their Title + Permission Level.
+Every user belongs to exactly one club (`clubId` on the User document and in the JWT). Inviting a new user and setting their Title + Permission Level requires `ADMIN` permission level — this is enforced by permission level, not by Title. In practice that means the Club Manager today, since Club Manager is the only Title that defaults to `ADMIN`, but any user holding `ADMIN` can do it.
 
 ## 05. Player entity
 
@@ -160,15 +161,20 @@ The home screen shows clickable components: upcoming schedule, squad, league tab
 
 ## 09. New club onboarding
 
-At this stage, only the system owner (Gal) can add a new club to the database, along with an initial Club Manager user for it. From there, the Club Manager invites additional users themselves and sets their Title + Permission Level. Every user's actions are restricted strictly to the club they belong to.
+At this stage, only the system owner (Gal) can add a new club to the database, along with an initial Club Manager user for it. From there, any user with `ADMIN` permission level in that club (by default, its Club Manager — see section 04) invites additional users and sets their Title + Permission Level. Every user's actions are restricted strictly to the club they belong to.
+
+A newly invited user is created with no password set — not even a temporary one. The invite immediately triggers the same email-delivered activation code described in section 10 ("Account activation / password reset"); the new user's first action in the app is entering that code together with a password of their own choosing. The `User.active` flag is unrelated to this first-activation state: it exists solely so an `ADMIN` can cut a departed staff member's access without deleting their account, and it is never toggled by the invite or activation flow itself. (Tracked separately as KAN-21; the KAN-19 invite endpoint today only creates the user with no password — it doesn't send anything yet.)
 
 ## 10. Security
 
-- **Authentication:** Stateless JWT — a short-lived Access Token, and a Refresh Token secured in an HttpOnly cookie, Also there is a JWT_SECRET env var (must be at least 32 characters).
+- **Authentication — access token:** stateless JWT, HS256, signed with `JWT_SECRET` (env var, ≥32 characters). 15-minute TTL. Claims: `sub` (user id), `clubId`, `permissionLevel` — nothing sensitive. Rejected if expired, tampered, unsigned, `alg: none`, signed with the wrong key, from another issuer, or missing a required claim.
+- **Authentication — refresh token:** an opaque, high-entropy random value (not a JWT), never stored in Mongo. Carried in an `HttpOnly; Secure; SameSite=Strict` cookie scoped to `/auth`. 30-day TTL, SHA-256-hashed before being stored in Redis. Refresh tokens are grouped into per-login **families**: each `/auth/refresh` call rotates to a new token in the same family and invalidates the previous one; presenting a token that was already rotated away is treated as evidence of theft and revokes that entire family (ending that one login session everywhere it's used) — the user's other sessions/devices are unaffected. Logout only needs the refresh cookie, not a valid access token, so it still works after the access token has expired. Access tokens themselves can't be revoked early: after logout, reuse-triggered revocation, or an admin deactivating the account, an already-issued access token keeps working until it naturally expires (at most 15 minutes) — only refresh stops immediately.
+- **Account activation / password reset:** email-delivered 6-digit code (15-minute TTL, max 5 attempts, rate-limited per email) — no password-reset links. Sits behind an `EmailSender` interface; no real email provider is chosen yet (a log-only stub is used until Phase 6+/deployment). The same mechanism serves both an existing user's "forgot password" and a newly invited user's first activation (see section 09).
 - **Password hashing:** Argon2id (instead of bcrypt — more resistant to GPU/ASIC cracking), implemented via Spring Security's `Argon2PasswordEncoder`.
 - **Pepper:** a fixed secret string, stored only as an environment variable (must be at least 32 characters & never in the DB or in code), combined with the password before hashing — so a DB leak alone isn't enough to crack it.
-- **RBAC:** enforced by Permission Level (see section 04), combined with `clubId` filtering (see section 03).
-- **Additional protections:** CORS restricted to approved domains, rate limiting via Redis, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI.
+- **RBAC:** enforced by Permission Level (see section 04), combined with `clubId` filtering (see section 03), via Spring Security — `PermissionLevel` is mapped to a Spring Security authority, and protected endpoints are annotated `@PreAuthorize`. A `JwtAuthenticationFilter` validates the access token on every request and populates the request's `clubId` context from its claim; this is what makes the per-request filtering in section 03 actually apply.
+- **Known accepted trade-off:** inviting a user whose email is already registered (in any club) returns `409 Conflict`, which tells an authenticated `ADMIN` that the email exists somewhere in the system. Accepted because the endpoint itself requires an authenticated `ADMIN` (it's not public), and email is unique system-wide by design (section 03).
+- **Additional protections:** CORS restricted to approved domains, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI. Redis-backed rate limiting covers the activation/reset code above; `/auth/login` itself has no rate limiting or lockout yet — tracked as a follow-up.
 - **Secrets management:** environment variables / a secrets manager only — no key, password, or pepper ever goes into git.
 
 ## 11. Testing & DevOps
