@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.squadpulse.auth.AuthService.IssuedTokens;
 import com.squadpulse.auth.JwtService.AccessToken;
 import jakarta.servlet.http.Cookie;
+import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,7 +49,7 @@ class AuthControllerTest {
 
   @Test
   void loginReturnsTheAccessTokenInTheBodyAndTheRefreshTokenOnlyInASecureCookie() throws Exception {
-    when(authService.login("coach@example.com", "secret")).thenReturn(TOKENS);
+    when(authService.login("coach@example.com", "secret", "127.0.0.1")).thenReturn(TOKENS);
 
     mockMvc
         .perform(login("{\"email\":\"coach@example.com\",\"password\":\"secret\"}"))
@@ -72,7 +73,8 @@ class AuthControllerTest {
 
   @Test
   void loginWithBadCredentialsIsAGeneric401WithNoCookie() throws Exception {
-    when(authService.login(anyString(), anyString())).thenThrow(new InvalidCredentialsException());
+    when(authService.login(anyString(), anyString(), anyString()))
+        .thenThrow(new InvalidCredentialsException());
 
     mockMvc
         .perform(login("{\"email\":\"coach@example.com\",\"password\":\"wrong\"}"))
@@ -85,7 +87,36 @@ class AuthControllerTest {
   void loginWithBlankFieldsIs400() throws Exception {
     mockMvc.perform(login("{\"email\":\"\",\"password\":\"\"}")).andExpect(status().isBadRequest());
 
-    verify(authService, never()).login(anyString(), anyString());
+    verify(authService, never()).login(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void loginThrottlesByTheConnectionsAddressNotAForwardedHeader() throws Exception {
+    when(authService.login("coach@example.com", "secret", "203.0.113.7")).thenReturn(TOKENS);
+
+    mockMvc
+        .perform(
+            login("{\"email\":\"coach@example.com\",\"password\":\"secret\"}")
+                .with(
+                    request -> {
+                      request.setRemoteAddr("203.0.113.7");
+                      return request;
+                    })
+                .header("X-Forwarded-For", "198.51.100.99"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void aThrottledLoginIs429WithRetryAfterAndNoCookie() throws Exception {
+    when(authService.login(anyString(), anyString(), anyString()))
+        .thenThrow(new LoginThrottledException(Duration.ofMillis(599_001)));
+
+    mockMvc
+        .perform(login("{\"email\":\"coach@example.com\",\"password\":\"secret\"}"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(header().string(HttpHeaders.RETRY_AFTER, "600"))
+        .andExpect(jsonPath("$.message").value("Too many failed login attempts, try again later"))
+        .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
   }
 
   @Test

@@ -41,7 +41,7 @@ squadpulse/
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Konva.js (tactical board), Recharts |
 | Backend | Java, Spring Boot (single modular monolith) |
-| Database | MongoDB (primary data), Redis (refresh-token families today; cache and rate limiting planned) |
+| Database | MongoDB (primary data), Redis (refresh-token families and failed-login counts today; cache planned) |
 | Scraper | Node.js, Playwright/Cheerio |
 | Auth | Stateless JWT (Access + Refresh in HttpOnly cookie), Argon2id password hashing + a pepper (env var, never committed) |
 | CI | GitHub Actions (lint, test, build on PRs to `master` and pushes to `master` — no CD yet) |
@@ -62,6 +62,7 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 
 - JWT: short-lived (15 min) HS256 Access Token carrying `sub` (user id), `clubId` and `permissionLevel`, sent as `Authorization: Bearer ...`. `auth.JwtAuthenticationFilter` validates it on every request and puts its `clubId` into `ClubContext` for the request's duration — so a club is always taken from the token, never from the request body or parameters
 - Refresh Token: an opaque random value (not a JWT), 30-day lifetime, only ever in an `HttpOnly; Secure; SameSite=Strict` cookie scoped to `/auth`. Stored in Redis as a SHA-256 hash, grouped into one token *family* per login; every refresh rotates it, and replaying an already-rotated token revokes the whole family (see `auth.RefreshTokenService` for the Redis key scheme)
+- Login throttling: after 5 failed logins within 15 minutes for the same (email, client IP) pair, further attempts from that pair get `429` (with `Retry-After`) without the password being checked, until the window ends; a successful login clears the count. Keyed by the pair so nobody can lock a user out by failing their password from elsewhere, and unknown emails are throttled the same way so a `429` reveals nothing. The IP is the TCP peer address — `X-Forwarded-For` is deliberately not trusted until a deployment target and its proxy are chosen. Limits are in `application.yml` under `squadpulse.security.login-throttle` (see `auth.LoginThrottleService` for the Redis key scheme)
 - Passwords: Argon2id + pepper (pepper lives only in an env var, never in the DB or in git). The password is HMAC-SHA256'd with the pepper, then hashed with Spring Security's `Argon2PasswordEncoder` (`auth.PepperedPasswordEncoder`). Changing the pepper invalidates every stored hash
 - RBAC: enforced by Permission Level (`ADMIN` / `EDIT_FULL` / `EDIT_PARTIAL` / `VIEW_ONLY`), combined with `clubId` filtering. Each level is a Spring Security authority of the same name — restrict an endpoint with `@PreAuthorize("hasAuthority('ADMIN')")` on the controller method, never with a manual check in its body. Every endpoint requires a valid access token unless `auth.SecurityConfig` lists it as public
 - CORS restricted, rate limiting via Redis, input validation on every endpoint, Dependabot in CI
@@ -101,14 +102,14 @@ Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
 
 1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET`, `PASSWORD_PEPPER` and `OWNER_BOOTSTRAP_SECRET` (at least 32 characters each, all different — the backend refuses to start otherwise; `OWNER_BOOTSTRAP_SECRET` is only required by the bootstrap task below).
 2. `docker compose up -d` — MongoDB + Redis. MongoDB runs as a single-node replica set (`rs0`), since MongoDB only supports multi-document transactions on a replica set; the healthcheck initiates it on first start. Keep `directConnection=true` in `MONGODB_URI`.
-3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). It needs both containers: MongoDB for data, Redis (`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`) for login sessions — the Redis connection is only opened on first use, so a missing Redis shows up as failing logins, not a failed startup. Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
+3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). It needs both containers: MongoDB for data, Redis (`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`) for login sessions and failed-login counts — the Redis connection is only opened on first use, so a missing Redis shows up as failing logins, not a failed startup. Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
 4. Frontend: `cd frontend && npm install && npm run dev`. Checks: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
 
 ### Auth API
 
 | Endpoint | Access | What it does |
 |---|---|---|
-| `POST /auth/login` | public | `{ "email", "password" }` → `200` with `{ "accessToken", "tokenType": "Bearer", "expiresIn" }` in the body and the refresh token in the `refresh_token` cookie. Any failure (unknown email, wrong password, no password set yet, deactivated user) is the same generic `401` |
+| `POST /auth/login` | public | `{ "email", "password" }` → `200` with `{ "accessToken", "tokenType": "Bearer", "expiresIn" }` in the body and the refresh token in the `refresh_token` cookie. Any failure (unknown email, wrong password, no password set yet, deactivated user) is the same generic `401`; after 5 failures in 15 minutes from the same IP for the same email, `429` with `Retry-After` |
 | `POST /auth/refresh` | public (refresh cookie) | Rotates the refresh cookie and returns a new access token. `401` for a missing / expired / revoked / reused token |
 | `POST /auth/logout` | public (refresh cookie) | Revokes this session's token family (other devices stay logged in) and clears the cookie. Always `204` |
 | `POST /auth/users/invite` | `ADMIN` | `{ "email", "fullName", "title", "permissionLevel", "dateOfBirth"? }` → `201` with the new user, always in the caller's own club. The user has no password yet, so can't log in until they set one (activation — KAN-21). `403` for non-admins, `409` if the email is taken (in any club) |

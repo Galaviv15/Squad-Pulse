@@ -44,7 +44,7 @@ squadpulse/
 
 Tech stack: React 19 / TS / Vite / Tailwind / shadcn/ui / TanStack Query / Zustand / Konva.js / Recharts on the frontend; Java + Spring Boot on the backend; MongoDB + Redis for storage; Node.js (Playwright/Cheerio) for the scraper; stateless JWT auth via Spring Security (HS256 Access token in the `Authorization` header + opaque, rotating Refresh token in an HttpOnly cookie, tracked in Redis) with Argon2id + pepper for passwords; GitHub Actions for CI.
 
-Access control: every endpoint requires a valid access token unless `auth.SecurityConfig` lists it as public. Permission levels are Spring Security authorities of the same name — use `@PreAuthorize("hasAuthority('ADMIN')")` on controller methods, never manual permission checks in controller bodies. Errors go through `common.GlobalExceptionHandler`; module-specific 401s extend `common.UnauthorizedException`.
+Access control: every endpoint requires a valid access token unless `auth.SecurityConfig` lists it as public. Permission levels are Spring Security authorities of the same name — use `@PreAuthorize("hasAuthority('ADMIN')")` on controller methods, never manual permission checks in controller bodies. Errors go through `common.GlobalExceptionHandler`; module-specific 401s extend `common.UnauthorizedException` (likewise 409 → `common.ConflictException`, 429 → `common.TooManyRequestsException`).
 
 ## Git & Jira conventions
 
