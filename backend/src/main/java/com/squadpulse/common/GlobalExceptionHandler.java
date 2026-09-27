@@ -8,9 +8,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.NoHandlerFoundException;
 
 /**
  * Turns exceptions raised anywhere in the request-handling path into a consistent JSON error shape,
@@ -101,6 +103,39 @@ public class GlobalExceptionHandler {
         .body(
             ApiErrorResponse.of(
                 HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed request body"));
+  }
+
+  /**
+   * No controller mapped to the path. Only reachable for authenticated requests — without a token,
+   * the security chain answers 401 before routing runs — and only because static-resource mappings
+   * are off in application.yml; otherwise the {@code /**} resource handler would claim the path.
+   */
+  @ExceptionHandler(NoHandlerFoundException.class)
+  public ResponseEntity<ApiErrorResponse> handleNoHandlerFound(NoHandlerFoundException ex) {
+    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.NOT_FOUND.value(),
+                "Not Found",
+                "No endpoint " + ex.getHttpMethod() + " " + ex.getRequestURL()));
+  }
+
+  /**
+   * The path exists but not for this method. Carries the {@code Allow} header RFC 9110 requires.
+   */
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<ApiErrorResponse> handleMethodNotSupported(
+      HttpRequestMethodNotSupportedException ex) {
+    String[] supported = ex.getSupportedMethods();
+    List<String> details = supported == null ? List.of() : List.of(supported);
+    return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+        .headers(ex.getHeaders())
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.METHOD_NOT_ALLOWED.value(),
+                "Method Not Allowed",
+                "Method " + ex.getMethod() + " is not supported for this endpoint",
+                details));
   }
 
   @ExceptionHandler(Exception.class)

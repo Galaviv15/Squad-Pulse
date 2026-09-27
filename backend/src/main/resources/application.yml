@@ -24,6 +24,14 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
+  # JSON API only — no static files to serve. Without this, the default /** resource handler claims
+  # every unmatched path and fails with NoResourceFoundException, so it never reaches the
+  # NoHandlerFoundException → 404 handler in common.GlobalExceptionHandler (KAN-23).
+  # (spring.mvc.throw-exception-if-no-handler-found is not needed: deprecated since Boot 3.2, and
+  # Spring 7's DispatcherServlet always throws.)
+  web:
+    resources:
+      add-mappings: false
 
 server:
   port: 8080
