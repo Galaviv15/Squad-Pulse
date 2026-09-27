@@ -11,6 +11,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -28,8 +30,8 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>Only {@link #PUBLIC_ENDPOINTS} are reachable without an access token; everything else
  *       requires one, and gets a 401 without it. Finer-grained RBAC is per method, via
  *       {@code @PreAuthorize("hasAuthority('ADMIN')")} etc. on the {@link PermissionLevel}
- *       authorities the filter grants; a denial there is turned into a 403 by {@code
- *       GlobalExceptionHandler}.
+ *       authorities the filter grants, expanded by {@link #permissionLevelHierarchy()}; a denial
+ *       there is turned into a 403 by {@code GlobalExceptionHandler}.
  *   <li>CSRF protection is off: the API is authenticated by a bearer header, which a browser never
  *       attaches on its own. The one cookie — the refresh token — is {@code SameSite=Strict} and
  *       scoped to {@code /auth}, so a cross-site request can't carry it to {@code /auth/refresh} or
@@ -47,8 +49,37 @@ class SecurityConfig {
   /**
    * Public because they authenticate by other means: login by email + password, refresh and logout
    * by the refresh-token cookie (logout has to work after the access token has expired).
+   *
+   * <p>POST only: these paths are permitted solely via {@code requestMatchers(HttpMethod.POST,
+   * PUBLIC_ENDPOINTS)} below. A public endpoint with any other HTTP method needs that rule changed
+   * as well as {@code PublicEndpointsConsistencyTest}, which assumes the same.
    */
   static final String[] PUBLIC_ENDPOINTS = {"/auth/login", "/auth/refresh", "/auth/logout"};
+
+  /**
+   * {@code ADMIN > EDIT_FULL > EDIT_PARTIAL > VIEW_ONLY}, derived from {@link PermissionLevel}'s
+   * declaration order (the one source of truth), so an authority check for one level also admits
+   * every higher level. {@link JwtAuthenticationFilter} still grants just the caller's own level;
+   * this does the expansion.
+   *
+   * <p>No role prefix: the filter grants bare authority names ({@code ADMIN}, not {@code
+   * ROLE_ADMIN}), and checks use {@code hasAuthority}, which the hierarchy applies to as well.
+   *
+   * <p>Spring Security 7 picks this bean up on its own for both {@code @PreAuthorize} (via {@code
+   * PrePostMethodSecurityConfiguration}) and {@code authorizeHttpRequests}; {@code
+   * PermissionLevelHierarchyWebMvcTest} proves the method-security side end to end. {@code static}
+   * so it's available to the method-security infrastructure early, without instantiating this
+   * class.
+   */
+  @Bean
+  static RoleHierarchy permissionLevelHierarchy() {
+    RoleHierarchyImpl.Builder builder = RoleHierarchyImpl.withRolePrefix("");
+    PermissionLevel[] levels = PermissionLevel.values();
+    for (int i = 0; i < levels.length - 1; i++) {
+      builder.role(levels[i].name()).implies(levels[i + 1].name());
+    }
+    return builder.build();
+  }
 
   @Bean
   SecurityFilterChain securityFilterChain(

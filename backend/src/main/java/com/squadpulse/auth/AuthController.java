@@ -1,6 +1,7 @@
 package com.squadpulse.auth;
 
 import com.squadpulse.auth.AuthService.IssuedTokens;
+import com.squadpulse.common.PublicEndpoint;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.time.Duration;
@@ -14,9 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Login, refresh and logout (see docs/spec.md section 10). All three are public in {@link
- * SecurityConfig}: login authenticates by email + password, refresh and logout by the refresh-token
- * cookie.
+ * Login, refresh and logout (see docs/spec.md section 10). All three are public — {@link
+ * PublicEndpoint} here and listed in {@link SecurityConfig#PUBLIC_ENDPOINTS}: login authenticates
+ * by email + password, refresh and logout by the refresh-token cookie.
  *
  * <p>The access token goes in the JSON body; the refresh token only ever in the {@value
  * #REFRESH_COOKIE} cookie — {@code HttpOnly} (unreadable by page scripts, so XSS can't steal it),
@@ -49,6 +50,7 @@ class AuthController {
    * are chosen (see docs/spec.md section 11).
    */
   @PostMapping("/login")
+  @PublicEndpoint
   ResponseEntity<AccessTokenResponse> login(
       @Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
     return withTokens(
@@ -56,6 +58,7 @@ class AuthController {
   }
 
   @PostMapping("/refresh")
+  @PublicEndpoint
   ResponseEntity<AccessTokenResponse> refresh(
       @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
     return withTokens(authService.refresh(refreshToken));
@@ -63,6 +66,7 @@ class AuthController {
 
   /** Always 204 and clears the cookie — even if the token was already invalid. */
   @PostMapping("/logout")
+  @PublicEndpoint
   ResponseEntity<Void> logout(
       @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
     authService.logout(refreshToken);

@@ -1,6 +1,7 @@
 package com.squadpulse.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -10,6 +11,8 @@ import com.redis.testcontainers.RedisContainer;
 import com.squadpulse.common.ClubContext;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -72,6 +75,7 @@ class AuthFlowIntegrationTest {
   @Autowired private StringRedisTemplate redis;
   @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private ClubContext clubContext;
+  @Autowired private JwtService jwtService;
 
   @AfterEach
   void tearDown() {
@@ -246,6 +250,140 @@ class AuthFlowIntegrationTest {
     login("coach@example.com", PASSWORD).andExpect(status().isOk());
   }
 
+  @Test
+  void anAdminUpgradesAUserInTheirClubAndTheChangeIsPersisted() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    User analyst = insertUser("club-a", "analyst@example.com", PermissionLevel.VIEW_ONLY, true);
+    String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    perform(
+            changePermissionLevel(
+                accessToken, analyst.getId(), "{\"permissionLevel\": \"EDIT_PARTIAL\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(analyst.getId()))
+        .andExpect(jsonPath("$.permissionLevel").value("EDIT_PARTIAL"));
+
+    User stored = mongoTemplate.findById(analyst.getId(), User.class);
+    assertThat(stored.getPermissionLevel()).isEqualTo(PermissionLevel.EDIT_PARTIAL);
+    assertThat(stored.getClubId()).isEqualTo("club-a");
+  }
+
+  /**
+   * The club-isolation check for this endpoint: another club's user id is indistinguishable from
+   * one that doesn't exist, and that user is left untouched in the database.
+   */
+  @Test
+  void anAdminCantChangeAUserInAnotherClubAndItLooksLikeAnUnknownId() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    User otherClubsUser =
+        insertUser("club-b", "analyst@other.example.com", PermissionLevel.VIEW_ONLY, true);
+    User before = mongoTemplate.findById(otherClubsUser.getId(), User.class);
+    String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    Map<String, Object> otherClubBody =
+        notFoundBodyWithoutTimestamp(
+            changePermissionLevel(
+                accessToken, otherClubsUser.getId(), "{\"permissionLevel\": \"ADMIN\"}"));
+    Map<String, Object> unknownIdBody =
+        notFoundBodyWithoutTimestamp(
+            changePermissionLevel(
+                accessToken, "000000000000000000000000", "{\"permissionLevel\": \"ADMIN\"}"));
+
+    assertThat(otherClubBody).isEqualTo(unknownIdBody);
+    assertThat(otherClubBody).containsEntry("message", "User not found");
+    User after = mongoTemplate.findById(otherClubsUser.getId(), User.class);
+    assertThat(after.getPermissionLevel()).isEqualTo(PermissionLevel.VIEW_ONLY);
+    assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
+    assertThat(after).usingRecursiveComparison().isEqualTo(before);
+  }
+
+  /**
+   * The club-scoped lookup runs before the "already at this level" no-op, so another club's user
+   * who already has the requested level is still a 404 — never a 200 that would confirm the id
+   * exists.
+   */
+  @Test
+  void anotherClubsUserAlreadyAtTheRequestedLevelIsStillA404() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    User otherClubsAdmin =
+        insertUser("club-b", "manager@other.example.com", PermissionLevel.ADMIN, true);
+    User before = mongoTemplate.findById(otherClubsAdmin.getId(), User.class);
+    String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    Map<String, Object> otherClubBody =
+        notFoundBodyWithoutTimestamp(
+            changePermissionLevel(
+                accessToken, otherClubsAdmin.getId(), "{\"permissionLevel\": \"ADMIN\"}"));
+
+    assertThat(otherClubBody)
+        .isEqualTo(
+            notFoundBodyWithoutTimestamp(
+                changePermissionLevel(
+                    accessToken, "000000000000000000000000", "{\"permissionLevel\": \"ADMIN\"}")));
+    assertThat(mongoTemplate.findById(otherClubsAdmin.getId(), User.class))
+        .usingRecursiveComparison()
+        .isEqualTo(before);
+  }
+
+  @Test
+  void onlyThePermissionLevelChangesWhateverElseTheBodyCarries() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    User analyst = insertUser("club-a", "analyst@example.com", PermissionLevel.VIEW_ONLY, true);
+    String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    perform(
+            changePermissionLevel(
+                accessToken,
+                analyst.getId(),
+                """
+                {"permissionLevel": "EDIT_FULL", "clubId": "club-b", "title": "CLUB_MANAGER",
+                 "email": "hijacked@example.com", "fullName": "Someone Else", "active": false}
+                """))
+        .andExpect(status().isOk());
+
+    User stored = mongoTemplate.findById(analyst.getId(), User.class);
+    assertThat(stored.getPermissionLevel()).isEqualTo(PermissionLevel.EDIT_FULL);
+    assertThat(stored.getClubId()).isEqualTo("club-a");
+    assertThat(stored.getTitle()).isEqualTo(Title.HEAD_COACH);
+    assertThat(stored.getEmail()).isEqualTo("analyst@example.com");
+    assertThat(stored.getFullName()).isEqualTo("Dana Levi");
+    assertThat(stored.isActive()).isTrue();
+    assertThat(stored.getPasswordHash()).isEqualTo(analyst.getPasswordHash());
+  }
+
+  @Test
+  void anAdminCantChangeTheirOwnLevel() throws Exception {
+    User manager = insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    perform(
+            changePermissionLevel(
+                accessToken, manager.getId(), "{\"permissionLevel\": \"VIEW_ONLY\"}"))
+        .andExpect(status().isConflict());
+
+    assertThat(mongoTemplate.findById(manager.getId(), User.class).getPermissionLevel())
+        .isEqualTo(PermissionLevel.ADMIN);
+  }
+
+  /** The documented "takes effect at the next refresh", proven rather than asserted. */
+  @Test
+  void theNewLevelIsInTheTargetsNextAccessTokenAfterRefresh() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    User analyst = insertUser("club-a", "analyst@example.com", PermissionLevel.VIEW_ONLY, true);
+    String adminToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+    MvcResult analystLogin = login("analyst@example.com", PASSWORD).andReturn();
+    assertThat(permissionLevelIn(accessToken(analystLogin))).isEqualTo(PermissionLevel.VIEW_ONLY);
+
+    perform(
+            changePermissionLevel(
+                adminToken, analyst.getId(), "{\"permissionLevel\": \"EDIT_PARTIAL\"}"))
+        .andExpect(status().isOk());
+
+    MvcResult refreshed =
+        perform(post("/auth/refresh").cookie(refreshCookie(analystLogin))).andReturn();
+    assertThat(permissionLevelIn(accessToken(refreshed))).isEqualTo(PermissionLevel.EDIT_PARTIAL);
+  }
+
   /** Performs the request and checks that it left no clubId behind on this thread. */
   private ResultActions perform(RequestBuilder request) throws Exception {
     ResultActions result = mockMvc.perform(request);
@@ -289,7 +427,33 @@ class AuthFlowIntegrationTest {
                 .formatted(email));
   }
 
-  private void insertUser(
+  private static RequestBuilder changePermissionLevel(
+      String accessToken, String userId, String body) {
+    return patch("/auth/users/" + userId + "/permission-level")
+        .header("Authorization", "Bearer " + accessToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(body);
+  }
+
+  /** Every field of the 404 body except {@code timestamp}, which differs between any two calls. */
+  private Map<String, Object> notFoundBodyWithoutTimestamp(RequestBuilder request)
+      throws Exception {
+    String body =
+        perform(request)
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Map<String, Object> fields = new HashMap<>(JsonPath.<Map<String, Object>>read(body, "$"));
+    assertThat(fields.remove("timestamp")).as("timestamp").isNotNull();
+    return fields;
+  }
+
+  private PermissionLevel permissionLevelIn(String accessToken) {
+    return jwtService.parse(accessToken).orElseThrow().permissionLevel();
+  }
+
+  private User insertUser(
       String clubId, String email, PermissionLevel permissionLevel, boolean active) {
     User user = new User();
     user.setClubId(clubId);
@@ -299,7 +463,7 @@ class AuthFlowIntegrationTest {
     user.setPermissionLevel(permissionLevel);
     user.setFullName("Dana Levi");
     user.setActive(active);
-    mongoTemplate.insert(user);
+    return mongoTemplate.insert(user);
   }
 
   private static Cookie refreshCookie(MvcResult result) {
