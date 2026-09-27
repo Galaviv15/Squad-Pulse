@@ -17,9 +17,10 @@ spring:
       # ignored. Needed for the globally unique User.email index (KAN-17) — without it, duplicate
       # emails across clubs would be accepted and login-by-email would become ambiguous.
       auto-index-creation: true
-    # Refresh-token families (auth.RefreshTokenService). Same env vars docker-compose uses. Host and
-    # port default to the local docker-compose Redis; the connection is only opened on first use, so
-    # a missing Redis surfaces on the first login/refresh, not at startup.
+    # Refresh-token families, login throttling and activation / reset codes (auth.*Service). Same
+    # env vars docker-compose uses. Host and port default to the local docker-compose Redis; the
+    # connection is only opened on first use, so a missing Redis surfaces on the first
+    # login/refresh, not at startup.
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
