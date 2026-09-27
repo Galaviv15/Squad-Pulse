@@ -11,6 +11,8 @@ import com.redis.testcontainers.RedisContainer;
 import com.squadpulse.common.ClubContext;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -278,27 +280,47 @@ class AuthFlowIntegrationTest {
     User before = mongoTemplate.findById(otherClubsUser.getId(), User.class);
     String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
 
-    String otherClubBody =
-        perform(
-                changePermissionLevel(
-                    accessToken, otherClubsUser.getId(), "{\"permissionLevel\": \"ADMIN\"}"))
-            .andExpect(status().isNotFound())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-    String unknownIdBody =
-        perform(
-                changePermissionLevel(
-                    accessToken, "000000000000000000000000", "{\"permissionLevel\": \"ADMIN\"}"))
-            .andExpect(status().isNotFound())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+    Map<String, Object> otherClubBody =
+        notFoundBodyWithoutTimestamp(
+            changePermissionLevel(
+                accessToken, otherClubsUser.getId(), "{\"permissionLevel\": \"ADMIN\"}"));
+    Map<String, Object> unknownIdBody =
+        notFoundBodyWithoutTimestamp(
+            changePermissionLevel(
+                accessToken, "000000000000000000000000", "{\"permissionLevel\": \"ADMIN\"}"));
 
-    assertThat(JsonPath.<String>read(otherClubBody, "$.message"))
-        .isEqualTo(JsonPath.<String>read(unknownIdBody, "$.message"))
-        .isEqualTo("User not found");
-    assertThat(mongoTemplate.findById(otherClubsUser.getId(), User.class))
+    assertThat(otherClubBody).isEqualTo(unknownIdBody);
+    assertThat(otherClubBody).containsEntry("message", "User not found");
+    User after = mongoTemplate.findById(otherClubsUser.getId(), User.class);
+    assertThat(after.getPermissionLevel()).isEqualTo(PermissionLevel.VIEW_ONLY);
+    assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
+    assertThat(after).usingRecursiveComparison().isEqualTo(before);
+  }
+
+  /**
+   * The club-scoped lookup runs before the "already at this level" no-op, so another club's user
+   * who already has the requested level is still a 404 — never a 200 that would confirm the id
+   * exists.
+   */
+  @Test
+  void anotherClubsUserAlreadyAtTheRequestedLevelIsStillA404() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    User otherClubsAdmin =
+        insertUser("club-b", "manager@other.example.com", PermissionLevel.ADMIN, true);
+    User before = mongoTemplate.findById(otherClubsAdmin.getId(), User.class);
+    String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    Map<String, Object> otherClubBody =
+        notFoundBodyWithoutTimestamp(
+            changePermissionLevel(
+                accessToken, otherClubsAdmin.getId(), "{\"permissionLevel\": \"ADMIN\"}"));
+
+    assertThat(otherClubBody)
+        .isEqualTo(
+            notFoundBodyWithoutTimestamp(
+                changePermissionLevel(
+                    accessToken, "000000000000000000000000", "{\"permissionLevel\": \"ADMIN\"}")));
+    assertThat(mongoTemplate.findById(otherClubsAdmin.getId(), User.class))
         .usingRecursiveComparison()
         .isEqualTo(before);
   }
@@ -411,6 +433,20 @@ class AuthFlowIntegrationTest {
         .header("Authorization", "Bearer " + accessToken)
         .contentType(MediaType.APPLICATION_JSON)
         .content(body);
+  }
+
+  /** Every field of the 404 body except {@code timestamp}, which differs between any two calls. */
+  private Map<String, Object> notFoundBodyWithoutTimestamp(RequestBuilder request)
+      throws Exception {
+    String body =
+        perform(request)
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Map<String, Object> fields = new HashMap<>(JsonPath.<Map<String, Object>>read(body, "$"));
+    assertThat(fields.remove("timestamp")).as("timestamp").isNotNull();
+    return fields;
   }
 
   private PermissionLevel permissionLevelIn(String accessToken) {
