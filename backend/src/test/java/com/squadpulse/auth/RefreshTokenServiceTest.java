@@ -13,7 +13,10 @@ import static org.mockito.Mockito.when;
 
 import com.squadpulse.auth.RefreshTokenService.RefreshSession;
 import com.squadpulse.auth.RefreshTokenService.Rotation;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +31,7 @@ import org.springframework.data.redis.core.ValueOperations;
 class RefreshTokenServiceTest {
 
   private static final String FAMILY_KEY = RefreshTokenService.FAMILY_KEY_PREFIX + "family-1";
+  private static final Instant NOW = Instant.parse("2026-09-01T10:00:00.123Z");
 
   private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
 
@@ -36,7 +40,9 @@ class RefreshTokenServiceTest {
 
   private final RefreshTokenService service =
       new RefreshTokenService(
-          redis, new TokenProperties(Duration.ofMinutes(15), Duration.ofDays(30)));
+          redis,
+          new TokenProperties(Duration.ofMinutes(15), Duration.ofDays(30)),
+          Clock.fixed(NOW, ZoneOffset.UTC));
 
   @BeforeEach
   void setUp() {
@@ -63,6 +69,15 @@ class RefreshTokenServiceTest {
   }
 
   @Test
+  void recordsWhenTheFamilyWasStartedInEpochMillis() {
+    service.issue("user-1", "club-a");
+
+    ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+    verify(redis).execute(eq(RefreshTokenService.ISSUE_SCRIPT), anyList(), args.capture());
+    assertThat(args.getValue()).endsWith(String.valueOf(NOW.toEpochMilli()));
+  }
+
+  @Test
   void issuesADifferentTokenEveryTime() {
     assertThat(service.issue("user-1", "club-a")).isNotEqualTo(service.issue("user-1", "club-a"));
   }
@@ -70,11 +85,12 @@ class RefreshTokenServiceTest {
   @Test
   void rotatesTheCurrentTokenOfAFamily() {
     when(values.get(tokenKey("old-token"))).thenReturn("family-1");
-    whenRotateScriptReturns(List.of("ROTATED", "user-1", "club-a"));
+    whenRotateScriptReturns(
+        List.of("ROTATED", "user-1", "club-a", String.valueOf(NOW.toEpochMilli())));
 
     Rotation rotation = service.rotate("old-token");
 
-    assertThat(rotation.session()).isEqualTo(new RefreshSession("user-1", "club-a"));
+    assertThat(rotation.session()).isEqualTo(new RefreshSession("user-1", "club-a", NOW));
     assertThat(rotation.refreshToken()).isNotEqualTo("old-token").hasSize(43);
     ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
     verify(redis)
@@ -90,6 +106,21 @@ class RefreshTokenServiceTest {
         .startsWith(
             RefreshTokenService.hash("old-token"),
             RefreshTokenService.hash(rotation.refreshToken()));
+  }
+
+  /**
+   * A family the script reports without a usable {@code issuedAt} (only possible for a key written
+   * outside this service) counts as the oldest possible one — never a crash.
+   */
+  @Test
+  void anUnparseableOrMissingIssuedAtCountsAsTheEpoch() {
+    when(values.get(tokenKey("old-token"))).thenReturn("family-1");
+
+    whenRotateScriptReturns(List.of("ROTATED", "user-1", "club-a", "not-a-number"));
+    assertThat(service.rotate("old-token").session().issuedAt()).isEqualTo(Instant.EPOCH);
+
+    whenRotateScriptReturns(List.of("ROTATED", "user-1", "club-a"));
+    assertThat(service.rotate("old-token").session().issuedAt()).isEqualTo(Instant.EPOCH);
   }
 
   /** The script already deleted the family; the service must refuse, not hand out a token. */

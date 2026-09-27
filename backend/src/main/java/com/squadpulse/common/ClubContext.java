@@ -1,6 +1,7 @@
 package com.squadpulse.common;
 
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -43,5 +44,23 @@ public class ClubContext {
    */
   public String requireClubId() {
     return getClubId().orElseThrow(MissingClubContextException::new);
+  }
+
+  /**
+   * Runs {@code action} with {@code clubId} as the current club, then puts back whatever was set
+   * before (or clears it) — even if {@code action} throws. For code that has no club context of its
+   * own, such as a public endpoint acting on a user it has just looked up.
+   *
+   * <p>{@code clubId} must come from a trusted server-side record — the stored user, a
+   * refresh-token family — <b>never</b> from the request (see CLAUDE.md standing rule 4).
+   */
+  public <T> T callAs(String clubId, Supplier<T> action) {
+    Optional<String> previousClubId = getClubId();
+    setClubId(clubId);
+    try {
+      return action.get();
+    } finally {
+      previousClubId.ifPresentOrElse(this::setClubId, this::clear);
+    }
   }
 }

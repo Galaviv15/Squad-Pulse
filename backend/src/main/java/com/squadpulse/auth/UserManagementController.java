@@ -27,7 +27,10 @@ class UserManagementController {
     this.userPermissionLevelService = userPermissionLevelService;
   }
 
-  /** Creates a user without a password in the caller's club (see {@link UserInvitationService}). */
+  /**
+   * Creates a user without a password in the caller's club and emails them an activation code (see
+   * {@link UserInvitationService}).
+   */
   @PostMapping("/invite")
   @PreAuthorize("hasAuthority('ADMIN')")
   @ResponseStatus(HttpStatus.CREATED)

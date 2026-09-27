@@ -56,6 +56,13 @@ public class User extends ClubScopedEntity {
    */
   private boolean active = true;
 
+  /**
+   * Every refresh-token family issued before this instant is rejected at its next refresh (see
+   * {@link AuthService#refresh}) — how a password reset ends all of the user's sessions at once.
+   * {@code null} means never set. Stored with millisecond precision, and compared as such.
+   */
+  private Instant sessionsInvalidatedAt;
+
   @CreatedDate private Instant createdAt;
 
   @LastModifiedDate private Instant updatedAt;
@@ -132,6 +139,14 @@ public class User extends ClubScopedEntity {
 
   public void setActive(boolean active) {
     this.active = active;
+  }
+
+  public Instant getSessionsInvalidatedAt() {
+    return sessionsInvalidatedAt;
+  }
+
+  public void setSessionsInvalidatedAt(Instant sessionsInvalidatedAt) {
+    this.sessionsInvalidatedAt = sessionsInvalidatedAt;
   }
 
   public Instant getCreatedAt() {

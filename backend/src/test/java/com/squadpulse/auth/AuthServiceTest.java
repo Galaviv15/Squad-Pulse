@@ -33,6 +33,7 @@ class AuthServiceTest {
   private static final String DUMMY_HASH = "dummy-hash";
   private static final String REAL_HASH = "real-hash";
   private static final String IP = "203.0.113.7";
+  private static final Instant LOGIN_TIME = Instant.parse("2026-09-01T10:00:00Z");
   private static final AccessToken ACCESS_TOKEN =
       new AccessToken("access-token", Instant.parse("2026-09-01T10:15:00Z"));
 
@@ -149,7 +150,7 @@ class AuthServiceTest {
     user.setPermissionLevel(PermissionLevel.VIEW_ONLY); // e.g. downgraded since login
     AtomicReference<Optional<String>> clubDuringLookup = new AtomicReference<>();
     when(refreshTokenService.rotate("old"))
-        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a")));
+        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a", LOGIN_TIME)));
     when(userRepository.findById("user-1"))
         .thenAnswer(
             invocation -> {
@@ -169,7 +170,7 @@ class AuthServiceTest {
   void refreshRestoresAnyClubContextTheRequestAlreadyHad() {
     clubContext.setClubId("club-from-access-token");
     when(refreshTokenService.rotate("old"))
-        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a")));
+        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a", LOGIN_TIME)));
     when(userRepository.findById("user-1")).thenReturn(Optional.of(user()));
 
     authService.refresh("old");
@@ -182,7 +183,7 @@ class AuthServiceTest {
     User deactivated = user();
     deactivated.setActive(false);
     when(refreshTokenService.rotate("old"))
-        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a")));
+        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a", LOGIN_TIME)));
     when(userRepository.findById("user-1")).thenReturn(Optional.of(deactivated));
 
     assertThatThrownBy(() -> authService.refresh("old"))
@@ -192,10 +193,56 @@ class AuthServiceTest {
     verify(jwtService, never()).issue(any());
   }
 
+  /** A password reset after this family was started ends it (see User#sessionsInvalidatedAt). */
+  @Test
+  void refreshForAFamilyStartedBeforeTheUsersSessionsWereInvalidatedRevokesIt() {
+    User user = user();
+    user.setSessionsInvalidatedAt(LOGIN_TIME.plusMillis(1));
+    whenRefreshFindsUser("old", LOGIN_TIME, user);
+
+    assertThatThrownBy(() -> authService.refresh("old"))
+        .isInstanceOf(InvalidRefreshTokenException.class);
+
+    verify(refreshTokenService).revoke("new");
+    verify(jwtService, never()).issue(any());
+  }
+
+  /** A login after the reset — or in the same millisecond, the precision both are stored with. */
+  @Test
+  void refreshForAFamilyStartedAtOrAfterTheInvalidationStillWorks() {
+    User user = user();
+    user.setSessionsInvalidatedAt(LOGIN_TIME.plusNanos(999_999));
+    whenRefreshFindsUser("same-millisecond", LOGIN_TIME, user);
+    whenRefreshFindsUser("later", LOGIN_TIME.plusSeconds(1), user);
+
+    assertThat(authService.refresh("same-millisecond").refreshToken()).isEqualTo("new");
+    assertThat(authService.refresh("later").refreshToken()).isEqualTo("new");
+    verify(refreshTokenService, never()).revoke(anyString());
+  }
+
+  /** RefreshTokenService reports a family from before issuedAt was recorded as the epoch. */
+  @Test
+  void refreshForALegacyFamilyIsRevokedOnceTheUsersSessionsWereInvalidated() {
+    User user = user();
+    user.setSessionsInvalidatedAt(LOGIN_TIME);
+    whenRefreshFindsUser("legacy", Instant.EPOCH, user);
+
+    assertThatThrownBy(() -> authService.refresh("legacy"))
+        .isInstanceOf(InvalidRefreshTokenException.class);
+    verify(refreshTokenService).revoke("new");
+  }
+
+  @Test
+  void refreshForALegacyFamilyWorksWhileTheUsersSessionsWereNeverInvalidated() {
+    whenRefreshFindsUser("legacy", Instant.EPOCH, user());
+
+    assertThat(authService.refresh("legacy").refreshToken()).isEqualTo("new");
+  }
+
   @Test
   void refreshForADeletedUserRevokesTheSession() {
     when(refreshTokenService.rotate("old"))
-        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a")));
+        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a", LOGIN_TIME)));
     when(userRepository.findById("user-1")).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> authService.refresh("old"))
@@ -218,6 +265,12 @@ class AuthServiceTest {
     authService.logout("token");
 
     verify(refreshTokenService).revoke("token");
+  }
+
+  private void whenRefreshFindsUser(String token, Instant familyIssuedAt, User user) {
+    when(refreshTokenService.rotate(token))
+        .thenReturn(new Rotation("new", new RefreshSession("user-1", "club-a", familyIssuedAt)));
+    when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
   }
 
   /** Also checks that the attempt counted against the (normalized email, IP) pair and stays. */
