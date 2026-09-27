@@ -112,12 +112,6 @@ class AuthService {
    * previous value restored afterwards.
    */
   private Optional<User> findUser(RefreshSession session) {
-    Optional<String> previousClubId = clubContext.getClubId();
-    clubContext.setClubId(session.clubId());
-    try {
-      return userRepository.findById(session.userId());
-    } finally {
-      previousClubId.ifPresentOrElse(clubContext::setClubId, clubContext::clear);
-    }
+    return clubContext.callAs(session.clubId(), () -> userRepository.findById(session.userId()));
   }
 }

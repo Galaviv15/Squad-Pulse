@@ -35,4 +35,37 @@ class ClubContextTest {
 
     assertThat(clubContext.getClubId()).isEmpty();
   }
+
+  @Test
+  void callAsRunsWithTheGivenClubAndClearsItAfterwards() {
+    String seen = clubContext.callAs("club-a", clubContext::requireClubId);
+
+    assertThat(seen).isEqualTo("club-a");
+    assertThat(clubContext.getClubId()).isEmpty();
+  }
+
+  @Test
+  void callAsRestoresTheClubThatWasSetBefore() {
+    clubContext.setClubId("club-b");
+
+    clubContext.callAs("club-a", clubContext::requireClubId);
+
+    assertThat(clubContext.getClubId()).contains("club-b");
+  }
+
+  @Test
+  void callAsRestoresTheClubEvenWhenTheActionThrows() {
+    clubContext.setClubId("club-b");
+
+    assertThatThrownBy(
+            () ->
+                clubContext.callAs(
+                    "club-a",
+                    () -> {
+                      throw new IllegalStateException("boom");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(clubContext.getClubId()).contains("club-b");
+  }
 }
