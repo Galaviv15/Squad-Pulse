@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDate;
@@ -13,7 +15,9 @@ import org.springframework.dao.DuplicateKeyException;
 class UserInvitationServiceTest {
 
   private final UserRepository userRepository = mock(UserRepository.class);
-  private final UserInvitationService service = new UserInvitationService(userRepository);
+  private final PasswordResetService passwordResetService = mock(PasswordResetService.class);
+  private final UserInvitationService service =
+      new UserInvitationService(userRepository, passwordResetService);
 
   @Test
   void createsAnActiveUserWithNoPasswordAndLeavesTheClubToTheScopedRepository() {
@@ -41,6 +45,24 @@ class UserInvitationServiceTest {
   }
 
   @Test
+  void emailsTheInvitedUserAnActivationCode() {
+    User stored = new User();
+    when(userRepository.insert(any(User.class))).thenReturn(stored);
+
+    User invited =
+        service.invite(
+            new InviteUserRequest(
+                "coach@example.com",
+                "Dana Levi",
+                Title.HEAD_COACH,
+                PermissionLevel.EDIT_FULL,
+                null));
+
+    assertThat(invited).isSameAs(stored);
+    verify(passwordResetService).sendActivationCode(stored);
+  }
+
+  @Test
   void aTakenEmailIsAConflict() {
     when(userRepository.insert(any(User.class))).thenThrow(new DuplicateKeyException("dup"));
 
@@ -54,5 +76,7 @@ class UserInvitationServiceTest {
                         PermissionLevel.EDIT_FULL,
                         null)))
         .isInstanceOf(EmailAlreadyRegisteredException.class);
+
+    verifyNoInteractions(passwordResetService);
   }
 }

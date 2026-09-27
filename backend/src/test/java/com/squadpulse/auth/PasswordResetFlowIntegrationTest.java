@@ -357,6 +357,56 @@ class PasswordResetFlowIntegrationTest {
         .andExpect(status().isUnauthorized());
   }
 
+  // --- invite → activation ---------------------------------------------------------------------
+
+  @Test
+  void anInvitedUserActivatesTheirAccountWithTheEmailedCode() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    String adminToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    perform(invite(adminToken, "new.coach@example.com")).andExpect(status().isCreated());
+
+    verify(emailSender)
+        .send(
+            eq("new.coach@example.com"), eq(PasswordResetService.ACTIVATION_SUBJECT), anyString());
+    String code = lastCodeSentTo("new.coach@example.com");
+    login("new.coach@example.com", NEW_PASSWORD).andExpect(status().isUnauthorized());
+
+    resetPassword("New.Coach@Example.com", code, NEW_PASSWORD).andExpect(status().isNoContent());
+
+    login("new.coach@example.com", NEW_PASSWORD).andExpect(status().isOk());
+    User activated =
+        mongoTemplate.findOne(
+            Query.query(Criteria.where("email").is("new.coach@example.com")), User.class);
+    assertThat(activated.getClubId()).isEqualTo("club-a");
+  }
+
+  /** The invite's code doesn't use up any of the email's forgot-password requests. */
+  @Test
+  void anInviteDoesntCountAgainstTheRequestLimit() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    String adminToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+    perform(invite(adminToken, "new.coach@example.com")).andExpect(status().isCreated());
+
+    for (int i = 0; i < 5; i++) {
+      forgotPassword("new.coach@example.com");
+    }
+
+    // One activation email plus five reset emails: all five requests were within the limit.
+    verify(emailSender, times(6)).send(eq("new.coach@example.com"), anyString(), anyString());
+  }
+
+  @Test
+  void aFailedInviteSendsNoCode() throws Exception {
+    insertUser("club-a", "manager@example.com", PermissionLevel.ADMIN, true);
+    insertUser("club-b", "taken@example.com", true);
+    String adminToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
+
+    perform(invite(adminToken, "taken@example.com")).andExpect(status().isConflict());
+
+    verify(emailSender, never()).send(anyString(), anyString(), anyString());
+  }
+
   // --- helpers -----------------------------------------------------------------------------------
 
   /** Performs the request and checks that it left no clubId behind on this thread. */
@@ -420,13 +470,30 @@ class PasswordResetFlowIntegrationTest {
     return matcher.group(1);
   }
 
+  private static RequestBuilder invite(String accessToken, String email) {
+    return post("/auth/users/invite")
+        .header("Authorization", "Bearer " + accessToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            """
+            {"email": "%s", "fullName": "Noa Cohen", "title": "ANALYST",
+             "permissionLevel": "VIEW_ONLY"}
+            """
+                .formatted(email));
+  }
+
   private User insertUser(String clubId, String email, boolean active) {
+    return insertUser(clubId, email, PermissionLevel.EDIT_FULL, active);
+  }
+
+  private User insertUser(
+      String clubId, String email, PermissionLevel permissionLevel, boolean active) {
     User user = new User();
     user.setClubId(clubId);
     user.setEmail(email);
     user.setPasswordHash(passwordEncoder.encode(PASSWORD));
     user.setTitle(Title.HEAD_COACH);
-    user.setPermissionLevel(PermissionLevel.EDIT_FULL);
+    user.setPermissionLevel(permissionLevel);
     user.setFullName("Dana Levi");
     user.setActive(active);
     return mongoTemplate.insert(user);

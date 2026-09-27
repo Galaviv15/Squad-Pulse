@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 class PasswordResetService {
 
   static final String RESET_SUBJECT = "Your SquadPulse password reset code";
+  static final String ACTIVATION_SUBJECT = "Activate your SquadPulse account";
 
   private final UserRepository userRepository;
   private final PasswordResetCodeService codeService;
@@ -104,6 +105,25 @@ class PasswordResetService {
         Your SquadPulse password reset code is: %s
 
         It expires in %d minutes. If you didn't ask to reset your password, ignore this email.
+        """
+            .formatted(code, properties.codeTtl().toMinutes()));
+  }
+
+  /**
+   * Emails a freshly invited user their activation code — the same kind of code, with the same TTL,
+   * that {@link #resetPassword} accepts. Not counted against the email's request limit: an invite
+   * is an authenticated {@code ADMIN} action, not a public request. If the code expires unused, the
+   * user asks for a new one through forgot-password.
+   */
+  void sendActivationCode(User invited) {
+    String code = codeService.issue(invited.getEmail());
+    emailSender.send(
+        invited.getEmail(),
+        ACTIVATION_SUBJECT,
+        """
+        You've been invited to SquadPulse. Your activation code is: %s
+
+        Enter it together with a password of your choice within %d minutes. If it expires, use         "Forgot password" to get a new one.
         """
             .formatted(code, properties.codeTtl().toMinutes()));
   }

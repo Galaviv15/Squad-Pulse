@@ -108,6 +108,18 @@ class PasswordResetServiceTest {
     verify(codeService, never()).issue(anyString());
   }
 
+  /** An invite is an authenticated ADMIN action, so it isn't counted as a public request. */
+  @Test
+  void sendActivationCodeEmailsACodeWithoutCountingARequest() {
+    when(codeService.issue(EMAIL)).thenReturn("042137");
+
+    service.sendActivationCode(user(true));
+
+    verify(emailSender)
+        .send(eq(EMAIL), eq(PasswordResetService.ACTIVATION_SUBJECT), contains("042137"));
+    verify(codeService, never()).recordRequest(anyString());
+  }
+
   @Test
   void resetPasswordSetsTheHashAndInvalidatesSessionsInTheUsersOwnClub() {
     User user = user(true);
