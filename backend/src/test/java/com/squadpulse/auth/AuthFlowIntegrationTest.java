@@ -20,6 +20,7 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -198,6 +199,53 @@ class AuthFlowIntegrationTest {
     perform(post("/auth/refresh").cookie(phone)).andExpect(status().isOk());
   }
 
+  @Test
+  void fiveFailedLoginsAre401AndTheSixthIs429EvenWithTheRightPassword() throws Exception {
+    insertUser("club-a", "coach@example.com", PermissionLevel.EDIT_FULL, true);
+
+    for (int i = 0; i < 5; i++) {
+      login("coach@example.com", "wrong-password").andExpect(status().isUnauthorized());
+    }
+
+    MvcResult throttled =
+        login("coach@example.com", PASSWORD).andExpect(status().isTooManyRequests()).andReturn();
+    assertThat(Long.parseLong(throttled.getResponse().getHeader(HttpHeaders.RETRY_AFTER)))
+        .isBetween(1L, 900L);
+    assertThat(throttled.getResponse().getCookie(AuthController.REFRESH_COOKIE)).isNull();
+
+    // Only this (email, IP) pair is throttled: the same user elsewhere can still log in...
+    login("coach@example.com", PASSWORD, "198.51.100.23").andExpect(status().isOk());
+    // ...and so can another user from the same address.
+    insertUser("club-a", "analyst@example.com", PermissionLevel.VIEW_ONLY, true);
+    login("analyst@example.com", PASSWORD).andExpect(status().isOk());
+  }
+
+  /** Throttled like a registered email, so a 429 doesn't reveal which emails exist. */
+  @Test
+  void anUnknownEmailIsThrottledTheSameWay() throws Exception {
+    for (int i = 0; i < 5; i++) {
+      login("nobody@example.com", PASSWORD).andExpect(status().isUnauthorized());
+    }
+
+    login("nobody@example.com", PASSWORD).andExpect(status().isTooManyRequests());
+  }
+
+  @Test
+  void aSuccessfulLoginClearsEarlierFailures() throws Exception {
+    insertUser("club-a", "coach@example.com", PermissionLevel.EDIT_FULL, true);
+    for (int i = 0; i < 4; i++) {
+      login("coach@example.com", "wrong-password").andExpect(status().isUnauthorized());
+    }
+
+    login("Coach@Example.com", PASSWORD).andExpect(status().isOk());
+
+    assertThat(redis.keys(LoginThrottleService.KEY_PREFIX + "*")).isEmpty();
+    for (int i = 0; i < 4; i++) {
+      login("coach@example.com", "wrong-password").andExpect(status().isUnauthorized());
+    }
+    login("coach@example.com", PASSWORD).andExpect(status().isOk());
+  }
+
   /** Performs the request and checks that it left no clubId behind on this thread. */
   private ResultActions perform(RequestBuilder request) throws Exception {
     ResultActions result = mockMvc.perform(request);
@@ -206,8 +254,17 @@ class AuthFlowIntegrationTest {
   }
 
   private ResultActions login(String email, String password) throws Exception {
+    return login(email, password, "127.0.0.1");
+  }
+
+  private ResultActions login(String email, String password, String remoteAddr) throws Exception {
     return perform(
         post("/auth/login")
+            .with(
+                request -> {
+                  request.setRemoteAddr(remoteAddr);
+                  return request;
+                })
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"email\":\"%s\",\"password\":\"%s\"}".formatted(email, password)));
   }
