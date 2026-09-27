@@ -40,3 +40,7 @@ squadpulse:
     token:
       access-ttl: 15m
       refresh-ttl: 30d
+    # Failed-login limit per (email, IP) pair (see auth.LoginThrottleProperties).
+    login-throttle:
+      max-attempts: 5
+      window: 15m
