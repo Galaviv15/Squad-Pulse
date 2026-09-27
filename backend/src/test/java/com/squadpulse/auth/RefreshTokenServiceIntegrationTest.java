@@ -7,7 +7,10 @@ import static org.awaitility.Awaitility.await;
 import com.redis.testcontainers.RedisContainer;
 import com.squadpulse.auth.RefreshTokenService.RefreshSession;
 import com.squadpulse.auth.RefreshTokenService.Rotation;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -29,6 +32,7 @@ import org.testcontainers.utility.DockerImageName;
 class RefreshTokenServiceIntegrationTest {
 
   private static final Duration REFRESH_TTL = Duration.ofDays(30);
+  private static final Instant NOW = Instant.parse("2026-09-01T10:00:00.123Z");
 
   @Container
   static final RedisContainer REDIS_CONTAINER =
@@ -66,11 +70,11 @@ class RefreshTokenServiceIntegrationTest {
 
     Rotation rotation = service.rotate(token);
 
-    assertThat(rotation.session()).isEqualTo(new RefreshSession("user-1", "club-a"));
+    assertThat(rotation.session()).isEqualTo(new RefreshSession("user-1", "club-a", NOW));
     assertThat(rotation.refreshToken()).isNotEqualTo(token);
     // The new token is itself rotatable.
     assertThat(service.rotate(rotation.refreshToken()).session())
-        .isEqualTo(new RefreshSession("user-1", "club-a"));
+        .isEqualTo(new RefreshSession("user-1", "club-a", NOW));
   }
 
   @Test
@@ -97,7 +101,8 @@ class RefreshTokenServiceIntegrationTest {
     assertThatThrownBy(() -> service.rotate(laptop))
         .isInstanceOf(InvalidRefreshTokenException.class);
 
-    assertThat(service.rotate(phone).session()).isEqualTo(new RefreshSession("user-1", "club-a"));
+    assertThat(service.rotate(phone).session())
+        .isEqualTo(new RefreshSession("user-1", "club-a", NOW));
   }
 
   @Test
@@ -110,6 +115,46 @@ class RefreshTokenServiceIntegrationTest {
     assertThatThrownBy(() -> service.rotate(laptop))
         .isInstanceOf(InvalidRefreshTokenException.class);
     assertThat(service.rotate(phone)).isNotNull();
+  }
+
+  @Test
+  void theFamilysIssueTimeIsStoredAndSurvivesRotation() {
+    String token = service.issue("user-1", "club-a");
+    RefreshTokenService later =
+        new RefreshTokenService(
+            redis,
+            new TokenProperties(Duration.ofMinutes(15), REFRESH_TTL),
+            Clock.fixed(NOW.plusSeconds(3600), ZoneOffset.UTC));
+
+    Rotation first = later.rotate(token);
+    Rotation second = later.rotate(first.refreshToken());
+
+    assertThat(first.session().issuedAt()).isEqualTo(NOW);
+    assertThat(second.session().issuedAt()).isEqualTo(NOW);
+    assertThat(familyKeys())
+        .singleElement()
+        .satisfies(
+            key ->
+                assertThat(redis.opsForHash().get(key, RefreshTokenService.ISSUED_AT_FIELD))
+                    .isEqualTo(String.valueOf(NOW.toEpochMilli())));
+  }
+
+  /** A family created before issuedAt existed still rotates, and reports the epoch. */
+  @Test
+  void aLegacyFamilyWithoutAnIssueTimeRotatesAsIfIssuedAtTheEpoch() {
+    String token = service.issue("user-1", "club-a");
+    familyKeys()
+        .forEach(key -> redis.opsForHash().delete(key, RefreshTokenService.ISSUED_AT_FIELD));
+
+    Rotation rotation = service.rotate(token);
+
+    assertThat(rotation.session()).isEqualTo(new RefreshSession("user-1", "club-a", Instant.EPOCH));
+    // Rotation doesn't add the field either.
+    familyKeys()
+        .forEach(
+            key ->
+                assertThat(redis.opsForHash().hasKey(key, RefreshTokenService.ISSUED_AT_FIELD))
+                    .isFalse());
   }
 
   @Test
@@ -152,7 +197,10 @@ class RefreshTokenServiceIntegrationTest {
   }
 
   private static RefreshTokenService service(Duration refreshTtl) {
-    return new RefreshTokenService(redis, new TokenProperties(Duration.ofMinutes(15), refreshTtl));
+    return new RefreshTokenService(
+        redis,
+        new TokenProperties(Duration.ofMinutes(15), refreshTtl),
+        Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   private static Set<String> familyKeys() {

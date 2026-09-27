@@ -4,11 +4,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
@@ -35,20 +38,27 @@ import org.springframework.stereotype.Service;
  * <pre>
  * auth:refresh:token:{tokenHash}   STRING  familyId
  *                                          TTL: refresh TTL from when this token was issued
- * auth:refresh:family:{familyId}   HASH    userId  - the user the family was issued to
- *                                          clubId  - that user's club
- *                                          current - tokenHash of the family's only valid token
+ * auth:refresh:family:{familyId}   HASH    userId   - the user the family was issued to
+ *                                          clubId   - that user's club
+ *                                          current  - tokenHash of the family's only valid token
+ *                                          issuedAt - when the family was started (at login),
+ *                                                     epoch millis; unchanged by rotation
  *                                          TTL: refresh TTL, reset on every rotation
  * </pre>
  *
  * {@code tokenHash} is base64url(SHA-256(token)): Redis never holds a usable token, so a leaked
- * dump or a {@code KEYS} listing can't be replayed. {@code familyId} is a random UUID.
+ * dump or a {@code KEYS} listing can't be replayed. {@code familyId} is a random UUID. {@code
+ * issuedAt} comes from the application's clock, not Redis's, like the {@code sessionsInvalidatedAt}
+ * it's compared with.
  *
  * <p>For a presented token this answers: (a) is it valid — its token key exists, its family key
  * exists, and {@code current} equals its hash; (b) whose is it — the family's {@code userId}/{@code
- * clubId}; (c) was it rotated away — its token key still exists but {@code current} holds another
- * hash. A token key outlives its rotation until its own TTL runs out, which is what makes (c)
- * detectable for the token's whole lifetime.
+ * clubId}, and since when ({@code issuedAt} — checked against {@link
+ * User#getSessionsInvalidatedAt()} by {@link AuthService#refresh}, which is how a password reset
+ * ends every family of a user at once, with no user-to-families index); (c) was it rotated away —
+ * its token key still exists but {@code current} holds another hash. A token key outlives its
+ * rotation until its own TTL runs out, which is what makes (c) detectable for the token's whole
+ * lifetime.
  *
  * <p>Revoking a family is a single {@code DEL} of its family key: its token keys then point at
  * nothing and are rejected until they expire on their own. Every key has a TTL, so nothing needs
@@ -66,17 +76,22 @@ class RefreshTokenService {
   static final String USER_ID_FIELD = "userId";
   static final String CLUB_ID_FIELD = "clubId";
   static final String CURRENT_FIELD = "current";
+  static final String ISSUED_AT_FIELD = "issuedAt";
 
   private static final int TOKEN_BYTES = 32;
 
   private static final String ROTATED = "ROTATED";
   private static final String REUSED = "REUSED";
 
-  /** KEYS: family key, token key. ARGV: token hash, userId, clubId, familyId, TTL in seconds. */
+  /**
+   * KEYS: family key, token key. ARGV: token hash, userId, clubId, familyId, TTL in seconds,
+   * issuedAt in epoch millis.
+   */
   static final RedisScript<Long> ISSUE_SCRIPT =
       RedisScript.of(
           """
-          redis.call('HSET', KEYS[1], 'userId', ARGV[2], 'clubId', ARGV[3], 'current', ARGV[1])
+          redis.call('HSET', KEYS[1], 'userId', ARGV[2], 'clubId', ARGV[3], 'current', ARGV[1],
+                     'issuedAt', ARGV[6])
           redis.call('EXPIRE', KEYS[1], ARGV[5])
           redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[5])
           return 1
@@ -85,14 +100,15 @@ class RefreshTokenService {
 
   /**
    * KEYS: family key, new token key. ARGV: presented token hash, new token hash, familyId, TTL in
-   * seconds. Returns {@code [ROTATED, userId, clubId]}, {@code [REUSED]} (family deleted) or {@code
-   * [REVOKED]} (no such family).
+   * seconds. Returns {@code [ROTATED, userId, clubId, issuedAt]}, {@code [REUSED]} (family deleted)
+   * or {@code [REVOKED]} (no such family). A family from before {@code issuedAt} existed reports
+   * {@code 0} (the epoch), so it counts as older than any {@code sessionsInvalidatedAt}.
    */
   @SuppressWarnings("rawtypes")
   static final RedisScript<List> ROTATE_SCRIPT =
       RedisScript.of(
           """
-          local family = redis.call('HMGET', KEYS[1], 'current', 'userId', 'clubId')
+          local family = redis.call('HMGET', KEYS[1], 'current', 'userId', 'clubId', 'issuedAt')
           if not family[1] then
             return {'REVOKED'}
           end
@@ -103,25 +119,36 @@ class RefreshTokenService {
           redis.call('HSET', KEYS[1], 'current', ARGV[2])
           redis.call('EXPIRE', KEYS[1], ARGV[4])
           redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4])
-          return {'ROTATED', family[2], family[3]}
+          return {'ROTATED', family[2], family[3], family[4] or '0'}
           """,
           List.class);
 
   private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
 
-  /** Who a refresh token was issued to. */
-  record RefreshSession(String userId, String clubId) {}
+  /**
+   * Who a refresh token was issued to, and when its family was started (at login) — {@link
+   * Instant#EPOCH} for a family from before that was recorded.
+   */
+  record RefreshSession(String userId, String clubId, Instant issuedAt) {}
 
   /** The token that replaced the presented one, and whose family it belongs to. */
   record Rotation(String refreshToken, RefreshSession session) {}
 
   private final StringRedisTemplate redis;
   private final TokenProperties tokenProperties;
+  private final Clock clock;
   private final SecureRandom secureRandom = new SecureRandom();
 
+  @Autowired
   RefreshTokenService(StringRedisTemplate redis, TokenProperties tokenProperties) {
+    this(redis, tokenProperties, Clock.systemUTC());
+  }
+
+  /** For tests: {@code clock} decides a new family's {@code issuedAt}. */
+  RefreshTokenService(StringRedisTemplate redis, TokenProperties tokenProperties, Clock clock) {
     this.redis = redis;
     this.tokenProperties = tokenProperties;
+    this.clock = clock;
   }
 
   /** Starts a new family for a fresh login and returns its first token. */
@@ -135,7 +162,8 @@ class RefreshTokenService {
         userId,
         clubId,
         familyId,
-        ttlSeconds());
+        ttlSeconds(),
+        String.valueOf(clock.millis()));
     return token;
   }
 
@@ -166,7 +194,10 @@ class RefreshTokenService {
     if (ROTATED.equals(outcome)) {
       return new Rotation(
           newToken,
-          new RefreshSession(String.valueOf(result.get(1)), String.valueOf(result.get(2))));
+          new RefreshSession(
+              String.valueOf(result.get(1)),
+              String.valueOf(result.get(2)),
+              issuedAt(result.size() > 3 ? result.get(3) : null)));
     }
     if (REUSED.equals(outcome)) {
       log.warn(
@@ -187,6 +218,18 @@ class RefreshTokenService {
     String familyId = redis.opsForValue().get(TOKEN_KEY_PREFIX + hash(presentedToken));
     if (familyId != null) {
       redis.delete(FAMILY_KEY_PREFIX + familyId);
+    }
+  }
+
+  /**
+   * Anything but a number of epoch millis — which only a family key written outside this service
+   * could hold — counts as the epoch: the oldest possible family, never a crash or a pass.
+   */
+  private static Instant issuedAt(Object value) {
+    try {
+      return value == null ? Instant.EPOCH : Instant.ofEpochMilli(Long.parseLong(value.toString()));
+    } catch (NumberFormatException e) {
+      return Instant.EPOCH;
     }
   }
 

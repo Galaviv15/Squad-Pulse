@@ -4,6 +4,7 @@ import com.squadpulse.auth.JwtService.AccessToken;
 import com.squadpulse.auth.RefreshTokenService.RefreshSession;
 import com.squadpulse.auth.RefreshTokenService.Rotation;
 import com.squadpulse.common.ClubContext;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -88,13 +89,17 @@ class AuthService {
    * so a changed permission level shows up at the next refresh.
    *
    * @throws InvalidRefreshTokenException if the refresh token isn't valid (see {@link
-   *     RefreshTokenService#rotate(String)}), or its user no longer exists, has been deactivated or
-   *     has no password — the family is then revoked, ending that session for good
+   *     RefreshTokenService#rotate(String)}), or its user no longer exists, has been deactivated,
+   *     has no password, or has had all sessions invalidated since the family was started (a
+   *     password reset) — the family is then revoked, ending that session for good
    */
   IssuedTokens refresh(String refreshToken) {
     Rotation rotation = refreshTokenService.rotate(refreshToken);
     Optional<User> user = findUser(rotation.session());
-    if (user.isEmpty() || !user.get().isActive() || user.get().getPasswordHash() == null) {
+    if (user.isEmpty()
+        || !user.get().isActive()
+        || user.get().getPasswordHash() == null
+        || invalidatedSince(user.get(), rotation.session())) {
       refreshTokenService.revoke(rotation.refreshToken());
       throw new InvalidRefreshTokenException();
     }
@@ -113,5 +118,16 @@ class AuthService {
    */
   private Optional<User> findUser(RefreshSession session) {
     return clubContext.callAs(session.clubId(), () -> userRepository.findById(session.userId()));
+  }
+
+  /**
+   * Whether the user's sessions were invalidated after this family was started. Compared in
+   * milliseconds, the precision both sides are stored with, so a login in the same millisecond as
+   * the invalidation survives it.
+   */
+  private static boolean invalidatedSince(User user, RefreshSession session) {
+    Instant invalidatedAt = user.getSessionsInvalidatedAt();
+    return invalidatedAt != null
+        && session.issuedAt().toEpochMilli() < invalidatedAt.toEpochMilli();
   }
 }
