@@ -52,3 +52,10 @@ squadpulse:
     login-throttle:
       max-attempts: 5
       window: 15m
+    # Activation / reset codes, and forgot-password requests per email — the long request window is
+    # what bounds brute-forcing a code (see auth.PasswordResetProperties, auth.PasswordResetCodeService).
+    password-reset:
+      code-ttl: 15m
+      max-attempts: 5
+      max-requests: 5
+      request-window: 24h
