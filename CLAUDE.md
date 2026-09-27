@@ -39,6 +39,7 @@ squadpulse/
 ├── scraper/                          # Node.js worker (Playwright/Cheerio)
 ├── docker-compose.yml                # MongoDB (single-node replica set) + Redis, local dev only
 ├── docs/spec.md                      # Full technical & product spec
+├── docs/agent-prompts/               # Per-ticket implementation prompts (KAN-xx-prompt.md)
 └── CLAUDE.md                         # This file
 ```
 
