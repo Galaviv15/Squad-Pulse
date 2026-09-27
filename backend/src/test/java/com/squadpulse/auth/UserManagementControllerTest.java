@@ -23,16 +23,16 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
- * The HTTP contract of {@link UserInvitationController} behind the real security chain, with {@link
+ * The HTTP contract of {@link UserManagementController} behind the real security chain, with {@link
  * UserInvitationService} mocked. That the user really lands in the caller's club is proven end to
  * end in {@link AuthFlowIntegrationTest}.
  */
 @WebMvcTest(
-    controllers = UserInvitationController.class,
+    controllers = UserManagementController.class,
     excludeAutoConfiguration = UserDetailsServiceAutoConfiguration.class,
     properties = {AuthWebMvcTestConfig.JWT_SECRET, AuthWebMvcTestConfig.PASSWORD_PEPPER})
 @Import(AuthWebMvcTestConfig.class)
-class UserInvitationControllerTest {
+class UserManagementControllerTest {
 
   private static final String VALID_BODY =
       """

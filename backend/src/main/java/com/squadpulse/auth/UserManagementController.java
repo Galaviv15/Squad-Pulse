@@ -12,11 +12,11 @@ import org.springframework.web.bind.annotation.RestController;
 /** User management within the caller's club — only a Club Manager ({@code ADMIN}) may use it. */
 @RestController
 @RequestMapping("/auth/users")
-class UserInvitationController {
+class UserManagementController {
 
   private final UserInvitationService userInvitationService;
 
-  UserInvitationController(UserInvitationService userInvitationService) {
+  UserManagementController(UserInvitationService userInvitationService) {
     this.userInvitationService = userInvitationService;
   }
 
