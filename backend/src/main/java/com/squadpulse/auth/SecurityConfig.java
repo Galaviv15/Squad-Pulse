@@ -49,6 +49,10 @@ class SecurityConfig {
   /**
    * Public because they authenticate by other means: login by email + password, refresh and logout
    * by the refresh-token cookie (logout has to work after the access token has expired).
+   *
+   * <p>POST only: these paths are permitted solely via {@code requestMatchers(HttpMethod.POST,
+   * PUBLIC_ENDPOINTS)} below. A public endpoint with any other HTTP method needs that rule changed
+   * as well as {@code PublicEndpointsConsistencyTest}, which assumes the same.
    */
   static final String[] PUBLIC_ENDPOINTS = {"/auth/login", "/auth/refresh", "/auth/logout"};
 

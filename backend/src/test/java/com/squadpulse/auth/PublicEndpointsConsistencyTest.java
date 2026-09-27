@@ -30,6 +30,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
  */
 class PublicEndpointsConsistencyTest {
 
+  /**
+   * {@link SecurityConfig} permits {@link SecurityConfig#PUBLIC_ENDPOINTS} for POST only ({@code
+   * requestMatchers(HttpMethod.POST, ...)}). Adding a public non-POST endpoint means changing both
+   * that rule and this test.
+   */
   private static final String PUBLIC_METHOD = "POST";
 
   @Test
