@@ -47,14 +47,19 @@ import tools.jackson.databind.json.JsonMapper;
 class SecurityConfig {
 
   /**
-   * Public because they authenticate by other means: login by email + password, refresh and logout
-   * by the refresh-token cookie (logout has to work after the access token has expired).
+   * Public because they authenticate by other means, or are for someone who can't log in: login by
+   * email + password, refresh and logout by the refresh-token cookie (logout has to work after the
+   * access token has expired), forgot-password by nothing — it's for a user without a working
+   * password, and only ever emails a code to the address itself, answering identically either way —
+   * and reset-password by that emailed code.
    *
    * <p>POST only: these paths are permitted solely via {@code requestMatchers(HttpMethod.POST,
    * PUBLIC_ENDPOINTS)} below. A public endpoint with any other HTTP method needs that rule changed
    * as well as {@code PublicEndpointsConsistencyTest}, which assumes the same.
    */
-  static final String[] PUBLIC_ENDPOINTS = {"/auth/login", "/auth/refresh", "/auth/logout"};
+  static final String[] PUBLIC_ENDPOINTS = {
+    "/auth/login", "/auth/refresh", "/auth/logout", "/auth/forgot-password", "/auth/reset-password"
+  };
 
   /**
    * {@code ADMIN > EDIT_FULL > EDIT_PARTIAL > VIEW_ONLY}, derived from {@link PermissionLevel}'s
