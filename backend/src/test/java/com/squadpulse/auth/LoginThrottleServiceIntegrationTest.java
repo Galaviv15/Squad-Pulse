@@ -7,6 +7,12 @@ import static org.awaitility.Awaitility.await;
 
 import com.redis.testcontainers.RedisContainer;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,9 +25,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Proves the failed-login counting (see {@link LoginThrottleService}) against a real Redis: the Lua
- * scripts, per-(email, IP) isolation, reset, and the window expiring. No Spring context — just the
- * service on top of a real connection.
+ * Proves the login-attempt counting (see {@link LoginThrottleService}) against a real Redis: the
+ * Lua script, atomicity under concurrency, per-(email, IP) isolation, reset, and the window
+ * expiring. No Spring context — just the service on top of a real connection.
  */
 @Testcontainers
 class LoginThrottleServiceIntegrationTest {
@@ -62,17 +68,17 @@ class LoginThrottleServiceIntegrationTest {
   }
 
   @Test
-  void allowsAttemptsUnderTheLimit() {
-    fail(service, EMAIL, IP, MAX_ATTEMPTS - 1);
-
-    assertThatCode(() -> service.checkAllowed(EMAIL, IP)).doesNotThrowAnyException();
+  void allowsAttemptsUpToTheLimit() {
+    for (int i = 0; i < MAX_ATTEMPTS; i++) {
+      assertThatCode(() -> service.recordAttempt(EMAIL, IP)).doesNotThrowAnyException();
+    }
   }
 
   @Test
-  void blocksOnceTheLimitIsReachedUntilTheWindowEnds() {
-    fail(service, EMAIL, IP, MAX_ATTEMPTS);
+  void refusesTheAttemptAfterTheLimitWithTheRemainingWindow() {
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS);
 
-    assertThatThrownBy(() -> service.checkAllowed(EMAIL, IP))
+    assertThatThrownBy(() -> service.recordAttempt(EMAIL, IP))
         .isInstanceOfSatisfying(
             LoginThrottledException.class,
             e ->
@@ -82,12 +88,45 @@ class LoginThrottleServiceIntegrationTest {
                     .isGreaterThan(WINDOW.minusMinutes(1)));
   }
 
+  /** The whole point of counting before checking: a burst can't slip past the limit together. */
   @Test
-  void theWindowRunsFromTheFirstFailureAndIsNotExtendedByLaterOnes() {
-    service.recordFailure(EMAIL, IP);
+  void concurrentAttemptsAreCountedOneByOne() throws Exception {
+    int threads = 20;
+    ExecutorService executor = Executors.newFixedThreadPool(threads);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Future<Boolean>> results = new ArrayList<>();
+    try {
+      for (int i = 0; i < threads; i++) {
+        results.add(
+            executor.submit(
+                () -> {
+                  start.await();
+                  try {
+                    service.recordAttempt(EMAIL, IP);
+                    return true;
+                  } catch (LoginThrottledException e) {
+                    return false;
+                  }
+                }));
+      }
+      start.countDown();
+
+      int allowed = 0;
+      for (Future<Boolean> result : results) {
+        allowed += result.get() ? 1 : 0;
+      }
+      assertThat(allowed).isEqualTo(MAX_ATTEMPTS);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void theWindowRunsFromTheFirstAttemptAndIsNotExtendedByLaterOnes() {
+    service.recordAttempt(EMAIL, IP);
     redis.expire(LoginThrottleService.key(EMAIL, IP), Duration.ofSeconds(60));
 
-    fail(service, EMAIL, IP, MAX_ATTEMPTS - 1);
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS - 1);
 
     assertThat(redis.getExpire(LoginThrottleService.key(EMAIL, IP))).isBetween(1L, 60L);
     assertThat(redis.opsForValue().get(LoginThrottleService.key(EMAIL, IP))).isEqualTo("5");
@@ -95,34 +134,33 @@ class LoginThrottleServiceIntegrationTest {
 
   @Test
   void resetClearsTheCount() {
-    fail(service, EMAIL, IP, MAX_ATTEMPTS - 1);
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS);
 
     service.reset(EMAIL, IP);
-    fail(service, EMAIL, IP, MAX_ATTEMPTS - 1);
 
-    assertThatCode(() -> service.checkAllowed(EMAIL, IP)).doesNotThrowAnyException();
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS);
   }
 
   @Test
   void theSameEmailFromAnotherIpHasItsOwnCount() {
-    fail(service, EMAIL, IP, MAX_ATTEMPTS);
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS);
 
-    assertThatCode(() -> service.checkAllowed(EMAIL, "198.51.100.23")).doesNotThrowAnyException();
+    assertThatCode(() -> service.recordAttempt(EMAIL, "198.51.100.23")).doesNotThrowAnyException();
   }
 
   @Test
   void anotherEmailFromTheSameIpHasItsOwnCount() {
-    fail(service, EMAIL, IP, MAX_ATTEMPTS);
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS);
 
-    assertThatCode(() -> service.checkAllowed("other@example.com", IP)).doesNotThrowAnyException();
+    assertThatCode(() -> service.recordAttempt("other@example.com", IP)).doesNotThrowAnyException();
   }
 
   @Test
   void aKeyThatLostItsTtlGetsANewWindowInsteadOfBlockingForever() {
-    fail(service, EMAIL, IP, MAX_ATTEMPTS);
+    attempt(service, EMAIL, IP, MAX_ATTEMPTS);
     redis.persist(LoginThrottleService.key(EMAIL, IP));
 
-    assertThatThrownBy(() -> service.checkAllowed(EMAIL, IP))
+    assertThatThrownBy(() -> service.recordAttempt(EMAIL, IP))
         .isInstanceOf(LoginThrottledException.class);
 
     assertThat(redis.getExpire(LoginThrottleService.key(EMAIL, IP))).isPositive();
@@ -131,20 +169,21 @@ class LoginThrottleServiceIntegrationTest {
   @Test
   void thePairIsAllowedAgainOnceTheWindowExpires() {
     LoginThrottleService shortWindow = service(Duration.ofSeconds(1));
-    fail(shortWindow, EMAIL, IP, MAX_ATTEMPTS);
-    assertThatThrownBy(() -> shortWindow.checkAllowed(EMAIL, IP))
+    attempt(shortWindow, EMAIL, IP, MAX_ATTEMPTS);
+    assertThatThrownBy(() -> shortWindow.recordAttempt(EMAIL, IP))
         .isInstanceOf(LoginThrottledException.class);
 
     await()
         .atMost(Duration.ofSeconds(5))
         .until(() -> redis.keys(LoginThrottleService.KEY_PREFIX + "*").isEmpty());
 
-    assertThatCode(() -> shortWindow.checkAllowed(EMAIL, IP)).doesNotThrowAnyException();
+    assertThatCode(() -> shortWindow.recordAttempt(EMAIL, IP)).doesNotThrowAnyException();
   }
 
-  private static void fail(LoginThrottleService service, String email, String ip, int times) {
+  /** Makes {@code times} attempts, all of which must be allowed. */
+  private static void attempt(LoginThrottleService service, String email, String ip, int times) {
     for (int i = 0; i < times; i++) {
-      service.recordFailure(email, ip);
+      service.recordAttempt(email, ip);
     }
   }
 

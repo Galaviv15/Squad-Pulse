@@ -7,7 +7,7 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 /**
- * Counts failed logins in Redis and refuses further attempts once there are too many (see {@link
+ * Counts login attempts in Redis and refuses further ones once there are too many (see {@link
  * LoginThrottleProperties} for the limits, and {@link AuthService#login} for how it's used).
  *
  * <p>Counted per <b>(email, IP) pair</b>, not per email or per IP alone: per email, anyone who
@@ -19,51 +19,42 @@ import org.springframework.stereotype.Service;
  * <h2>Redis key scheme</h2>
  *
  * <pre>
- * auth:login-throttle:{normalizedEmail}:{ip}   STRING  number of failed logins in the window
- *                                                      TTL: the window, set at the first failure
+ * auth:login-throttle:{normalizedEmail}:{ip}   STRING  number of login attempts in the window
+ *                                                      TTL: the window, set at the first attempt
  * </pre>
  *
  * The email isn't hashed as refresh tokens are: it's not a bearer credential, just a rate-limit
  * key.
  *
- * <p>A fixed window: the TTL is set only when a failure creates the key, so it runs from the first
- * failure and later failures don't extend it. Once the window expires the key is gone and the count
- * starts over; a successful login deletes it early. Every key has a TTL, so nothing needs sweeping.
- * Counting runs as one Lua script so the increment and its first {@code EXPIRE} can't be split, and
- * the check reads the count and the remaining TTL in one script so the key can't expire in between.
+ * <p>Every attempt is counted <b>before</b> the password is checked, and allowed only if that same
+ * increment kept the count within the limit. Redis runs the script atomically, so concurrent
+ * attempts get distinct, sequential counts — a burst can't slip past the limit together. A
+ * successful login deletes the key, so the attempts a legitimate user spent on typos don't linger;
+ * in effect the limit is on failed logins.
  *
- * <p>The check comes before the password check and the count after it, so up to as many attempts as
- * a client sends <i>concurrently</i> can pass the check together before any of them is counted —
- * the limit bounds sustained guessing, not a single burst.
+ * <p>A fixed window: the TTL is set only when an attempt creates the key, so it runs from the first
+ * attempt and later ones don't extend it. Once the window expires the key is gone and the count
+ * starts over. Every key has a TTL, so nothing needs sweeping.
  */
 @Service
 class LoginThrottleService {
 
   static final String KEY_PREFIX = "auth:login-throttle:";
 
-  /** KEYS: throttle key. ARGV: window in milliseconds. Returns the count after incrementing. */
-  static final RedisScript<Long> RECORD_FAILURE_SCRIPT =
+  /**
+   * KEYS: throttle key. ARGV: max attempts, window in milliseconds. Counts the attempt, then
+   * returns 0 if it's within the limit, otherwise the remaining window in milliseconds (at least
+   * 1). A key that has lost its TTL (only possible if something outside this service touched it)
+   * gets a fresh window rather than blocking the pair forever.
+   */
+  static final RedisScript<Long> ATTEMPT_SCRIPT =
       RedisScript.of(
           """
           local count = redis.call('INCR', KEYS[1])
           if count == 1 then
-            redis.call('PEXPIRE', KEYS[1], ARGV[1])
+            redis.call('PEXPIRE', KEYS[1], ARGV[2])
           end
-          return count
-          """,
-          Long.class);
-
-  /**
-   * KEYS: throttle key. ARGV: max attempts, window in milliseconds. Returns 0 if the pair may still
-   * try, otherwise the remaining window in milliseconds (at least 1). A key that has lost its TTL
-   * (only possible if something outside this service touched it) gets a fresh window rather than
-   * blocking the pair forever.
-   */
-  static final RedisScript<Long> CHECK_SCRIPT =
-      RedisScript.of(
-          """
-          local count = tonumber(redis.call('GET', KEYS[1]) or '0')
-          if count < tonumber(ARGV[1]) then
+          if count <= tonumber(ARGV[1]) then
             return 0
           end
           local ttl = redis.call('PTTL', KEYS[1])
@@ -85,34 +76,27 @@ class LoginThrottleService {
   }
 
   /**
+   * Counts a login attempt by the pair, and refuses it if that takes the pair over the limit.
+   *
    * @param normalizedEmail the email as {@link User#normalizeEmail} returns it
    * @param ip the client's address
-   * @throws LoginThrottledException if the pair has used up its failed attempts for this window
+   * @throws LoginThrottledException if the pair has used up its attempts for this window
    */
-  void checkAllowed(String normalizedEmail, String ip) {
+  void recordAttempt(String normalizedEmail, String ip) {
     Long remainingMillis =
         redis.execute(
-            CHECK_SCRIPT,
+            ATTEMPT_SCRIPT,
             List.of(key(normalizedEmail, ip)),
             properties.maxAttempts().toString(),
-            windowMillis());
+            String.valueOf(properties.window().toMillis()));
     if (remainingMillis != null && remainingMillis > 0) {
       throw new LoginThrottledException(Duration.ofMillis(remainingMillis));
     }
   }
 
-  /** Counts one failed login for the pair, starting a new window if there's none running. */
-  void recordFailure(String normalizedEmail, String ip) {
-    redis.execute(RECORD_FAILURE_SCRIPT, List.of(key(normalizedEmail, ip)), windowMillis());
-  }
-
-  /** Forgets the pair's failed logins, after a successful one. */
+  /** Forgets the pair's attempts, after a successful login. */
   void reset(String normalizedEmail, String ip) {
     redis.delete(key(normalizedEmail, ip));
-  }
-
-  private String windowMillis() {
-    return String.valueOf(properties.window().toMillis());
   }
 
   static String key(String normalizedEmail, String ip) {

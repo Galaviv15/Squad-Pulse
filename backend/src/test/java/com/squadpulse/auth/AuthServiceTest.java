@@ -79,17 +79,16 @@ class AuthServiceTest {
 
   /** So earlier typos don't leave the user's next session with a partly used-up allowance. */
   @Test
-  void aSuccessfulLoginIsCheckedAgainstTheThrottleThenClearsItsCount() {
+  void aSuccessfulLoginIsCountedBeforeThePasswordCheckThenClearsItsCount() {
     when(userRepository.findByEmail("coach@example.com")).thenReturn(Optional.of(user()));
     when(passwordEncoder.matches("secret", REAL_HASH)).thenReturn(true);
 
     authService.login(" Coach@Example.com ", "secret", IP);
 
     InOrder order = inOrder(loginThrottleService, passwordEncoder);
-    order.verify(loginThrottleService).checkAllowed("coach@example.com", IP);
+    order.verify(loginThrottleService).recordAttempt("coach@example.com", IP);
     order.verify(passwordEncoder).matches("secret", REAL_HASH);
     order.verify(loginThrottleService).reset("coach@example.com", IP);
-    verify(loginThrottleService, never()).recordFailure(anyString(), anyString());
   }
 
   /** Refused before the lookup and the Argon2 check — that's what actually sheds the load. */
@@ -97,14 +96,14 @@ class AuthServiceTest {
   void aThrottledLoginIsRefusedWithoutCheckingThePassword() {
     doThrow(new LoginThrottledException(Duration.ofMinutes(10)))
         .when(loginThrottleService)
-        .checkAllowed("coach@example.com", IP);
+        .recordAttempt("coach@example.com", IP);
 
     assertThatThrownBy(() -> authService.login("Coach@Example.com", "secret", IP))
         .isInstanceOf(LoginThrottledException.class);
 
     verifyNoInteractions(userRepository, jwtService, refreshTokenService);
     verify(passwordEncoder, never()).matches(anyString(), anyString());
-    verify(loginThrottleService, never()).recordFailure(anyString(), anyString());
+    verify(loginThrottleService, never()).reset(anyString(), anyString());
   }
 
   @Test
@@ -221,14 +220,14 @@ class AuthServiceTest {
     verify(refreshTokenService).revoke("token");
   }
 
-  /** Also checks that the failure counted against the (normalized email, IP) pair. */
+  /** Also checks that the attempt counted against the (normalized email, IP) pair and stays. */
   private void assertLoginRejected(String email, String password) {
     assertThatThrownBy(() -> authService.login(email, password, IP))
         .isInstanceOf(InvalidCredentialsException.class)
         .hasMessage("Invalid email or password");
     verify(jwtService, never()).issue(any());
     verify(refreshTokenService, never()).issue(anyString(), anyString());
-    verify(loginThrottleService).recordFailure(User.normalizeEmail(email), IP);
+    verify(loginThrottleService).recordAttempt(User.normalizeEmail(email), IP);
     verify(loginThrottleService, never()).reset(anyString(), anyString());
   }
 

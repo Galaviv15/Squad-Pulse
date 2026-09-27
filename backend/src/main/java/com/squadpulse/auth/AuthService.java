@@ -54,9 +54,9 @@ class AuthService {
   }
 
   /**
-   * Checks the credentials — unless this (email, IP) pair has already failed too often (see {@link
-   * LoginThrottleService}), in which case it's refused before the password is even hashed. A
-   * failure counts against the pair; a success clears its count.
+   * Counts the attempt against this (email, IP) pair and, if the pair is still within its limit
+   * (see {@link LoginThrottleService}), checks the credentials; over the limit it's refused before
+   * the password is even hashed. A success clears the pair's count.
    *
    * @param clientIp the client's address, one half of the throttle key
    * @throws LoginThrottledException if the pair has used up its failed attempts for now — whether
@@ -66,7 +66,7 @@ class AuthService {
    */
   IssuedTokens login(String email, String password, String clientIp) {
     String normalizedEmail = User.normalizeEmail(email);
-    loginThrottleService.checkAllowed(normalizedEmail, clientIp);
+    loginThrottleService.recordAttempt(normalizedEmail, clientIp);
 
     // Login runs before any club context exists, hence the @GloballyScoped lookup.
     Optional<User> user = userRepository.findByEmail(normalizedEmail);
@@ -75,7 +75,6 @@ class AuthService {
         passwordEncoder.matches(password, passwordHash != null ? passwordHash : dummyPasswordHash);
 
     if (user.isEmpty() || passwordHash == null || !passwordMatches || !user.get().isActive()) {
-      loginThrottleService.recordFailure(normalizedEmail, clientIp);
       throw new InvalidCredentialsException();
     }
     loginThrottleService.reset(normalizedEmail, clientIp);
