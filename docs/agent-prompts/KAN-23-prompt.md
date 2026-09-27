@@ -1,0 +1,43 @@
+Implement KAN-23 ("Return proper 404/405 instead of 500 for unmatched routes/methods") in the SquadPulse backend (`backend/src/main/java/com/squadpulse/`). This is a subtask of the already-merged KAN-19 (JWT issuing/validation and auth endpoints) — it's a small, focused fix, found while building KAN-19 and flagged by Gal as urgent rather than deferred.
+
+## Context you need before starting
+
+Read these existing files first — the fix must fit their conventions exactly, not introduce new ones:
+- `common/GlobalExceptionHandler.java` — the existing one-`@ExceptionHandler`-per-exception-type pattern (`NotFoundException`→404, `UnauthorizedException`→401, `AccessDeniedException`→403, `CrossClubAccessException`→403, `ConflictException`→409, `TooManyRequestsException`→429, `MissingClubContextException`→500, `MethodArgumentNotValidException`→400, `HttpMessageNotReadableException`→400), ending in a catch-all `@ExceptionHandler(Exception.class)` that returns 500 for anything not explicitly handled above. That catch-all is exactly what's swallowing `NoHandlerFoundException` and `HttpRequestMethodNotSupportedException` today, turning a bad route or wrong HTTP method into a fake "server error."
+- `common/ApiErrorResponse.java` — the response shape every handler above returns (`ApiErrorResponse.of(status, error, message[, details])`). Reuse it; don't invent a new shape for these two.
+- `auth/SecurityConfig.java` — note `PUBLIC_ENDPOINTS` and `.anyRequest().authenticated()`: **an unauthenticated request to a nonexistent route or wrong method never reaches routing at all** — Spring Security's filter chain rejects it with 401 first (via the `authenticationEntryPoint`), before the `DispatcherServlet` gets a chance to look for a handler. So this bug is only observable for *authenticated* requests today. Don't change anything about the unauthenticated 401 path — it's correct as-is and must stay that way.
+- `backend/src/main/resources/application.yml` — check it yourself, but as of writing it has **no** `spring.mvc.*` or `spring.web.resources.*` block. This matters: by default, Spring Boot registers a static-resource handler mapped to `/**`, so an unmatched path falls through to *that* handler (which returns its own bare 404) rather than ever throwing `NoHandlerFoundException` — meaning the new `@ExceptionHandler` for it would be dead code unless you also enable `spring.mvc.throw-exception-if-no-handler-found: true` together with `spring.web.resources.add-mappings: false` (the latter is required for the former to actually take effect — this is a well-known Spring Boot gotcha, not optional). This repo is on Spring Boot 4.1.1 / Java 21 (see `backend/pom.xml`) — **verify the exact property names and the exception class packages against that version** before relying on anything above; Spring Boot/Framework has moved or renamed pieces of the static-resource/routing machinery across major versions, and this description may not exactly match 4.1.1's actual behavior. Don't assume — check the framework source/javadoc available locally (e.g. via your IDE's dependency sources or `mvn dependency:tree` + browsing the jar) if there's any doubt.
+  - `HttpRequestMethodNotSupportedException`, by contrast, is thrown by the normal `RequestMappingHandlerMapping` whenever a path matches but the HTTP method doesn't — this does **not** depend on the config above and should already be reachable once you add the handler.
+- `auth/SecurityConfigTest.java` and `auth/AuthWebMvcTestConfig.java` — the house style for testing anything behind the real security chain: a `@WebMvcTest` against a minimal test-only `ProbeController`, importing `AuthWebMvcTestConfig` (which wires up the real `SecurityConfig` + `JwtAuthenticationFilter` + `JwtService` with dummy test secrets) so tests authenticate with genuine signed JWTs rather than mocked principals. `@WebMvcTest` auto-detects `@RestControllerAdvice` beans, so `GlobalExceptionHandler` will already be active in that test slice without an explicit `@Import`.
+
+## What to build
+
+In `common/GlobalExceptionHandler.java`, add two new `@ExceptionHandler` methods, placed **before** the existing `@ExceptionHandler(Exception.class)` catch-all (handler order in this class follows declaration order for how specific/generic the mapping is — keep the new ones grouped near the other routing/HTTP-level handlers like `HttpMessageNotReadableException`, not scattered):
+
+- `NoHandlerFoundException` → `404 Not Found`, using `ApiErrorResponse.of(HttpStatus.NOT_FOUND.value(), "Not Found", ...)` — reuse the same "Not Found" wording style as the existing `NotFoundException` handler for consistency. Decide on a reasonable message (e.g. mentioning the unmatched path) but don't leak anything sensitive.
+- `HttpRequestMethodNotSupportedException` → `405 Method Not Allowed`, using `ApiErrorResponse.of(HttpStatus.METHOD_NOT_ALLOWED.value(), "Method Not Allowed", ...)`. `HttpRequestMethodNotSupportedException` exposes `getMethod()` and `getSupportedMethods()` — consider whether including the supported methods in the message/details is useful (it's not sensitive, this is public API shape) but keep it consistent with how `MethodArgumentNotValidException`'s handler uses the `details` list.
+
+In `backend/src/main/resources/application.yml`, add whatever config is actually required (verify against Spring Boot 4.1.1 first, per above) so that a request to a genuinely unmatched route reaches `NoHandlerFoundException` instead of the default static-resource-handler 404. Add a short comment explaining why the setting is there (this is exactly the kind of non-obvious config decision that deserves a one-line comment, per this repo's usual style — see the existing comments in this file for the tone to match).
+
+## Testing
+
+Extend the existing `auth/SecurityConfigTest.java` (or add a sibling test class in the same package, using `AuthWebMvcTestConfig` the same way, if you think that reads more cleanly — your call, but don't duplicate the `ProbeController`/config wiring if you don't have to) to cover:
+- An authenticated request (valid bearer token) to a path that doesn't exist → `404`, JSON body in the `ApiErrorResponse` shape (`status`, `error` fields at minimum).
+- An authenticated request to a path that **does** exist but with the wrong HTTP method (e.g. `POST /probe` when only `GET /probe` is mapped) → `405`.
+- Regression check: an **unauthenticated** request to a nonexistent path still returns `401`, unchanged (proves the security-filter-chain-first behavior described above still holds and this fix didn't accidentally move the boundary).
+
+If you added the `spring.mvc`/`spring.web.resources` properties to `application.yml`, double-check whether `@WebMvcTest`'s sliced context actually picks up `application.yml` values or needs them passed via the test's `properties = {...}` attribute (see how `AuthWebMvcTestConfig.JWT_SECRET`/`PASSWORD_PEPPER` are wired into `SecurityConfigTest`'s `@WebMvcTest(properties = {...})` for the pattern) — don't assume it "just works" without checking.
+
+## Conventions (same as KAN-19/KAN-22 — follow exactly)
+
+- English code/comments/commits. Conventional Commits with the ticket key, e.g. `fix(common): return 404/405 instead of 500 for unmatched routes (KAN-23)`.
+- Branch: `fix/KAN-23-404-405-for-unmatched-routes`. Split into logical commits (config + exception handlers → tests) rather than one giant commit, but all commits land in one PR into `master`, per the repo's "one ticket = one PR" rule.
+- This is internal Spring MVC config, not a new required env var or a change to local setup/run steps — no README update expected, but check `README.md` yourself before skipping it, per CLAUDE.md standing rule 7.
+- Do not edit `docs/spec.md` yourself.
+- Do not push commits, open the PR, or modify CI config without stopping to show the diff and get explicit confirmation first.
+
+## Out of scope
+
+- Any change to the unauthenticated request path / `SecurityConfig`'s `authorizeHttpRequests` rules — this ticket is purely about what happens *after* a request is already authenticated and reaches routing.
+- Any other exception type not already handled in `GlobalExceptionHandler` — this ticket is scoped to exactly the two exception types named in the Jira description.
+- Choosing a real reverse-proxy/load-balancer 404 page, or any client-facing (frontend) 404 page — this is backend API error shape only.
