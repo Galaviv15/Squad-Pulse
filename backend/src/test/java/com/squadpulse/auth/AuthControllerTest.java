@@ -120,6 +120,17 @@ class AuthControllerTest {
   }
 
   @Test
+  void loginWithAnOverlongEmailIs400() throws Exception {
+    String email = "a".repeat(243) + "@example.com"; // 255 characters
+
+    mockMvc
+        .perform(login("{\"email\":\"%s\",\"password\":\"secret\"}".formatted(email)))
+        .andExpect(status().isBadRequest());
+
+    verify(authService, never()).login(anyString(), anyString(), anyString());
+  }
+
+  @Test
   void loginWithAMalformedBodyIs400() throws Exception {
     mockMvc.perform(login("{not json")).andExpect(status().isBadRequest());
   }
