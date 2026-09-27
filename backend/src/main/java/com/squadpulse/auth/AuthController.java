@@ -1,6 +1,7 @@
 package com.squadpulse.auth;
 
 import com.squadpulse.auth.AuthService.IssuedTokens;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.time.Duration;
 import org.springframework.http.HttpHeaders;
@@ -38,9 +39,20 @@ class AuthController {
     this.tokenProperties = tokenProperties;
   }
 
+  /**
+   * The client address used for login throttling is the TCP peer ({@code getRemoteAddr()}), never a
+   * client-supplied header such as {@code X-Forwarded-For}: trusting one would let an attacker
+   * claim a fresh address on every request and escape the throttle. Behind a reverse proxy every
+   * client would then share the proxy's address, and on a platform Spring Boot detects as a cloud
+   * it turns on {@code server.forward-headers-strategy} by itself, changing what {@code
+   * getRemoteAddr()} returns — both to be revisited once a deployment target and its proxy setup
+   * are chosen (see docs/spec.md section 11).
+   */
   @PostMapping("/login")
-  ResponseEntity<AccessTokenResponse> login(@Valid @RequestBody LoginRequest request) {
-    return withTokens(authService.login(request.email(), request.password()));
+  ResponseEntity<AccessTokenResponse> login(
+      @Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+    return withTokens(
+        authService.login(request.email(), request.password(), httpRequest.getRemoteAddr()));
   }
 
   @PostMapping("/refresh")

@@ -27,6 +27,7 @@ class AuthService {
   private final PasswordEncoder passwordEncoder;
   private final JwtService jwtService;
   private final RefreshTokenService refreshTokenService;
+  private final LoginThrottleService loginThrottleService;
   private final ClubContext clubContext;
 
   /**
@@ -41,22 +42,34 @@ class AuthService {
       PasswordEncoder passwordEncoder,
       JwtService jwtService,
       RefreshTokenService refreshTokenService,
+      LoginThrottleService loginThrottleService,
       ClubContext clubContext) {
     this.userRepository = userRepository;
     this.passwordEncoder = passwordEncoder;
     this.jwtService = jwtService;
     this.refreshTokenService = refreshTokenService;
+    this.loginThrottleService = loginThrottleService;
     this.clubContext = clubContext;
     this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
   }
 
   /**
+   * Counts the attempt against this (email, IP) pair and, if the pair is still within its limit
+   * (see {@link LoginThrottleService}), checks the credentials; over the limit it's refused before
+   * the password is even hashed. A success clears the pair's count.
+   *
+   * @param clientIp the client's address, one half of the throttle key
+   * @throws LoginThrottledException if the pair has used up its failed attempts for now — whether
+   *     or not the email is registered, so this reveals no more than the 401 does
    * @throws InvalidCredentialsException if the email is unknown, the password is wrong, the user
    *     has no password yet, or the user is deactivated — indistinguishably
    */
-  IssuedTokens login(String email, String password) {
+  IssuedTokens login(String email, String password, String clientIp) {
+    String normalizedEmail = User.normalizeEmail(email);
+    loginThrottleService.recordAttempt(normalizedEmail, clientIp);
+
     // Login runs before any club context exists, hence the @GloballyScoped lookup.
-    Optional<User> user = userRepository.findByEmail(User.normalizeEmail(email));
+    Optional<User> user = userRepository.findByEmail(normalizedEmail);
     String passwordHash = user.map(User::getPasswordHash).orElse(null);
     boolean passwordMatches =
         passwordEncoder.matches(password, passwordHash != null ? passwordHash : dummyPasswordHash);
@@ -64,6 +77,7 @@ class AuthService {
     if (user.isEmpty() || passwordHash == null || !passwordMatches || !user.get().isActive()) {
       throw new InvalidCredentialsException();
     }
+    loginThrottleService.reset(normalizedEmail, clientIp);
     return new IssuedTokens(
         jwtService.issue(user.get()),
         refreshTokenService.issue(user.get().getId(), user.get().getClubId()));

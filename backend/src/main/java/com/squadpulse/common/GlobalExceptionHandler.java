@@ -1,6 +1,8 @@
 package com.squadpulse.common;
 
+import java.time.Duration;
 import java.util.List;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -54,6 +56,19 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(ApiErrorResponse.of(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage()));
+  }
+
+  /** {@code Retry-After} in whole seconds, rounded up so a client never retries too early. */
+  @ExceptionHandler(TooManyRequestsException.class)
+  public ResponseEntity<ApiErrorResponse> handleTooManyRequests(TooManyRequestsException ex) {
+    Duration retryAfter = ex.getRetryAfter();
+    long retryAfterSeconds =
+        Math.max(1, retryAfter.toSeconds() + (retryAfter.toNanosPart() > 0 ? 1 : 0));
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+        .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.TOO_MANY_REQUESTS.value(), "Too Many Requests", ex.getMessage()));
   }
 
   @ExceptionHandler(MissingClubContextException.class)

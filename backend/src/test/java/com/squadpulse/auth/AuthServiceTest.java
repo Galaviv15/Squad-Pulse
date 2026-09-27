@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.squadpulse.auth.AuthService.IssuedTokens;
@@ -15,18 +18,21 @@ import com.squadpulse.auth.JwtService.AccessToken;
 import com.squadpulse.auth.RefreshTokenService.RefreshSession;
 import com.squadpulse.auth.RefreshTokenService.Rotation;
 import com.squadpulse.common.ClubContext;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 class AuthServiceTest {
 
   private static final String DUMMY_HASH = "dummy-hash";
   private static final String REAL_HASH = "real-hash";
+  private static final String IP = "203.0.113.7";
   private static final AccessToken ACCESS_TOKEN =
       new AccessToken("access-token", Instant.parse("2026-09-01T10:15:00Z"));
 
@@ -34,6 +40,7 @@ class AuthServiceTest {
   private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
   private final JwtService jwtService = mock(JwtService.class);
   private final RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
+  private final LoginThrottleService loginThrottleService = mock(LoginThrottleService.class);
   private final ClubContext clubContext = new ClubContext();
 
   private AuthService authService;
@@ -44,7 +51,12 @@ class AuthServiceTest {
     when(jwtService.issue(any())).thenReturn(ACCESS_TOKEN);
     authService =
         new AuthService(
-            userRepository, passwordEncoder, jwtService, refreshTokenService, clubContext);
+            userRepository,
+            passwordEncoder,
+            jwtService,
+            refreshTokenService,
+            loginThrottleService,
+            clubContext);
   }
 
   @AfterEach
@@ -59,10 +71,39 @@ class AuthServiceTest {
     when(passwordEncoder.matches("secret", REAL_HASH)).thenReturn(true);
     when(refreshTokenService.issue("user-1", "club-a")).thenReturn("refresh-token");
 
-    IssuedTokens tokens = authService.login(" Coach@Example.com ", "secret");
+    IssuedTokens tokens = authService.login(" Coach@Example.com ", "secret", IP);
 
     assertThat(tokens).isEqualTo(new IssuedTokens(ACCESS_TOKEN, "refresh-token"));
     verify(jwtService).issue(user);
+  }
+
+  /** So earlier typos don't leave the user's next session with a partly used-up allowance. */
+  @Test
+  void aSuccessfulLoginIsCountedBeforeThePasswordCheckThenClearsItsCount() {
+    when(userRepository.findByEmail("coach@example.com")).thenReturn(Optional.of(user()));
+    when(passwordEncoder.matches("secret", REAL_HASH)).thenReturn(true);
+
+    authService.login(" Coach@Example.com ", "secret", IP);
+
+    InOrder order = inOrder(loginThrottleService, passwordEncoder);
+    order.verify(loginThrottleService).recordAttempt("coach@example.com", IP);
+    order.verify(passwordEncoder).matches("secret", REAL_HASH);
+    order.verify(loginThrottleService).reset("coach@example.com", IP);
+  }
+
+  /** Refused before the lookup and the Argon2 check — that's what actually sheds the load. */
+  @Test
+  void aThrottledLoginIsRefusedWithoutCheckingThePassword() {
+    doThrow(new LoginThrottledException(Duration.ofMinutes(10)))
+        .when(loginThrottleService)
+        .recordAttempt("coach@example.com", IP);
+
+    assertThatThrownBy(() -> authService.login("Coach@Example.com", "secret", IP))
+        .isInstanceOf(LoginThrottledException.class);
+
+    verifyNoInteractions(userRepository, jwtService, refreshTokenService);
+    verify(passwordEncoder, never()).matches(anyString(), anyString());
+    verify(loginThrottleService, never()).reset(anyString(), anyString());
   }
 
   @Test
@@ -179,12 +220,15 @@ class AuthServiceTest {
     verify(refreshTokenService).revoke("token");
   }
 
+  /** Also checks that the attempt counted against the (normalized email, IP) pair and stays. */
   private void assertLoginRejected(String email, String password) {
-    assertThatThrownBy(() -> authService.login(email, password))
+    assertThatThrownBy(() -> authService.login(email, password, IP))
         .isInstanceOf(InvalidCredentialsException.class)
         .hasMessage("Invalid email or password");
     verify(jwtService, never()).issue(any());
     verify(refreshTokenService, never()).issue(anyString(), anyString());
+    verify(loginThrottleService).recordAttempt(User.normalizeEmail(email), IP);
+    verify(loginThrottleService, never()).reset(anyString(), anyString());
   }
 
   private static User user() {
