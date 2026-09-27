@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -115,8 +116,10 @@ class PasswordResetServiceTest {
 
     service.sendActivationCode(user(true));
 
+    ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
     verify(emailSender)
-        .send(eq(EMAIL), eq(PasswordResetService.ACTIVATION_SUBJECT), contains("042137"));
+        .send(eq(EMAIL), eq(PasswordResetService.ACTIVATION_SUBJECT), body.capture());
+    assertThat(body.getValue()).contains("042137").doesNotContainPattern("(?m)\\S {2,}");
     verify(codeService, never()).recordRequest(anyString());
   }
 

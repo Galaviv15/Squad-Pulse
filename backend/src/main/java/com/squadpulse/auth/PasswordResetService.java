@@ -123,7 +123,8 @@ class PasswordResetService {
         """
         You've been invited to SquadPulse. Your activation code is: %s
 
-        Enter it together with a password of your choice within %d minutes. If it expires, use         "Forgot password" to get a new one.
+        Enter it together with a password of your choice within %d minutes.
+        If it expires, use "Forgot password" to get a new one.
         """
             .formatted(code, properties.codeTtl().toMinutes()));
   }
