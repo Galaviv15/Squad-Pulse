@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, and inviting users (who activate their account with an emailed code) — see [Auth API](#auth-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, and inviting users (who activate their account with an emailed code) — see [Auth API](#auth-api). The `Player` entity and its repository exist, with no endpoints yet. No other feature code has shipped yet; the frontend and scraper are still skeletons.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -53,6 +53,8 @@ Pool model: shared collections across all clubs, every document tagged with `clu
 Custom repository methods bypass that layer, so an ArchUnit test fails the build unless each one has `ClubId` in its name. The only exception is a method explicitly annotated `@GloballyScoped` — reserved for lookups by a system-wide unique value that must run before any club context exists (today: `UserRepository.findByEmail`, for login). Each use should be reviewed on its own merits.
 
 Every repository's entity must either extend `ClubScopedEntity` or be explicitly annotated `@NotClubScoped` — the app refuses to start otherwise, so forgetting the base class on tenant data fails loudly. `@NotClubScoped` is only for data no club owns; today that's `Club` itself, the tenant root.
+
+A `Player` (`players` collection) is a roster record owned by one club, not a global person: the same person in two clubs is two independent records with no link between them. Leaving the club sets `active: false` rather than deleting the document. Jersey numbers are unique among a club's **active** players, enforced by the partial unique index `clubId_jerseyNumber_active_unique` (only documents where `jerseyNumber` is a number and `active` is `true`), created at startup by `auto-index-creation` like the `users` email index. A write that breaks it fails with `DuplicateKeyException`. Like `User`, `Player` uses optimistic locking (`@Version`).
 
 ## Language
 

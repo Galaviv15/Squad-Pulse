@@ -13,9 +13,10 @@ spring:
     uri: ${MONGODB_URI}
   data:
     mongodb:
-      # Off by default in Spring Data MongoDB, which means @Indexed annotations are silently
-      # ignored. Needed for the globally unique User.email index (KAN-17) — without it, duplicate
-      # emails across clubs would be accepted and login-by-email would become ambiguous.
+      # Off by default in Spring Data MongoDB, which means @Indexed / @CompoundIndex annotations are
+      # silently ignored. Needed for the globally unique User.email index (KAN-17) — without it,
+      # duplicate emails across clubs would be accepted and login-by-email would become ambiguous —
+      # and for the partial unique jersey-number index on Player (KAN-25).
       auto-index-creation: true
     # Refresh-token families, login throttling and activation / reset codes (auth.*Service). Same
     # env vars docker-compose uses. Host and port default to the local docker-compose Redis; the
