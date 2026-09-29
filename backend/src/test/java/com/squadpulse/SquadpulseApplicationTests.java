@@ -26,6 +26,9 @@ import org.springframework.context.ApplicationContext;
       // keep this test infrastructure-free. The index itself is exercised against a real MongoDB
       // in UserRepositoryIntegrationTest.
       "spring.data.mongodb.auto-index-creation=false",
+      // Likewise the startup User version backfill (KAN-24) writes to MongoDB, so it's off here
+      // too.
+      "squadpulse.user-version-backfill.enabled=false",
       // Dummy values so the startup validation in SecurityProperties passes — not real secrets.
       "squadpulse.security.jwt-secret=test-only-jwt-secret-not-a-real-secret",
       "squadpulse.security.password-pepper=test-only-pepper-not-a-real-secret"
