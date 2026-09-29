@@ -11,6 +11,7 @@ import java.util.Locale;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -66,6 +67,21 @@ public class User extends ClubScopedEntity {
   @CreatedDate private Instant createdAt;
 
   @LastModifiedDate private Instant updatedAt;
+
+  /**
+   * Optimistic locking against lost updates (KAN-24). Every save of an existing user is a
+   * conditional update on {@code _id} <b>and</b> this value, and increments it; a save made from a
+   * stale copy matches nothing and fails with {@link
+   * org.springframework.dao.OptimisticLockingFailureException} instead of silently overwriting a
+   * concurrent write. Anything that loads, changes and saves a user must handle that — see {@link
+   * UserWriteRetry}.
+   *
+   * <p>Managed entirely by Spring Data: application code never sets it. {@code null} only until the
+   * user is first inserted, which sets it to 0. Documents stored before this field existed are
+   * given one at startup by {@link UserVersionBackfill} — without it, Spring Data would treat them
+   * as new and try to insert them again.
+   */
+  @Version private Long version;
 
   /**
    * Trims and lower-cases an email address, so "Gal@Example.com" and "gal@example.com" can't end up
@@ -155,5 +171,9 @@ public class User extends ClubScopedEntity {
 
   public Instant getUpdatedAt() {
     return updatedAt;
+  }
+
+  public Long getVersion() {
+    return version;
   }
 }

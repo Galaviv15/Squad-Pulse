@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -214,6 +215,21 @@ class UserManagementControllerTest {
         .perform(changePermissionLevel(PermissionLevel.ADMIN, "no-such-user", LEVEL_BODY))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.message").value("User not found"));
+  }
+
+  /** Every retry lost a race (KAN-24): a generic 409, not a 500. */
+  @Test
+  void aPermissionChangeWhoseRetriesAllConflictedIs409() throws Exception {
+    when(userPermissionLevelService.changePermissionLevel(anyString(), any(), any()))
+        .thenThrow(
+            new OptimisticLockingFailureException("Cannot save entity user-2 with version 3"));
+
+    mockMvc
+        .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error").value("Conflict"))
+        .andExpect(
+            jsonPath("$.message").value("The resource was modified concurrently, please retry"));
   }
 
   private MockHttpServletRequestBuilder invite(PermissionLevel callerLevel, String body) {

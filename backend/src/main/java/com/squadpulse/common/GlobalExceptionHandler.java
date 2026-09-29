@@ -2,6 +2,9 @@ package com.squadpulse.common;
 
 import java.time.Duration;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +27,11 @@ import org.springframework.web.servlet.NoHandlerFoundException;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+  static final String CONCURRENT_MODIFICATION_MESSAGE =
+      "The resource was modified concurrently, please retry";
+
+  private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
   @ExceptionHandler(NotFoundException.class)
   public ResponseEntity<ApiErrorResponse> handleNotFound(NotFoundException ex) {
@@ -58,6 +66,26 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(ApiErrorResponse.of(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage()));
+  }
+
+  /**
+   * A write lost an optimistic-locking race (a {@code @Version} mismatch, e.g. on {@code
+   * auth.User}, KAN-24) that its writer didn't resolve by retrying — the client may simply retry.
+   * The body is generic: the exception's own message names the entity id and collection, so it's
+   * only logged, at WARN and without a stack trace, since it's an expected outcome, not a bug.
+   *
+   * <p>Only this exact branch of Spring's {@code DataAccessException} hierarchy — not its parent
+   * {@code ConcurrencyFailureException}, and not {@code DuplicateKeyException}, which is a {@code
+   * DataIntegrityViolationException}.
+   */
+  @ExceptionHandler(OptimisticLockingFailureException.class)
+  public ResponseEntity<ApiErrorResponse> handleOptimisticLockingFailure(
+      OptimisticLockingFailureException ex) {
+    log.warn("Concurrent modification not resolved by retry, answering 409: {}", ex.getMessage());
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.CONFLICT.value(), "Conflict", CONCURRENT_MODIFICATION_MESSAGE));
   }
 
   /** {@code Retry-After} in whole seconds, rounded up so a client never retries too early. */

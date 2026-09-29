@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 class PasswordResetServiceTest {
@@ -173,7 +176,7 @@ class PasswordResetServiceTest {
 
     assertResetRejected();
 
-    verifyNoInteractions(userRepository);
+    verifyNoInteractions(userRepository, passwordEncoder);
   }
 
   @Test
@@ -197,7 +200,71 @@ class PasswordResetServiceTest {
         .isInstanceOf(InvalidResetCodeException.class)
         .hasMessage("Invalid or expired code");
     verify(userRepository, never()).save(any());
-    verify(passwordEncoder, never()).encode(any());
+    // An InvalidResetCodeException isn't a version conflict: at most one load, no retry.
+    verify(userRepository, atMost(1)).findByEmail(any());
+  }
+
+  // --- concurrent writes (KAN-24) ----------------------------------------------------------------
+
+  /** A lost race reloads the user and saves again; Argon2 and the clock run only once. */
+  @Test
+  void resetPasswordRetriesAVersionConflictOnAFreshlyLoadedUser() {
+    User stale = user(true);
+    User fresh = user(true);
+    fresh.setPermissionLevel(PermissionLevel.ADMIN); // what the concurrent writer changed
+    when(codeService.verify(EMAIL, "123456")).thenReturn(true);
+    when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(stale), Optional.of(fresh));
+    when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
+    when(userRepository.save(any(User.class)))
+        .thenThrow(new OptimisticLockingFailureException("conflict"))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.resetPassword(EMAIL, "123456", "new-password");
+
+    InOrder order = inOrder(userRepository);
+    order.verify(userRepository).save(stale);
+    order.verify(userRepository).save(fresh);
+    assertThat(fresh.getPasswordHash()).isEqualTo("new-hash");
+    assertThat(fresh.getSessionsInvalidatedAt()).isEqualTo(NOW);
+    assertThat(fresh.getPermissionLevel()).isEqualTo(PermissionLevel.ADMIN);
+    verify(passwordEncoder, times(1)).encode(any());
+    assertThat(clubContext.getClubId()).isEmpty();
+  }
+
+  /** The security point of KAN-24: a reset must not write back over a concurrent deactivation. */
+  @Test
+  void resetPasswordFailsIfTheUserWasDeactivatedBeforeTheRetry() {
+    User stale = user(true);
+    when(codeService.verify(EMAIL, "123456")).thenReturn(true);
+    when(userRepository.findByEmail(EMAIL))
+        .thenReturn(Optional.of(stale), Optional.of(user(false)));
+    when(userRepository.save(any(User.class)))
+        .thenThrow(new OptimisticLockingFailureException("conflict"));
+
+    assertThatThrownBy(() -> service.resetPassword(EMAIL, "123456", "new-password"))
+        .isInstanceOf(InvalidResetCodeException.class)
+        .hasMessage("Invalid or expired code");
+    verify(userRepository, times(1)).save(any());
+    // Not retried: the 401 ends the loop on the second load.
+    verify(userRepository, times(2)).findByEmail(EMAIL);
+  }
+
+  @Test
+  void resetPasswordGivesUpAfterMaxAttemptsAndRethrowsTheConflict() {
+    OptimisticLockingFailureException last = new OptimisticLockingFailureException("last");
+    when(codeService.verify(EMAIL, "123456")).thenReturn(true);
+    when(userRepository.findByEmail(EMAIL)).thenAnswer(invocation -> Optional.of(user(true)));
+    when(userRepository.save(any(User.class)))
+        .thenThrow(
+            new OptimisticLockingFailureException("first"),
+            new OptimisticLockingFailureException("second"),
+            last);
+
+    assertThatThrownBy(() -> service.resetPassword(EMAIL, "123456", "new-password")).isSameAs(last);
+    verify(userRepository, times(UserWriteRetry.MAX_ATTEMPTS)).findByEmail(EMAIL);
+    verify(userRepository, times(UserWriteRetry.MAX_ATTEMPTS)).save(any());
+    verify(passwordEncoder, times(1)).encode(any());
+    assertThat(clubContext.getClubId()).isEmpty();
   }
 
   private static User user(boolean active) {
