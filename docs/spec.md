@@ -2,7 +2,7 @@
 
 **Version:** v3 · draft
 **Updated:** Sep 29, 2026
-**Status:** Phase 2 in progress: auth & roles are done (epic KAN-10); the Player entity is in place (KAN-25) and the squad API is next (KAN-26, KAN-27). Frontend and scraper are still skeletons.
+**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25) and the squad API for listing, getting, creating and updating players (KAN-26) are in place. Release / re-activation / deletion (KAN-27), the squad summary (KAN-28) and player photos (KAN-29) are next. Frontend and scraper are still skeletons.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
 
@@ -101,6 +101,8 @@ Some Data may be shared for exameple league table (if both clubs are in the same
 >
 > **The one enforced exception:** custom repository methods bypass that layer, so each must include `ClubId` in its name (enforced at build time by an ArchUnit test). The sole escape hatch is the `@GloballyScoped` annotation, for lookups by a globally unique value when no club context exists yet — today only `UserRepository.findByEmail`, used at login to find out which club the caller belongs to (safe because email is unique across the whole system). Uses should be rare, and each one reviewed individually. Players deliberately have **no** globally scoped lookup — see section 05.
 >
+> **Filtering happens in memory, on club-scoped loads.** A query built by hand against `MongoTemplate` would bypass that layer too, and nothing — no test, no ArchUnit rule — would catch a missing `clubId` criterion in it. So list filters (e.g. the squad filters in section 05) load the club's records through a club-scoped repository method and filter and sort them in Java. At a squad's size (30–40 players) this costs nothing; if a future list is too large for this, its query needs the same review as a `@GloballyScoped` finder.
+>
 > A second, deliberate bypass exists outside the repository layer: `UserVersionBackfill` (KAN-24), a startup schema backfill that sets a `version` field on `users` documents missing one, across all clubs. It filters and writes only that field and reads no tenant data. It can be removed once every environment has been backfilled.
 
 The Silo model (a separate database per club) was considered and rejected for now — the operational overhead (running migrations across N databases) is too high relative to the benefit for a small-to-medium number of clubs.
@@ -124,6 +126,17 @@ Every user belongs to exactly one club (`clubId` on the User document and in the
 An `ADMIN` can change another user's Permission Level in their club (`PATCH /auth/users/{id}/permission-level`), including granting or removing `ADMIN`. A user can never change their **own** level, so a club's only `ADMIN` can't lock the club out by demoting themselves. The change takes effect at the target's next token refresh, at most one access-token lifetime (15 minutes).
 
 `EDIT_PARTIAL` is assignable but not yet required by any endpoint (today it grants the same as `VIEW_ONLY`). Its scope is deliberately left undefined for now — it is not part of the Squad Management epic (KAN-11), and will be decided in a future ticket.
+
+Every endpoint declares the **minimum** permission level it requires; the levels are ordered (`ADMIN` > `EDIT_FULL` > `EDIT_PARTIAL` > `VIEW_ONLY`), so each level also admits every level above it.
+
+| Endpoint | Minimum level |
+|---|---|
+| `POST /auth/users/invite` | `ADMIN` |
+| `PATCH /auth/users/{id}/permission-level` | `ADMIN` |
+| `GET /squad/players` (list, with filters) | `VIEW_ONLY` |
+| `GET /squad/players/{id}` | `VIEW_ONLY` |
+| `POST /squad/players` | `EDIT_FULL` |
+| `PUT /squad/players/{id}` (incl. medical status) | `EDIT_FULL` |
 
 ## 05. Player entity
 
@@ -154,6 +167,16 @@ If players ever get logins (see section 04, "Player — future"), the intended e
 - **Leaving the club is a soft delete:** the player is released (`active = false`) rather than deleted, so references to them from training sessions and lineups stay valid. A released player can be re-activated.
 - **Jersey numbers** are unique only among a club's active players: releasing a player frees their number, and re-activating a player whose number has since been taken is rejected. This is guaranteed by a partial unique index on `(clubId, jerseyNumber)` in the database, not by a check in code, so concurrent writes can't both take the same number.
 - **Permanent deletion** exists only for records created by mistake, and requires `ADMIN`. Once training sessions or lineups reference players, permanent deletion of a referenced player must be blocked.
+
+### Squad API behaviour
+
+- **Update is a full replacement** (`PUT`): every editable field is sent; an optional field that's missing or `null` clears the stored value, and the medical status is required. Neither create nor update can set `active` or `clubId` — such fields in the body are ignored.
+- **Stale edits are refused.** An update carries the `version` the client loaded. If the player has been saved since — detected either by that check or by the save itself losing a race — the answer is `409 Conflict` with a "reload and apply your changes again" message, and the edit is never retried on the server (see section 10).
+- **A released player is read-only** until re-activated: it can be fetched by id (`active: false`), but an update returns `409 Conflict`.
+- **A jersey number already taken** by an active player of the club returns `409 Conflict`, also when two writes race (the database index decides).
+- **Another club's player** is simply not found (`404`), exactly like an id that doesn't exist.
+- **List filters** (all optional, combined with AND): status `active` (default) / `released` / `all`; position — matches the **primary** position only; age range `minAge`–`maxAge`, inclusive, each 18–99; medical status; preferred foot. Filtering runs in memory on the club's own players (section 03).
+- **List order** is fixed: primary position (GK → ST), then jersey number (players without one last), then name. No pagination.
 
 ### Positions
 
@@ -195,9 +218,10 @@ A newly invited user is created with no password set — not even a temporary on
 - **Password hashing:** Argon2id (instead of bcrypt — more resistant to GPU/ASIC cracking), implemented via Spring Security's `Argon2PasswordEncoder`.
 - **Pepper:** a fixed secret string, stored only as an environment variable (must be at least 32 characters & never in the DB or in code), combined with the password before hashing — so a DB leak alone isn't enough to crack it.
 - **RBAC:** enforced by Permission Level (see section 04), combined with `clubId` filtering (see section 03), via Spring Security — `PermissionLevel` is mapped to a Spring Security authority, and protected endpoints are annotated `@PreAuthorize`. A `JwtAuthenticationFilter` validates the access token on every request and populates the request's `clubId` context from its claim; this is what makes the per-request filtering in section 03 actually apply.
-- **Concurrent writes:** `User` and `Player` use optimistic locking (`@Version`), so a concurrent write can never silently overwrite another — and in particular a user's deactivation (`active = false`) can never be undone by a racing write such as a password reset. A single-field absolute change to a user (reset, permission level) reloads and retries; a conflict that can't be resolved returns `409 Conflict`. Any future endpoint that writes a user (deactivation, profile edit) must follow the same rule (KAN-24). Player edits are multi-field form edits, so a conflict returns `409 Conflict` without a retry.
+- **Concurrent writes:** `User` and `Player` use optimistic locking (`@Version`), so a concurrent write can never silently overwrite another — and in particular a user's deactivation (`active = false`) can never be undone by a racing write such as a password reset. A single-field absolute change to a user (reset, permission level) reloads and retries; a conflict that can't be resolved returns `409 Conflict`. Any future endpoint that writes a user (deactivation, profile edit) must follow the same rule (KAN-24). Player edits are multi-field form edits based on what the user saw, so they are never retried: the client sends the `version` it loaded, and a mismatch — or a save race lost after that check — returns `409 Conflict` asking the user to reload (section 05).
 - **Known accepted trade-off:** inviting a user whose email is already registered (in any club) returns `409 Conflict`, which tells an authenticated `ADMIN` that the email exists somewhere in the system. Accepted because the endpoint itself requires an authenticated `ADMIN` (it's not public), and email is unique system-wide by design (section 03).
 - **Additional protections:** CORS restricted to approved domains, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI. Validation happens on the incoming request; entity constraints are **not** re-checked when a document is saved to the database, so every endpoint that writes must validate its full input first.
+- **Error responses:** every error has the same JSON shape (`status`, `error`, `message`, `details`). A validation `400` lists one `"name: message"` entry per invalid body field or query parameter in `details`; a body value that can't be read (e.g. a malformed date) is reported as `"<field>: invalid value"`. Rejected values are never echoed back in an error.
 - **Rate limiting:** Redis-backed rate limiting covers both the activation/reset code above and `/auth/login` itself: 5 failed attempts on a given (email, IP) pair within a 15-minute window return 429 Too Many Requests with Retry-After (KAN-22).
 - **Secrets management:** environment variables / a secrets manager only — no key, password, or pepper ever goes into git.
 
@@ -221,7 +245,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 |---|---|
 |✅ **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. | *Except CI Pipeline
 |✅ **1 — Local environment** | Docker Compose with MongoDB + Redis. | 
-| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad API next (KAN-26, KAN-27).* |
+| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion (KAN-27), squad summary (KAN-28) and player photos (KAN-29) next.* |
 | **3 — Frontend MVP** | Dashboard and squad table against the real API — the first "walking skeleton" that runs end to end. |
 | **4 — Tactical board** | The Canvas module with Konva.js. |
 | **5 — Scraping service** | A separate Node worker, fed manually / by Cron — by now there's actually something for it to feed. |

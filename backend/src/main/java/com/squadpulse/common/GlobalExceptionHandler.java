@@ -1,21 +1,31 @@
 package com.squadpulse.common;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.MessageSourceResolvable;
+import org.springframework.core.MethodParameter;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
-import org.springframework.validation.FieldError;
+import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DatabindException;
 
 /**
  * Turns exceptions raised anywhere in the request-handling path into a consistent JSON error shape,
@@ -111,26 +121,91 @@ public class GlobalExceptionHandler {
                 ex.getMessage()));
   }
 
+  /**
+   * With a field, reported like any validation error (its message already reads {@code "field:
+   * problem"}); without one, a plain 400 carrying the message.
+   */
+  @ExceptionHandler(BadRequestException.class)
+  public ResponseEntity<ApiErrorResponse> handleBadRequest(BadRequestException ex) {
+    if (ex.getField().isPresent()) {
+      return validationFailed(List.of(ex.getMessage()));
+    }
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        .body(ApiErrorResponse.of(HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage()));
+  }
+
+  /**
+   * An invalid {@code @Valid @RequestBody}: one {@code "field: message"} detail per field error.
+   */
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<ApiErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
     List<String> details =
-        ex.getBindingResult().getFieldErrors().stream().map(FieldError::getDefaultMessage).toList();
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.BAD_REQUEST.value(),
-                "Validation Failed",
-                "Request validation failed",
-                details));
+        ex.getBindingResult().getFieldErrors().stream()
+            .map(error -> detail(error.getField(), error))
+            .toList();
+    return validationFailed(details);
   }
 
-  /** A missing or unparseable JSON body, or a value of the wrong type (e.g. an unknown enum). */
+  /**
+   * A constraint on a handler parameter itself (e.g. {@code @Min} on a {@code @RequestParam})
+   * failed. Since Spring 6.1 the framework validates these on its own, for any controller
+   * <b>not</b> annotated with {@code @Validated}, and throws this rather than a {@code
+   * ConstraintViolationException}. One {@code "param: message"} detail per violation.
+   *
+   * <p>A failed <i>return-value</i> constraint is the server's fault, not the client's, so it stays
+   * a 500.
+   */
+  @ExceptionHandler(HandlerMethodValidationException.class)
+  public ResponseEntity<ApiErrorResponse> handleMethodValidation(
+      HandlerMethodValidationException ex) {
+    if (ex.isForReturnValue()) {
+      return handleUnexpected(ex);
+    }
+    List<String> details = new ArrayList<>();
+    for (ParameterValidationResult result : ex.getParameterValidationResults()) {
+      String name = requestName(result.getMethodParameter());
+      result.getResolvableErrors().forEach(error -> details.add(detail(name, error)));
+    }
+    ex.getCrossParameterValidationResults()
+        .forEach(error -> details.add(error.getDefaultMessage()));
+    return validationFailed(details);
+  }
+
+  /**
+   * A path or query parameter that can't be converted to its declared type — e.g. an unknown enum
+   * constant or a non-numeric age. The rejected value isn't echoed back; for an enum, the detail
+   * lists the accepted values (each constant's {@code toString()}).
+   */
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<ApiErrorResponse> handleArgumentTypeMismatch(
+      MethodArgumentTypeMismatchException ex) {
+    Class<?> requiredType = ex.getRequiredType();
+    String problem =
+        requiredType != null && requiredType.isEnum()
+            ? "must be one of " + Arrays.toString(requiredType.getEnumConstants())
+            : "has an invalid format";
+    return validationFailed(List.of(ex.getName() + ": " + problem));
+  }
+
+  /**
+   * A missing or unparseable JSON body, or a value that can't be bound (an unknown enum constant, a
+   * date in the wrong format). When Jackson knows which property the value was for — a {@link
+   * DatabindException} with a path — {@code details} names it ({@code "dateOfBirth: invalid
+   * value"}); broken JSON has no path, so {@code details} stays empty. The rejected value is never
+   * echoed back.
+   */
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ResponseEntity<ApiErrorResponse> handleUnreadableBody(HttpMessageNotReadableException ex) {
+    List<String> details =
+        ex.getCause() instanceof DatabindException mappingException
+            ? propertyPath(mappingException)
+                .map(path -> List.of(path + ": invalid value"))
+                .orElse(List.of())
+            : List.of();
     return ResponseEntity.status(HttpStatus.BAD_REQUEST)
         .body(
             ApiErrorResponse.of(
-                HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed request body"));
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed request body", details));
   }
 
   /**
@@ -174,5 +249,51 @@ public class GlobalExceptionHandler {
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
                 "Internal Server Error",
                 "An unexpected error occurred"));
+  }
+
+  private static ResponseEntity<ApiErrorResponse> validationFailed(List<String> details) {
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "Validation Failed",
+                "Request validation failed",
+                details));
+  }
+
+  private static String detail(String name, MessageSourceResolvable error) {
+    return name + ": " + error.getDefaultMessage();
+  }
+
+  /**
+   * The JSON path of the property Jackson failed on, from its structured references rather than
+   * {@code getPathReference()}, which spells out Java class names: {@code "players[2].position"}.
+   */
+  private static Optional<String> propertyPath(JacksonException ex) {
+    StringBuilder path = new StringBuilder();
+    for (JacksonException.Reference reference : ex.getPath()) {
+      if (reference.getPropertyName() != null) {
+        if (!path.isEmpty()) {
+          path.append('.');
+        }
+        path.append(reference.getPropertyName());
+      } else if (reference.getIndex() >= 0) {
+        path.append('[').append(reference.getIndex()).append(']');
+      }
+    }
+    return path.isEmpty() ? Optional.empty() : Optional.of(path.toString());
+  }
+
+  /** The name the client used: the {@code @RequestParam} name if given, else the Java name. */
+  private static String requestName(MethodParameter parameter) {
+    // Read raw, so the name/value alias isn't resolved for us.
+    RequestParam requestParam = parameter.getParameterAnnotation(RequestParam.class);
+    if (requestParam != null) {
+      String name = requestParam.name().isEmpty() ? requestParam.value() : requestParam.name();
+      if (!name.isEmpty()) {
+        return name;
+      }
+    }
+    return parameter.getParameterName();
   }
 }

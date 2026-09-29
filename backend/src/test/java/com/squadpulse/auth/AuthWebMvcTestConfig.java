@@ -10,16 +10,19 @@ import org.springframework.context.annotation.Import;
  * security chain: {@link SecurityConfig} with the real {@link JwtAuthenticationFilter} and {@link
  * JwtService}, so tests authenticate with genuine signed tokens rather than mocked principals. Pair
  * with the {@link #JWT_SECRET} and {@link #PASSWORD_PEPPER} properties.
+ *
+ * <p>Public so controller tests in other modules can use it too, with {@link TestAccessTokens} for
+ * the tokens.
  */
 @TestConfiguration
 @EnableConfigurationProperties({SecurityProperties.class, TokenProperties.class})
 @Import({SecurityConfig.class, JwtService.class, ClubContext.class})
-class AuthWebMvcTestConfig {
+public class AuthWebMvcTestConfig {
 
   /** Dummy values so the startup validation in SecurityProperties passes — not real secrets. */
-  static final String JWT_SECRET =
+  public static final String JWT_SECRET =
       "squadpulse.security.jwt-secret=test-only-jwt-secret-not-a-real-secret";
 
-  static final String PASSWORD_PEPPER =
+  public static final String PASSWORD_PEPPER =
       "squadpulse.security.password-pepper=test-only-pepper-not-a-real-secret";
 }
