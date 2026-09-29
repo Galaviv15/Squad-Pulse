@@ -18,6 +18,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -60,6 +61,7 @@ class PlayerRepositoryIntegrationTest {
   @Autowired private PlayerRepository playerRepository;
   @Autowired private ClubContext clubContext;
   @Autowired private MongoTemplate mongoTemplate;
+  @Autowired private ApplicationContext applicationContext;
 
   @AfterEach
   void tearDown() {
@@ -67,6 +69,16 @@ class PlayerRepositoryIntegrationTest {
     // Remove documents rather than dropping the collection: dropping would also drop the jersey
     // index created at startup, silently disabling it for every test that runs afterwards.
     mongoTemplate.remove(new Query(), Player.class);
+  }
+
+  /**
+   * The squad API race-test hooks are only {@code @Import}ed by {@code PlayerApiIntegrationTest};
+   * this context, which doesn't import them, must not contain them.
+   */
+  @Test
+  void theRaceTestHooksAreNotRegisteredInOtherContexts() {
+    assertThat(applicationContext.getBeanNamesForType(PlayerLoadHook.class)).isEmpty();
+    assertThat(applicationContext.getBeanNamesForType(PlayerInsertBarrier.class)).isEmpty();
   }
 
   // --- saving ------------------------------------------------------------------------------------
