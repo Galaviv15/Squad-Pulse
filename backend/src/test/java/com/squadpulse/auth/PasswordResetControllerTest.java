@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -84,6 +85,21 @@ class PasswordResetControllerTest {
         .perform(resetPassword("coach@example.com", "042137", VALID_PASSWORD))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.message").value("Invalid or expired code"));
+  }
+
+  /** Every retry lost a race (KAN-24): a generic 409 — never a 204, never a 500. */
+  @Test
+  void resetPasswordWhoseRetriesAllConflictedIs409() throws Exception {
+    doThrow(new OptimisticLockingFailureException("Cannot save entity user-1 with version 3"))
+        .when(passwordResetService)
+        .resetPassword("coach@example.com", "042137", VALID_PASSWORD);
+
+    mockMvc
+        .perform(resetPassword("coach@example.com", "042137", VALID_PASSWORD))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error").value("Conflict"))
+        .andExpect(
+            jsonPath("$.message").value("The resource was modified concurrently, please retry"));
   }
 
   /** Rejected before the service runs, so the code isn't consumed or charged an attempt. */

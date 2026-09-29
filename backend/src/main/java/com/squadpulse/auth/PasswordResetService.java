@@ -3,8 +3,10 @@ package com.squadpulse.auth;
 import com.squadpulse.common.ClubContext;
 import com.squadpulse.common.EmailSender;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -137,21 +139,38 @@ class PasswordResetService {
    * <p>This is also an invited user's activation: their {@code passwordHash} goes from {@code null}
    * to set, with nothing special about it.
    *
+   * <p><b>Concurrent writes</b> (KAN-24). The code is already consumed when the user is saved, so a
+   * save that loses an optimistic-locking race (e.g. to an admin changing the user's permission
+   * level meanwhile) is retried rather than failed: the user is reloaded and the change re-applied,
+   * so both writes survive. The Argon2 hash and the invalidation instant are computed once, before
+   * that, and reused. Each attempt <b>re-checks</b> that the user still exists and is active —
+   * that's the security point: if the user was deactivated in between, the reset fails instead of
+   * writing its stale copy back over the deactivation. If every attempt conflicts, the last {@link
+   * OptimisticLockingFailureException} propagates (a 409); this never returns normally unless the
+   * save succeeded.
+   *
    * @throws InvalidResetCodeException if the code isn't the email's current one, or its user no
    *     longer exists or has been deactivated — indistinguishably. The code is consumed by then.
+   * @throws OptimisticLockingFailureException if all {@link UserWriteRetry#MAX_ATTEMPTS} attempts
+   *     lost a race
    */
   void resetPassword(String email, String code, String newPassword) {
     String normalizedEmail = User.normalizeEmail(email);
     if (!codeService.verify(normalizedEmail, code)) {
       throw new InvalidResetCodeException();
     }
-    User user =
-        userRepository
-            .findByEmail(normalizedEmail)
-            .filter(User::isActive)
-            .orElseThrow(InvalidResetCodeException::new);
-    user.setPasswordHash(passwordEncoder.encode(newPassword));
-    user.setSessionsInvalidatedAt(clock.instant());
-    clubContext.callAs(user.getClubId(), () -> userRepository.save(user));
+    String passwordHash = passwordEncoder.encode(newPassword);
+    Instant sessionsInvalidatedAt = clock.instant();
+    UserWriteRetry.withRetry(
+        () -> {
+          User user =
+              userRepository
+                  .findByEmail(normalizedEmail)
+                  .filter(User::isActive)
+                  .orElseThrow(InvalidResetCodeException::new);
+          user.setPasswordHash(passwordHash);
+          user.setSessionsInvalidatedAt(sessionsInvalidatedAt);
+          return clubContext.callAs(user.getClubId(), () -> userRepository.save(user));
+        });
   }
 }

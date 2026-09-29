@@ -1,6 +1,7 @@
 package com.squadpulse.auth;
 
 import com.squadpulse.common.NotFoundException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -29,6 +30,15 @@ import org.springframework.stereotype.Service;
  * see {@link TokenProperties#accessTtl()}); {@link AuthService#refresh} re-reads the user, so the
  * next one carries the new level. The same accepted trade-off as for logout and deactivation (see
  * docs/spec.md section 10): no token revocation, no per-request lookup.
+ *
+ * <p><b>Concurrent writes: reload and retry, not 409</b> (KAN-24). If the user is saved by someone
+ * else between the load and the save (e.g. their own password reset), the save fails on the version
+ * check. The request is "set the level to X" — an absolute value, on a field no other writer
+ * touches — so reloading and applying it again loses nothing and needs no decision from the admin;
+ * it's retried (see {@link UserWriteRetry}), and only if every attempt conflicts does it become a
+ * 409. That reasoning is specific to this endpoint: a future multi-field "edit user" endpoint,
+ * where the admin submits changes based on what they saw, should probably answer 409 on a conflict
+ * instead, so the admin reviews the newer state rather than silently overwriting it.
  */
 @Service
 class UserPermissionLevelService {
@@ -40,22 +50,31 @@ class UserPermissionLevelService {
   }
 
   /**
-   * Setting the level the user already has is a successful no-op.
+   * Setting the level the user already has is a successful no-op — checked against the reloaded
+   * user on every attempt, so a concurrent change to the same level isn't saved again.
    *
    * @throws CannotChangeOwnPermissionLevelException if {@code userId} is the caller's own
-   * @throws NotFoundException if there's no such user in the caller's club
+   * @throws NotFoundException if there's no such user in the caller's club — including one deleted
+   *     between attempts
+   * @throws OptimisticLockingFailureException if all {@link UserWriteRetry#MAX_ATTEMPTS} attempts
+   *     lost a race
    */
   User changePermissionLevel(
       String userId, PermissionLevel permissionLevel, AuthenticatedUser caller) {
     if (userId.equals(caller.userId())) {
       throw new CannotChangeOwnPermissionLevelException();
     }
-    User user =
-        userRepository.findById(userId).orElseThrow(() -> new NotFoundException("User not found"));
-    if (user.getPermissionLevel() == permissionLevel) {
-      return user;
-    }
-    user.setPermissionLevel(permissionLevel);
-    return userRepository.save(user);
+    return UserWriteRetry.withRetry(
+        () -> {
+          User user =
+              userRepository
+                  .findById(userId)
+                  .orElseThrow(() -> new NotFoundException("User not found"));
+          if (user.getPermissionLevel() == permissionLevel) {
+            return user;
+          }
+          user.setPermissionLevel(permissionLevel);
+          return userRepository.save(user);
+        });
   }
 }
