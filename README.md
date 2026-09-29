@@ -121,7 +121,7 @@ Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
 
 Errors use the same JSON shape as every other endpoint (`common.ApiErrorResponse`). An access token stays valid until it expires (at most 15 minutes) even after logout or revocation — only refresh tokens are revocable.
 
-**Concurrent writes to a user.** `User` is protected by optimistic locking (a `@Version` field): a save made from a stale copy fails instead of silently overwriting a concurrent change. Users stored before that field existed get it automatically: on startup, before the server accepts requests, `auth.UserVersionBackfill` sets `version: 0` on every user document that has none — nothing to do by hand.
+**Concurrent writes to a user.** `User` is protected by optimistic locking (a `@Version` field): a save made from a stale copy fails instead of silently overwriting a concurrent change. Users stored before that field existed get it automatically: on startup, before the server accepts requests, `auth.UserVersionBackfill` sets `version: 0` on every user document that has none — nothing to do by hand. A conflict an endpoint doesn't resolve itself is a `409` with a generic "modified concurrently, please retry" message.
 
 ### Bootstrapping a new club
 
