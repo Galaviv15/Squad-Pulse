@@ -1,8 +1,8 @@
 # SquadPulse — Technical & Product Spec
 
-**Version:** v2 · draft
-**Updated:** Sep 26, 2026
-**Status:** Phase 0 in progress: backend, frontend and scraper skeletons exist, no feature code.
+**Version:** v3 · draft
+**Updated:** Sep 29, 2026
+**Status:** Phase 2 in progress: auth & roles are done (epic KAN-10); the Player entity is in place (KAN-25) and the squad API is next (KAN-26, KAN-27). Frontend and scraper are still skeletons.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
 
@@ -82,8 +82,8 @@ Frontend (React + TS + Vite + Tailwind)
             │
             ▼
    MongoDB                    Redis
-   (Clubs/Users/Players/      (refresh-token families —
-    Matches/Trainings/         cache & rate limiting planned)
+   (Clubs/Users/Players/      (refresh-token families,
+    Matches/Trainings/         login throttling, reset codes)
     TacticalBoards)
             ⇠ ⇢
    Scraper Worker (Node) — Playwright/Cheerio,
@@ -99,7 +99,9 @@ Some Data may be shared for exameple league table (if both clubs are in the same
 
 > **How isolation is actually enforced:** `clubId` is included as a claim in the JWT at login. A single central access layer (a Base Repository / Aspect in the `common` module) automatically injects a `clubId` filter into every query — so we don't rely on every endpoint "remembering" to add the filter itself. This is the single most critical thing to check in code review and in tests.
 >
-> **The one enforced exception:** custom repository methods bypass that layer, so each must include `ClubId` in its name (enforced at build time by an ArchUnit test). The sole escape hatch is the `@GloballyScoped` annotation, for lookups by a globally unique value when no club context exists yet — today only `UserRepository.findByEmail`, used at login to find out which club the caller belongs to (safe because email is unique across the whole system). Uses should be rare, and each one reviewed individually.
+> **The one enforced exception:** custom repository methods bypass that layer, so each must include `ClubId` in its name (enforced at build time by an ArchUnit test). The sole escape hatch is the `@GloballyScoped` annotation, for lookups by a globally unique value when no club context exists yet — today only `UserRepository.findByEmail`, used at login to find out which club the caller belongs to (safe because email is unique across the whole system). Uses should be rare, and each one reviewed individually. Players deliberately have **no** globally scoped lookup — see section 05.
+>
+> A second, deliberate bypass exists outside the repository layer: `UserVersionBackfill` (KAN-24), a startup schema backfill that sets a `version` field on `users` documents missing one, across all clubs. It filters and writes only that field and reads no tenant data. It can be removed once every environment has been backfilled.
 
 The Silo model (a separate database per club) was considered and rejected for now — the operational overhead (running migrations across N databases) is too high relative to the benefit for a small-to-medium number of clubs.
 
@@ -119,19 +121,39 @@ Access is managed along two separate axes: **Title** — the professional role s
 
 Every user belongs to exactly one club (`clubId` on the User document and in the JWT). Inviting a new user and setting their Title + Permission Level requires `ADMIN` permission level — this is enforced by permission level, not by Title. In practice that means the Club Manager today, since Club Manager is the only Title that defaults to `ADMIN`, but any user holding `ADMIN` can do it.
 
+An `ADMIN` can change another user's Permission Level in their club (`PATCH /auth/users/{id}/permission-level`), including granting or removing `ADMIN`. A user can never change their **own** level, so a club's only `ADMIN` can't lock the club out by demoting themselves. The change takes effect at the target's next token refresh, at most one access-token lifetime (15 minutes).
+
+`EDIT_PARTIAL` is assignable but not yet required by any endpoint (today it grants the same as `VIEW_ONLY`). Its scope is deliberately left undefined for now — it is not part of the Squad Management epic (KAN-11), and will be decided in a future ticket.
+
 ## 05. Player entity
 
 | Field | Type / range |
 |---|---|
-| Full name | Text |
-| Primary position | See position list below |
-| Secondary position | Optional, same list |
-| Jersey number | 1–99, unique within the club, Optional |
-| Date of birth / age | 18–99 (adult clubs only) |
-| Height / weight | Numeric |
-| Preferred foot | Right / left / both |
-| Medical status | Fit / injured (V1); extended fields (injury type, expected return) later |
+| Full name | Text, required, 1–100 characters, stored trimmed. One field, not first/last (Hebrew names don't split cleanly) |
+| Primary position | Required; see position list below |
+| Secondary position | Optional, same list; must differ from the primary position |
+| Jersey number | Optional, 1–99; unique among the club's **active** players (enforced by a database index, see below) |
+| Date of birth | Required; age 18–99 (adult clubs only). Age is always derived from it, never stored |
+| Height | Optional, whole centimetres, 140–220 |
+| Weight | Optional, whole kilograms, 40–150 |
+| Preferred foot | Optional: right / left / both |
+| Medical status | Fit / injured (V1), defaults to fit; extended fields (injury type, expected return) later |
+| Active | Whether the player is currently on the club's squad; defaults to true (see "Leaving the club" below) |
 | Performance data | Minutes played, distance covered, speed, sprints — **phase 2+**, depends on the data source (Veo / chips) |
+
+Players use optimistic locking (`@Version`) from day one, like `User` (see section 10).
+
+### A player belongs to one club
+
+A player is a **club-scoped roster record**, not a global person. If the same real person moves from club A to club B, A's record is released and stays in A as part of A's history (its training sessions, lineups and injuries), and B creates its own, fully independent record. The system doesn't know the two records are the same person, and neither club can see or edit the other's record — this is ordinary `clubId` isolation (section 03), with no cross-club field and no globally scoped player lookup.
+
+If players ever get logins (see section 04, "Player — future"), the intended extension point is an optional link from a player record to the global `User` account (whose email is unique system-wide). Each club would still see only its own record.
+
+### Leaving the club, and permanent deletion
+
+- **Leaving the club is a soft delete:** the player is released (`active = false`) rather than deleted, so references to them from training sessions and lineups stay valid. A released player can be re-activated.
+- **Jersey numbers** are unique only among a club's active players: releasing a player frees their number, and re-activating a player whose number has since been taken is rejected. This is guaranteed by a partial unique index on `(clubId, jerseyNumber)` in the database, not by a check in code, so concurrent writes can't both take the same number.
+- **Permanent deletion** exists only for records created by mistake, and requires `ADMIN`. Once training sessions or lineups reference players, permanent deletion of a referenced player must be blocked.
 
 ### Positions
 
@@ -163,19 +185,20 @@ The home screen shows clickable components: upcoming schedule, squad, league tab
 
 At this stage, only the system owner (Gal) can add a new club to the database, along with an initial Club Manager user for it. From there, any user with `ADMIN` permission level in that club (by default, its Club Manager — see section 04) invites additional users and sets their Title + Permission Level. Every user's actions are restricted strictly to the club they belong to.
 
-A newly invited user is created with no password set — not even a temporary one. The invite immediately triggers the same email-delivered activation code described in section 10 ("Account activation / password reset"); the new user's first action in the app is entering that code together with a password of their own choosing. The `User.active` flag is unrelated to this first-activation state: it exists solely so an `ADMIN` can cut a departed staff member's access without deleting their account, and it is never toggled by the invite or activation flow itself. (Tracked separately as KAN-21; the KAN-19 invite endpoint today only creates the user with no password — it doesn't send anything yet.)
+A newly invited user is created with no password set — not even a temporary one. The invite immediately triggers the same email-delivered activation code described in section 10 ("Account activation / password reset"); the new user's first action in the app is entering that code together with a password of their own choosing. The `User.active` flag is unrelated to this first-activation state: it exists solely so an `ADMIN` can cut a departed staff member's access without deleting their account, and it is never toggled by the invite or activation flow itself.
 
 ## 10. Security
 
 - **Authentication — access token:** stateless JWT, HS256, signed with `JWT_SECRET` (env var, ≥32 characters). 15-minute TTL. Claims: `sub` (user id), `clubId`, `permissionLevel` — nothing sensitive. Rejected if expired, tampered, unsigned, `alg: none`, signed with the wrong key, from another issuer, or missing a required claim.
 - **Authentication — refresh token:** an opaque, high-entropy random value (not a JWT), never stored in Mongo. Carried in an `HttpOnly; Secure; SameSite=Strict` cookie scoped to `/auth`. 30-day TTL, SHA-256-hashed before being stored in Redis. Refresh tokens are grouped into per-login **families**: each `/auth/refresh` call rotates to a new token in the same family and invalidates the previous one; presenting a token that was already rotated away is treated as evidence of theft and revokes that entire family (ending that one login session everywhere it's used) — the user's other sessions/devices are unaffected. Logout only needs the refresh cookie, not a valid access token, so it still works after the access token has expired. Access tokens themselves can't be revoked early: after logout, reuse-triggered revocation, or an admin deactivating the account, an already-issued access token keeps working until it naturally expires (at most 15 minutes) — only refresh stops immediately.
-- **Account activation / password reset:** email-delivered 6-digit code (15-minute TTL, max 5 attempts, rate-limited per email) — no password-reset links. Sits behind an `EmailSender` interface; no real email provider is chosen yet (a log-only stub is used until Phase 6+/deployment). The same mechanism serves both an existing user's "forgot password" and a newly invited user's first activation (see section 09).
+- **Account activation / password reset:** email-delivered 6-digit code (15-minute TTL, max 5 wrong attempts, then the code is burned) — no password-reset links. Code requests are rate-limited to 5 per email per 24 hours. Beyond that the request is silently ignored, so the response never reveals whether an email is registered or throttled. Codes are stored as a peppered HMAC, never in plaintext. A successful reset ends **all** of the user's refresh sessions (`User.sessionsInvalidatedAt`). Access tokens already issued still expire naturally. Password policy: 8–128 characters, length only, no composition rules (NIST/OWASP). Sits behind an `EmailSender` interface; no real email provider is chosen yet. The current log-only stub prints codes in plaintext and must never run in production (to be replaced in Phase 6+). The same mechanism serves both an existing user's "forgot password" and a newly invited user's first activation (see section 09).
 - **Password hashing:** Argon2id (instead of bcrypt — more resistant to GPU/ASIC cracking), implemented via Spring Security's `Argon2PasswordEncoder`.
 - **Pepper:** a fixed secret string, stored only as an environment variable (must be at least 32 characters & never in the DB or in code), combined with the password before hashing — so a DB leak alone isn't enough to crack it.
 - **RBAC:** enforced by Permission Level (see section 04), combined with `clubId` filtering (see section 03), via Spring Security — `PermissionLevel` is mapped to a Spring Security authority, and protected endpoints are annotated `@PreAuthorize`. A `JwtAuthenticationFilter` validates the access token on every request and populates the request's `clubId` context from its claim; this is what makes the per-request filtering in section 03 actually apply.
+- **Concurrent writes:** `User` and `Player` use optimistic locking (`@Version`), so a concurrent write can never silently overwrite another — and in particular a user's deactivation (`active = false`) can never be undone by a racing write such as a password reset. A single-field absolute change to a user (reset, permission level) reloads and retries; a conflict that can't be resolved returns `409 Conflict`. Any future endpoint that writes a user (deactivation, profile edit) must follow the same rule (KAN-24). Player edits are multi-field form edits, so a conflict returns `409 Conflict` without a retry.
 - **Known accepted trade-off:** inviting a user whose email is already registered (in any club) returns `409 Conflict`, which tells an authenticated `ADMIN` that the email exists somewhere in the system. Accepted because the endpoint itself requires an authenticated `ADMIN` (it's not public), and email is unique system-wide by design (section 03).
-- **Additional protections:** CORS restricted to approved domains, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI. 
-Redis-backed rate limiting covers both the activation/reset code above and /auth/login itself: 5 failed attempts on a given (email, IP) pair within a 15-minute window return 429 Too Many Requests with Retry-After (KAN-22).
+- **Additional protections:** CORS restricted to approved domains, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI. Validation happens on the incoming request; entity constraints are **not** re-checked when a document is saved to the database, so every endpoint that writes must validate its full input first.
+- **Rate limiting:** Redis-backed rate limiting covers both the activation/reset code above and `/auth/login` itself: 5 failed attempts on a given (email, IP) pair within a 15-minute window return 429 Too Many Requests with Retry-After (KAN-22).
 - **Secrets management:** environment variables / a secrets manager only — no key, password, or pepper ever goes into git.
 
 ## 11. Testing & DevOps
@@ -198,7 +221,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 |---|---|
 |✅ **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. | *Except CI Pipeline
 |✅ **1 — Local environment** | Docker Compose with MongoDB + Redis. | 
-| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. |
+| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad API next (KAN-26, KAN-27).* |
 | **3 — Frontend MVP** | Dashboard and squad table against the real API — the first "walking skeleton" that runs end to end. |
 | **4 — Tactical board** | The Canvas module with Konva.js. |
 | **5 — Scraping service** | A separate Node worker, fed manually / by Cron — by now there's actually something for it to feed. |
@@ -207,6 +230,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 ## 14. Open questions
 
 - **[future]** The scope of Veo/chip integration isn't known yet — it depends on what can actually be pulled out of those systems.
+- **[Phase 5]** The scraper also brings in jersey numbers (section 07). If it ever writes player records, how it reconciles with manually entered numbers (which are unique among a club's active players) has to be decided then.
 
 ---
 
