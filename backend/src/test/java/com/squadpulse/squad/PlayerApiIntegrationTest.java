@@ -58,7 +58,7 @@ import tools.jackson.databind.json.JsonMapper;
  * The squad API end to end on a real MongoDB (see docs/spec.md section 11): club isolation over
  * HTTP, the jersey-number index and how its violations are told apart from other duplicate keys,
  * version checks and write races, released players, release / re-activation / permanent deletion,
- * full replacement, and the list filters.
+ * full replacement, the list filters, and the squad summary.
  *
  * <p>Races are deterministic: {@link PlayerLoadHook} performs the "concurrent" write right after
  * the request under test has loaded the player, and {@link PlayerInsertBarrier} releases two writes
@@ -905,7 +905,114 @@ class PlayerApiIntegrationTest {
             "Striker Nine");
   }
 
+  // --- squad summary -----------------------------------------------------------------------------
+
+  /**
+   * Only the caller's active players count, in the count, the lines and the average. The released
+   * player and club B's players are all born in 1960, so counting any of them would move the
+   * average. An injured player counts; a secondary position in another line doesn't.
+   */
+  @Test
+  void theSummaryCountsOnlyTheCallersActivePlayers() throws Exception {
+    String keeper = createdId(create(CLUB_A, fields("Keeper", Position.GK, 1)));
+    Map<String, Object> versatile = fields("Back Who Scores", Position.CB, 4);
+    versatile.put("secondaryPosition", "ST");
+    create(CLUB_A, versatile).andExpect(status().isCreated());
+    Map<String, Object> injured = fields("Injured Mid", Position.CM, 8);
+    injured.put("medicalStatus", "INJURED");
+    create(CLUB_A, injured).andExpect(status().isCreated());
+    create(CLUB_A, fields("Striker", Position.ST, 9)).andExpect(status().isCreated());
+    Player released = newPlayer("Released Keeper", Position.GK, 12);
+    released.setDateOfBirth(LocalDate.of(1960, 1, 1));
+    released.setActive(false);
+    saveAs(CLUB_A, released);
+    for (Position position : List.of(Position.GK, Position.CB, Position.ST)) {
+      Player other = newPlayer("Club B " + position, position, null);
+      other.setDateOfBirth(LocalDate.of(1960, 1, 1));
+      saveAs(CLUB_B, other);
+    }
+
+    summary(CLUB_A)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.playerCount").value(4))
+        .andExpect(jsonPath("$.averageAge").isNumber())
+        .andExpect(jsonPath("$.lines.GOALKEEPERS").value(1))
+        .andExpect(jsonPath("$.lines.DEFENSE").value(1))
+        .andExpect(jsonPath("$.lines.MIDFIELD").value(1))
+        .andExpect(jsonPath("$.lines.ATTACK").value(1));
+    // All four born 1995-05-20: 31 years and 136 of 365 days on 2026-10-03.
+    assertThat(summaryOn(LocalDate.of(2026, 10, 3), CLUB_A).averageAge())
+        .isEqualByComparingTo("31.4");
+    // Adding a line to Position doesn't change how it's stored: still the plain enum name.
+    assertThat(rawPlayer(keeper).get("primaryPosition")).isEqualTo("GK");
+  }
+
+  @Test
+  void anEmptyOrAllReleasedSquadHasNoAverageAndZeroInEveryLine() throws Exception {
+    String empty =
+        "{\"playerCount\":0,\"averageAge\":null,\"lines\":{\"GOALKEEPERS\":0,\"DEFENSE\":0,"
+            + "\"MIDFIELD\":0,\"ATTACK\":0}}";
+    summary(CLUB_A).andExpect(status().isOk()).andExpect(content().string(empty));
+
+    Player released = newPlayer("Released", Position.ST, 9);
+    released.setActive(false);
+    saveAs(CLUB_A, released);
+    create(CLUB_B, fields("Club B Striker", Position.ST, 9)).andExpect(status().isCreated());
+
+    summary(CLUB_A).andExpect(status().isOk()).andExpect(content().string(empty));
+  }
+
+  /** A player without a date of birth can't be created through the API, hence the raw insert. */
+  @Test
+  void aPlayerWithoutADateOfBirthCountsButIsLeftOutOfTheAverage() throws Exception {
+    insertPlayerWithoutDateOfBirth(CLUB_A, "No Birthday", Position.CB);
+
+    summary(CLUB_A)
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .string(
+                    "{\"playerCount\":1,\"averageAge\":null,\"lines\":{\"GOALKEEPERS\":0,"
+                        + "\"DEFENSE\":1,\"MIDFIELD\":0,\"ATTACK\":0}}"));
+
+    create(CLUB_A, fields("Striker", Position.ST, 9)).andExpect(status().isCreated());
+
+    summary(CLUB_A)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.playerCount").value(2))
+        .andExpect(jsonPath("$.averageAge").isNumber())
+        .andExpect(jsonPath("$.lines.DEFENSE").value(1))
+        .andExpect(jsonPath("$.lines.ATTACK").value(1));
+    // Only the striker (born 1995-05-20) is averaged.
+    assertThat(summaryOn(LocalDate.of(2026, 10, 3), CLUB_A).averageAge())
+        .isEqualByComparingTo("31.4");
+  }
+
   // --- helpers -----------------------------------------------------------------------------------
+
+  private ResultActions summary(String clubId) throws Exception {
+    return mockMvc.perform(
+        get("/squad/summary")
+            .header("Authorization", tokens.bearer(clubId, PermissionLevel.VIEW_ONLY)));
+  }
+
+  private SquadSummaryResponse summaryOn(LocalDate today, String clubId) {
+    return clubContext.callAs(clubId, () -> serviceOn(today).summary());
+  }
+
+  private void insertPlayerWithoutDateOfBirth(String clubId, String fullName, Position position) {
+    mongoTemplate
+        .getCollection("players")
+        .insertOne(
+            new Document("_id", new ObjectId())
+                .append("clubId", clubId)
+                .append("fullName", fullName)
+                .append("primaryPosition", position.name())
+                .append("medicalStatus", MedicalStatus.FIT.name())
+                .append("active", true)
+                .append("version", 0L)
+                .append("_class", Player.class.getName()));
+  }
 
   private ResultActions create(String clubId, Map<String, Object> body) throws Exception {
     return mockMvc.perform(
