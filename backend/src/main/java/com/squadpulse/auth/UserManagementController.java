@@ -19,12 +19,15 @@ class UserManagementController {
 
   private final UserInvitationService userInvitationService;
   private final UserPermissionLevelService userPermissionLevelService;
+  private final StaffPhotoService staffPhotoService;
 
   UserManagementController(
       UserInvitationService userInvitationService,
-      UserPermissionLevelService userPermissionLevelService) {
+      UserPermissionLevelService userPermissionLevelService,
+      StaffPhotoService staffPhotoService) {
     this.userInvitationService = userInvitationService;
     this.userPermissionLevelService = userPermissionLevelService;
+    this.staffPhotoService = staffPhotoService;
   }
 
   /**
@@ -35,7 +38,8 @@ class UserManagementController {
   @PreAuthorize("hasAuthority('ADMIN')")
   @ResponseStatus(HttpStatus.CREATED)
   UserResponse invite(@Valid @RequestBody InviteUserRequest request) {
-    return UserResponse.from(userInvitationService.invite(request));
+    // A new user can't have a photo yet: no storage query needed.
+    return UserResponse.from(userInvitationService.invite(request), false);
   }
 
   /**
@@ -48,7 +52,8 @@ class UserManagementController {
       @PathVariable String id,
       @Valid @RequestBody UpdatePermissionLevelRequest request,
       @AuthenticationPrincipal AuthenticatedUser caller) {
-    return UserResponse.from(
-        userPermissionLevelService.changePermissionLevel(id, request.permissionLevel(), caller));
+    User user =
+        userPermissionLevelService.changePermissionLevel(id, request.permissionLevel(), caller);
+    return UserResponse.from(user, staffPhotoService.hasPhoto(user));
   }
 }

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -51,6 +52,7 @@ class UserManagementControllerTest {
   @Autowired private JwtService jwtService;
   @MockitoBean private UserInvitationService userInvitationService;
   @MockitoBean private UserPermissionLevelService userPermissionLevelService;
+  @MockitoBean private StaffPhotoService staffPhotoService;
 
   @Test
   void anAdminInvitesAUserAndGets201WithoutAnyPasswordField() throws Exception {
@@ -72,7 +74,10 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.permissionLevel").value("EDIT_FULL"))
         .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
         .andExpect(jsonPath("$.active").value(true))
+        .andExpect(jsonPath("$.hasPhoto").value(false))
         .andExpect(content().string(not(containsString("password"))));
+    // A new user can't have a photo yet: no storage query.
+    verifyNoInteractions(staffPhotoService);
   }
 
   @Test
@@ -146,6 +151,7 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.email").value("analyst@example.com"))
         .andExpect(jsonPath("$.title").value("ANALYST"))
         .andExpect(jsonPath("$.permissionLevel").value("EDIT_PARTIAL"))
+        .andExpect(jsonPath("$.hasPhoto").value(false))
         .andExpect(content().string(not(containsString("password"))))
         .andExpect(content().string(not(containsString("hash-that-must-not-leak"))));
     verify(userPermissionLevelService)
@@ -153,6 +159,21 @@ class UserManagementControllerTest {
             "user-2",
             PermissionLevel.EDIT_PARTIAL,
             new AuthenticatedUser("user-1", "club-a", PermissionLevel.ADMIN));
+    verify(staffPhotoService).hasPhoto(updated);
+  }
+
+  @Test
+  void aPermissionLevelChangeReportsTheTargetsPhoto() throws Exception {
+    User updated = new User();
+    updated.setId("user-2");
+    updated.setPermissionLevel(PermissionLevel.EDIT_PARTIAL);
+    when(userPermissionLevelService.changePermissionLevel(any(), any(), any())).thenReturn(updated);
+    when(staffPhotoService.hasPhoto(updated)).thenReturn(true);
+
+    mockMvc
+        .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasPhoto").value(true));
   }
 
   @Test

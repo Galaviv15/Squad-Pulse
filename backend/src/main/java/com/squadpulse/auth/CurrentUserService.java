@@ -8,10 +8,12 @@ import org.springframework.stereotype.Service;
  *
  * <p><b>Club isolation.</b> The user is loaded through the club-scoped {@link
  * UserRepository#findById}, with the clubId {@link JwtAuthenticationFilter} took from the access
- * token; the club by the same token clubId, and whether it has a logo from {@link ClubLogoService}
- * (one storage query, club-scoped by the same clubId). Nothing is ever read from the request
- * itself. A token whose {@code sub} names a user of another club therefore finds no user — a 401,
- * exactly like a deleted user.
+ * token; the club by the same token clubId, whether it has a logo from {@link ClubLogoService} and
+ * whether the caller has a photo from {@link StaffPhotoService} (one storage query each,
+ * club-scoped by the same clubId). That's four queries per call — user, club, logo, photo — which
+ * is acceptable for one request per app load. Nothing is ever read from the request itself. A token
+ * whose {@code sub} names a user of another club therefore finds no user — a 401, exactly like a
+ * deleted user.
  *
  * <p><b>Effective permission level.</b> The response's level is the one in the caller's access
  * token, i.e. what every endpoint enforces right now; every other field is read from the database.
@@ -33,14 +35,17 @@ class CurrentUserService {
   private final UserRepository userRepository;
   private final ClubRepository clubRepository;
   private final ClubLogoService clubLogoService;
+  private final StaffPhotoService staffPhotoService;
 
   CurrentUserService(
       UserRepository userRepository,
       ClubRepository clubRepository,
-      ClubLogoService clubLogoService) {
+      ClubLogoService clubLogoService,
+      StaffPhotoService staffPhotoService) {
     this.userRepository = userRepository;
     this.clubRepository = clubRepository;
     this.clubLogoService = clubLogoService;
+    this.staffPhotoService = staffPhotoService;
   }
 
   /**
@@ -63,6 +68,10 @@ class CurrentUserService {
                     new IllegalStateException(
                         "Club " + caller.clubId() + " of user " + user.getId() + " not found"));
     return CurrentUserResponse.from(
-        user, caller.permissionLevel(), club, clubLogoService.hasLogo());
+        user,
+        caller.permissionLevel(),
+        staffPhotoService.hasPhoto(user),
+        club,
+        clubLogoService.hasLogo());
   }
 }

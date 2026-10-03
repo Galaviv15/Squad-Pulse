@@ -2,6 +2,7 @@ package com.squadpulse.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -24,8 +25,9 @@ class CurrentUserServiceTest {
   private final UserRepository userRepository = mock(UserRepository.class);
   private final ClubRepository clubRepository = mock(ClubRepository.class);
   private final ClubLogoService clubLogoService = mock(ClubLogoService.class);
+  private final StaffPhotoService staffPhotoService = mock(StaffPhotoService.class);
   private final CurrentUserService service =
-      new CurrentUserService(userRepository, clubRepository, clubLogoService);
+      new CurrentUserService(userRepository, clubRepository, clubLogoService, staffPhotoService);
 
   @Test
   void theLevelComesFromTheTokenAndEverythingElseFromTheDatabase() {
@@ -44,7 +46,18 @@ class CurrentUserServiceTest {
                 PermissionLevel.EDIT_FULL,
                 LocalDate.of(1985, 3, 1),
                 true,
+                false,
                 new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example", false)));
+  }
+
+  @Test
+  void hasPhotoComesFromTheCallersPhotoInStorage() {
+    User user = user(true);
+    when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+    when(clubRepository.findById("club-a")).thenReturn(Optional.of(club()));
+    when(staffPhotoService.hasPhoto(user)).thenReturn(true);
+
+    assertThat(service.currentUser(CALLER).hasPhoto()).isTrue();
   }
 
   @Test
@@ -100,7 +113,8 @@ class CurrentUserServiceTest {
     verify(userRepository).findById("user-1");
     verify(clubRepository).findById("club-a");
     verify(clubLogoService).hasLogo();
-    verifyNoMoreInteractions(userRepository, clubRepository, clubLogoService);
+    verify(staffPhotoService).hasPhoto(any());
+    verifyNoMoreInteractions(userRepository, clubRepository, clubLogoService, staffPhotoService);
   }
 
   private static User user(boolean active) {
