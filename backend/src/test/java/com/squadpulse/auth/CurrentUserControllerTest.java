@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import java.time.LocalDate;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -152,15 +153,30 @@ class CurrentUserControllerTest {
         .header(HttpHeaders.AUTHORIZATION, "Bearer " + jwtService.issue(caller).value());
   }
 
-  /** A genuine token with its signature's last character changed. */
+  /**
+   * A genuine token with its signature's <b>first</b> character changed. Not the last: an HS256
+   * signature is 32 bytes, i.e. 43 base64url characters, and the last one's low 2 bits are padding
+   * that JJWT ignores — so changing {@code A} to {@code B} there left the signature intact about
+   * once in 16 runs. All 6 bits of the first character are signature bits; the helper checks that
+   * the decoded signature really differs.
+   */
   private String tamperedToken() {
     User caller = new User();
     caller.setId("user-1");
     caller.setClubId("club-a");
     caller.setPermissionLevel(PermissionLevel.ADMIN);
     String token = jwtService.issue(caller).value();
-    char last = token.charAt(token.length() - 1);
-    return token.substring(0, token.length() - 1) + (last == 'A' ? 'B' : 'A');
+    int signatureStart = token.lastIndexOf('.') + 1;
+    char first = token.charAt(signatureStart);
+    String tampered =
+        token.substring(0, signatureStart)
+            + (first == 'A' ? 'B' : 'A')
+            + token.substring(signatureStart + 1);
+
+    byte[] originalBytes = Base64.getUrlDecoder().decode(token.substring(signatureStart));
+    byte[] tamperedBytes = Base64.getUrlDecoder().decode(tampered.substring(signatureStart));
+    assertThat(tamperedBytes).isNotEqualTo(originalBytes);
+    return tampered;
   }
 
   private static User storedUser() {
