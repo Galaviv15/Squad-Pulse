@@ -742,8 +742,7 @@ class PlayerControllerTest {
 
   /**
    * A request that isn't multipart at all is a {@code MultipartException} — 400, not a 500. (No
-   * {@code consumes} on the mapping, which would make it an unmapped {@code
-   * HttpMediaTypeNotSupportedException}.)
+   * {@code consumes} on the mapping, which would make it a 415.)
    */
   @ParameterizedTest(name = "{0}")
   @CsvSource({"application/json, {}", "image/png, not-really-a-png"})
@@ -876,6 +875,107 @@ class PlayerControllerTest {
 
     verify(playerService, never()).hasPhoto(any());
     verify(playerService, never()).playerIdsWithPhoto();
+  }
+
+  // --- media types (KAN-31) ----------------------------------------------------------------------
+
+  /**
+   * A 500 before KAN-31. Names the types the endpoint reads, in {@code details} and the {@code
+   * Accept} header, but never echoes the type that was sent.
+   */
+  @Test
+  void aNonJsonBodyIs415NamingTheAcceptedTypesWithoutEchoingTheSentOne() throws Exception {
+    mockMvc
+        .perform(
+            post("/squad/players")
+                .header("Authorization", tokens.bearer("club-a", PermissionLevel.EDIT_FULL))
+                .contentType("text/x-marker-12345")
+                .content(createBody()))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(header().string("Accept", containsString("application/json")))
+        .andExpect(jsonPath("$.status").value(415))
+        .andExpect(jsonPath("$.error").value("Unsupported Media Type"))
+        .andExpect(jsonPath("$.message").value("Unsupported Content-Type"))
+        .andExpect(jsonPath("$.details").value(hasItem("application/json")))
+        .andExpect(content().string(not(containsString("x-marker-12345"))));
+
+    verifyNoInteractions(playerService);
+  }
+
+  @Test
+  void anUnparseableContentTypeIs415() throws Exception {
+    mockMvc
+        .perform(
+            post("/squad/players")
+                .header("Authorization", tokens.bearer("club-a", PermissionLevel.EDIT_FULL))
+                .header("Content-Type", "marker-12345")
+                .content(createBody()))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.message").value("Unsupported Content-Type"))
+        .andExpect(content().string(not(containsString("marker-12345"))));
+  }
+
+  /** Authentication still comes first: without a token, the content type is never looked at. */
+  @Test
+  void aNonJsonBodyWithoutATokenIsStill401() throws Exception {
+    mockMvc
+        .perform(post("/squad/players").contentType(MediaType.TEXT_PLAIN).content("hello"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.message").value("Authentication required"));
+  }
+
+  /**
+   * The body's type is checked while the handler's arguments are resolved, before {@code
+   * PreAuthorize} runs, so a caller who may not create players gets 415 rather than 403 — the same
+   * ordering as an invalid body's 400. Nothing is created or revealed either way.
+   */
+  @Test
+  void aNonJsonBodyFromAViewerIs415BeforeTheAuthorityCheck() throws Exception {
+    mockMvc
+        .perform(
+            asViewer(post("/squad/players")).contentType(MediaType.TEXT_PLAIN).content("hello"))
+        .andExpect(status().isUnsupportedMediaType());
+
+    verifyNoInteractions(playerService);
+  }
+
+  /**
+   * A 406 had an empty body before KAN-31: the JSON error itself failed the same content
+   * negotiation. Now it's JSON whatever the {@code Accept} header says.
+   */
+  @Test
+  void anAcceptHeaderWithoutJsonIs406WithAJsonBody() throws Exception {
+    mockMvc
+        .perform(asViewer(get("/squad/players")).accept(MediaType.APPLICATION_XML))
+        .andExpect(status().isNotAcceptable())
+        .andExpect(header().string("Content-Type", "application/json"))
+        .andExpect(jsonPath("$.status").value(406))
+        .andExpect(jsonPath("$.error").value("Not Acceptable"))
+        .andExpect(jsonPath("$.message").value("None of the accepted media types can be produced"))
+        .andExpect(jsonPath("$.details").value(hasItem("application/json")));
+  }
+
+  /** A 500 with an empty body before KAN-31. */
+  @Test
+  void anUnparseableAcceptHeaderIs406() throws Exception {
+    mockMvc
+        .perform(asViewer(get("/squad/players")).header("Accept", "marker-12345"))
+        .andExpect(status().isNotAcceptable())
+        .andExpect(jsonPath("$.error").value("Not Acceptable"))
+        .andExpect(content().string(not(containsString("marker-12345"))));
+  }
+
+  /**
+   * The photo's {@code Content-Type} is set by the controller, so Spring doesn't negotiate it: the
+   * image is served even to a client asking only for JSON.
+   */
+  @Test
+  void thePhotoIsServedEvenToAClientAcceptingOnlyJson() throws Exception {
+    mockMvc
+        .perform(asViewer(get("/squad/players/p-1/photo")).accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Content-Type", "image/png"))
+        .andExpect(content().bytes(TestImages.png()));
   }
 
   private static Stream<Arguments> commonInvalidFields() {

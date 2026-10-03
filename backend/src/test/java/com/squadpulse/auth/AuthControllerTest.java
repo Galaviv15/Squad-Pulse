@@ -83,6 +83,19 @@ class AuthControllerTest {
         .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
   }
 
+  /** A public endpoint too: the wrong body type is a 415 (a 500 before KAN-31), not a 401. */
+  @Test
+  void loginWithANonJsonBodyIs415() throws Exception {
+    mockMvc
+        .perform(post("/auth/login").contentType(MediaType.TEXT_PLAIN).content("coach:secret"))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.error").value("Unsupported Media Type"))
+        .andExpect(header().string(HttpHeaders.ACCEPT, containsString("application/json")))
+        .andExpect(content().string(not(containsString("text/plain"))));
+
+    verify(authService, never()).login(anyString(), anyString(), anyString());
+  }
+
   @Test
   void loginWithBlankFieldsIs400() throws Exception {
     mockMvc.perform(login("{\"email\":\"\",\"password\":\"\"}")).andExpect(status().isBadRequest());
