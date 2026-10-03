@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -55,10 +57,11 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * The squad API end to end on a real MongoDB (see docs/spec.md section 11): club isolation over
  * HTTP, the jersey-number index and how its violations are told apart from other duplicate keys,
- * version checks and write races, released players, full replacement, and the list filters.
+ * version checks and write races, released players, release / re-activation / permanent deletion,
+ * full replacement, and the list filters.
  *
- * <p>Races are deterministic: {@link PlayerLoadHook} performs the "concurrent" edit right after the
- * update under test has loaded the player, and {@link PlayerInsertBarrier} releases two creates
+ * <p>Races are deterministic: {@link PlayerLoadHook} performs the "concurrent" write right after
+ * the request under test has loaded the player, and {@link PlayerInsertBarrier} releases two writes
  * together at the last moment before they reach the database.
  */
 @SpringBootTest(
@@ -73,6 +76,11 @@ class PlayerApiIntegrationTest {
 
   private static final String CLUB_A = "club-a";
   private static final String CLUB_B = "club-b";
+  private static final String STALE_MESSAGE =
+      "This player was changed by someone else since you loaded it; reload it and apply your"
+          + " changes again";
+  private static final String SEVEN_TAKEN =
+      "Jersey number 7 is already taken by another active player";
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Container
@@ -388,6 +396,373 @@ class PlayerApiIntegrationTest {
     assertThat(rawPlayer(id)).isEqualTo(before);
   }
 
+  // --- release / re-activate: isolation ---------------------------------------------------------
+
+  /**
+   * 404 — never the 403 of the club check inside save — and the other club's document is intact.
+   */
+  @Test
+  void anotherClubCannotReleaseReactivateOrDeleteAPlayer() throws Exception {
+    String active = createdId(create(CLUB_A, fields("Active A", Position.ST, 9)));
+    Player released = newPlayer("Released A", Position.CB, 4);
+    released.setActive(false);
+    String releasedId = saveAs(CLUB_A, released).getId();
+    clubContext.clear();
+    Document activeBefore = rawPlayer(active);
+    Document releasedBefore = rawPlayer(releasedId);
+
+    release(CLUB_B, active, 0)
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Player not found"));
+    reactivate(CLUB_B, releasedId, 0, null)
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Player not found"));
+    for (String id : List.of(active, releasedId)) {
+      remove(CLUB_B, id)
+          .andExpect(status().isNotFound())
+          .andExpect(jsonPath("$.message").value("Player not found"));
+    }
+
+    assertThat(rawPlayer(active)).isEqualTo(activeBefore);
+    assertThat(rawPlayer(releasedId)).isEqualTo(releasedBefore);
+  }
+
+  @Test
+  void anUnknownIdIs404ForEveryLifecycleAction() throws Exception {
+    String unknown = new ObjectId().toHexString();
+
+    release(CLUB_A, unknown, 0).andExpect(status().isNotFound());
+    reactivate(CLUB_A, unknown, 0, null).andExpect(status().isNotFound());
+    remove(CLUB_A, unknown).andExpect(status().isNotFound());
+  }
+
+  // --- release / re-activate: state transitions --------------------------------------------------
+
+  /**
+   * Active → released → active again, each step incrementing the version. The number stays on the
+   * released record, and the lists follow the {@code active} flag.
+   */
+  @Test
+  void aPlayerCanBeReleasedAndReactivated() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+
+    release(CLUB_A, id, 0)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false))
+        .andExpect(jsonPath("$.jerseyNumber").value(7))
+        .andExpect(jsonPath("$.version").value(1));
+
+    Document stored = rawPlayer(id);
+    assertThat(stored.get("active")).isEqualTo(false);
+    assertThat(stored.get("jerseyNumber")).isEqualTo(7);
+    assertThat(stored.get("version")).isEqualTo(1L);
+    assertThat(names(list(CLUB_A, "status=active"))).isEmpty();
+    assertThat(names(list(CLUB_A, "status=released"))).containsExactly("Eran Zahavi");
+    assertThat(names(list(CLUB_A, "status=all"))).containsExactly("Eran Zahavi");
+
+    reactivate(CLUB_A, id, 1, 7)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(true))
+        .andExpect(jsonPath("$.jerseyNumber").value(7))
+        .andExpect(jsonPath("$.version").value(2));
+
+    stored = rawPlayer(id);
+    assertThat(stored.get("active")).isEqualTo(true);
+    assertThat(stored.get("version")).isEqualTo(2L);
+    assertThat(names(list(CLUB_A, "status=active"))).containsExactly("Eran Zahavi");
+    assertThat(names(list(CLUB_A, "status=released"))).isEmpty();
+  }
+
+  @Test
+  void releasingAReleasedPlayerIs409AndNothingIsWritten() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    Document before = rawPlayer(id);
+
+    // The current version, so the state check — not the version check — is what refuses it.
+    release(CLUB_A, id, 1)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("This player has already been released"));
+
+    assertThat(rawPlayer(id)).isEqualTo(before);
+  }
+
+  @Test
+  void reactivatingAnActivePlayerIs409AndNothingIsWritten() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    Document before = rawPlayer(id);
+
+    reactivate(CLUB_A, id, 0, 8)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("This player is already active"));
+
+    assertThat(rawPlayer(id)).isEqualTo(before);
+  }
+
+  /** Regression (KAN-26): released through the API, the player still can't be edited. */
+  @Test
+  void aPlayerReleasedThroughTheApiCannotBeEdited() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    Document before = rawPlayer(id);
+    Map<String, Object> body = fields("Eran Zahavi", Position.ST, 8);
+    body.put("medicalStatus", "FIT");
+    body.put("version", 1);
+
+    update(CLUB_A, id, body)
+        .andExpect(status().isConflict())
+        .andExpect(
+            jsonPath("$.message")
+                .value("This player has been released; re-activate them before editing"));
+
+    assertThat(rawPlayer(id)).isEqualTo(before);
+  }
+
+  // --- release / re-activate: jersey numbers -----------------------------------------------------
+
+  @Test
+  void afterAReleaseTheNumberCanBeTakenByACreateOrAnUpdate() throws Exception {
+    String first = createdId(create(CLUB_A, fields("First Seven", Position.ST, 7)));
+    release(CLUB_A, first, 0).andExpect(status().isOk());
+
+    String second = createdId(create(CLUB_A, fields("Second Seven", Position.ST, 7)));
+    release(CLUB_A, second, 0).andExpect(status().isOk());
+
+    String nine = createdId(create(CLUB_A, fields("Nine", Position.ST, 9)));
+    Map<String, Object> body = fields("Nine", Position.ST, 7);
+    body.put("medicalStatus", "FIT");
+    body.put("version", 0);
+    update(CLUB_A, nine, body)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.jerseyNumber").value(7));
+  }
+
+  /** No silent fallback to "no number": a 409, and the player stays released, untouched. */
+  @Test
+  void reactivatingWithATakenNumberIs409AndThePlayerStaysReleased() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Old Seven", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    create(CLUB_A, fields("New Seven", Position.ST, 7)).andExpect(status().isCreated());
+    Document before = rawPlayer(id);
+
+    reactivate(CLUB_A, id, 1, 7)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(SEVEN_TAKEN));
+
+    assertThat(rawPlayer(id)).isEqualTo(before);
+    assertThat(rawPlayer(id).get("active")).isEqualTo(false);
+  }
+
+  @Test
+  void reactivatingWithAnotherFreeNumberOrNoneSetsThatValue() throws Exception {
+    String withNumber = createdId(create(CLUB_A, fields("Old Seven", Position.ST, 7)));
+    String withoutNumber = createdId(create(CLUB_A, fields("Old Eight", Position.CM, 8)));
+    release(CLUB_A, withNumber, 0).andExpect(status().isOk());
+    release(CLUB_A, withoutNumber, 0).andExpect(status().isOk());
+    create(CLUB_A, fields("New Seven", Position.ST, 7)).andExpect(status().isCreated());
+
+    reactivate(CLUB_A, withNumber, 1, 17)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.jerseyNumber").value(17));
+    reactivate(CLUB_A, withoutNumber, 1, null)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.jerseyNumber").isEmpty());
+
+    assertThat(rawPlayer(withNumber).get("jerseyNumber")).isEqualTo(17);
+    assertThat(rawPlayer(withNumber).get("active")).isEqualTo(true);
+    assertThat(rawPlayer(withoutNumber)).doesNotContainKey("jerseyNumber");
+    assertThat(rawPlayer(withoutNumber).get("active")).isEqualTo(true);
+  }
+
+  /**
+   * Coming back without a number never clashes — not with a player who took the old number, nor
+   * with other players without one. An absent field means "no number" too.
+   */
+  @Test
+  void reactivatingWithoutANumberNeverConflicts() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Old Seven", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    create(CLUB_A, fields("New Seven", Position.ST, 7)).andExpect(status().isCreated());
+    create(CLUB_A, fields("No Number", Position.CB, null)).andExpect(status().isCreated());
+
+    mockMvc
+        .perform(
+            post("/squad/players/" + id + "/reactivate")
+                .header("Authorization", bearer(CLUB_A))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"version\": 1}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(true))
+        .andExpect(jsonPath("$.jerseyNumber").isEmpty());
+  }
+
+  /**
+   * The number is taken right after the re-activation has loaded the player — after any check a
+   * service could have made — so only the index can catch it: a jersey 409, not a 500, and the
+   * player stays released.
+   */
+  @Test
+  void aNumberTakenBetweenLoadAndSaveIs409AndThePlayerStaysReleased() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Old Seven", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    Document before = rawPlayer(id);
+    Player newSeven = newPlayer("New Seven", Position.ST, 7);
+    newSeven.setClubId(CLUB_A);
+    loadHook.onNextLoad(() -> mongoTemplate.insert(newSeven));
+
+    reactivate(CLUB_A, id, 1, 7)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(SEVEN_TAKEN));
+
+    assertThat(rawPlayer(id)).isEqualTo(before);
+    assertThat(mongoTemplate.count(Query.query(Criteria.where("active").is(true)), Player.class))
+        .isEqualTo(1);
+  }
+
+  /**
+   * A re-activation and a create with the same number, both held just before their write until both
+   * are there, then released together: exactly one gets the number, and the database ends up with
+   * exactly one active number 7.
+   */
+  @Test
+  void aConcurrentReactivationAndCreateWithTheSameNumberExactlyOneWins() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Old Seven", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    insertBarrier.arm(2);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<Integer> reactivated =
+          executor.submit(() -> reactivate(CLUB_A, id, 1, 7).andReturn().getResponse().getStatus());
+      Future<Integer> created =
+          executor.submit(
+              () ->
+                  create(CLUB_A, fields("New Seven", Position.ST, 7))
+                      .andReturn()
+                      .getResponse()
+                      .getStatus());
+      int reactivateStatus = reactivated.get();
+      int createStatus = created.get();
+
+      // [reactivate, create]: one winner, one jersey 409.
+      assertThat(List.of(reactivateStatus, createStatus))
+          .isIn(List.of(200, 409), List.of(409, 201));
+      assertThat(rawPlayer(id).get("active")).isEqualTo(reactivateStatus == 200);
+      assertThat(
+              mongoTemplate.count(
+                  Query.query(Criteria.where("active").is(true).and("jerseyNumber").is(7)),
+                  Player.class))
+          .isEqualTo(1);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  // --- release / re-activate: versions -----------------------------------------------------------
+
+  @Test
+  void aReleaseOrReactivationWithAStaleVersionIs409AndNothingIsWritten() throws Exception {
+    String active = createdId(create(CLUB_A, fields("Active", Position.ST, 9)));
+    String released = createdId(create(CLUB_A, fields("Released", Position.ST, 10)));
+    release(CLUB_A, released, 0).andExpect(status().isOk());
+    Document activeBefore = rawPlayer(active);
+    Document releasedBefore = rawPlayer(released);
+
+    release(CLUB_A, active, 5)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
+    reactivate(CLUB_A, released, 0, 10)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
+
+    assertThat(rawPlayer(active)).isEqualTo(activeBefore);
+    assertThat(rawPlayer(released)).isEqualTo(releasedBefore);
+  }
+
+  /**
+   * Someone else saves between the version check and the save: the save's own version condition
+   * catches it (verify 1) — the same 409 as a stale version, and the other write is kept.
+   */
+  @Test
+  void aReleaseThatLosesASaveRaceIs409AndKeepsTheOtherWrite() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    loadHook.onNextLoad(() -> writeMeanwhile(id));
+
+    release(CLUB_A, id, 0)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
+
+    Document stored = rawPlayer(id);
+    assertThat(stored.get("active")).isEqualTo(true);
+    assertThat(stored.get("fullName")).isEqualTo("Written Meanwhile");
+    assertThat(stored.get("version")).isEqualTo(1L);
+  }
+
+  @Test
+  void aReactivationThatLosesASaveRaceIs409AndKeepsTheOtherWrite() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    release(CLUB_A, id, 0).andExpect(status().isOk());
+    loadHook.onNextLoad(() -> writeMeanwhile(id));
+
+    reactivate(CLUB_A, id, 1, 7)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
+
+    Document stored = rawPlayer(id);
+    assertThat(stored.get("active")).isEqualTo(false);
+    assertThat(stored.get("fullName")).isEqualTo("Written Meanwhile");
+    assertThat(stored.get("version")).isEqualTo(2L);
+  }
+
+  // --- permanent delete --------------------------------------------------------------------------
+
+  @Test
+  void anActiveOrReleasedPlayerCanBeDeletedForGood() throws Exception {
+    String active = createdId(create(CLUB_A, fields("Active", Position.ST, 9)));
+    String released = createdId(create(CLUB_A, fields("Released", Position.ST, 10)));
+    String kept = createdId(create(CLUB_A, fields("Kept", Position.ST, 11)));
+    release(CLUB_A, released, 0).andExpect(status().isOk());
+
+    for (String id : List.of(active, released)) {
+      remove(CLUB_A, id).andExpect(status().isNoContent()).andExpect(content().string(""));
+
+      assertThat(rawPlayer(id)).isNull();
+      mockMvc
+          .perform(get("/squad/players/" + id).header("Authorization", bearer(CLUB_A)))
+          .andExpect(status().isNotFound());
+      remove(CLUB_A, id)
+          .andExpect(status().isNotFound())
+          .andExpect(jsonPath("$.message").value("Player not found"));
+    }
+    assertThat(names(list(CLUB_A, "status=all"))).containsExactly("Kept");
+    assertThat(rawPlayer(kept)).isNotNull();
+  }
+
+  /** Not version-checked: a delete wins over an edit saved after the admin loaded the player. */
+  @Test
+  void aDeleteIsNotVersionChecked() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    loadHook.onNextLoad(() -> writeMeanwhile(id));
+
+    remove(CLUB_A, id).andExpect(status().isNoContent());
+
+    assertThat(rawPlayer(id)).isNull();
+  }
+
+  /**
+   * Verify 3: the club-scoped {@code delete} removes nothing and raises nothing if the document is
+   * already gone — so a delete racing another delete is a 204 for both, not a 404 or a 500.
+   */
+  @Test
+  void aPlayerDeletedBetweenLoadAndDeleteIsStill204() throws Exception {
+    String id = createdId(create(CLUB_A, fields("Eran Zahavi", Position.ST, 7)));
+    loadHook.onNextLoad(
+        () -> mongoTemplate.remove(Query.query(Criteria.where("_id").is(id)), Player.class));
+
+    remove(CLUB_A, id).andExpect(status().isNoContent());
+
+    assertThat(rawPlayer(id)).isNull();
+  }
+
   // --- full replacement --------------------------------------------------------------------------
 
   @Test
@@ -547,6 +922,41 @@ class PlayerApiIntegrationTest {
             .header("Authorization", bearer(clubId))
             .contentType(MediaType.APPLICATION_JSON)
             .content(JSON.writeValueAsString(body)));
+  }
+
+  private ResultActions release(String clubId, String id, long version) throws Exception {
+    return mockMvc.perform(
+        post("/squad/players/" + id + "/release")
+            .header("Authorization", bearer(clubId))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(JSON.writeValueAsString(Map.of("version", version))));
+  }
+
+  private ResultActions reactivate(String clubId, String id, long version, Integer jerseyNumber)
+      throws Exception {
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("version", version);
+    body.put("jerseyNumber", jerseyNumber);
+    return mockMvc.perform(
+        post("/squad/players/" + id + "/reactivate")
+            .header("Authorization", bearer(clubId))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(JSON.writeValueAsString(body)));
+  }
+
+  /** Permanent delete, as an {@code ADMIN} — the only level allowed to. */
+  private ResultActions remove(String clubId, String id) throws Exception {
+    return mockMvc.perform(
+        delete("/squad/players/" + id)
+            .header("Authorization", tokens.bearer(clubId, PermissionLevel.ADMIN)));
+  }
+
+  /** A concurrent edit: changes the name and bumps the version, as a save would. */
+  private void writeMeanwhile(String id) {
+    mongoTemplate.updateFirst(
+        Query.query(Criteria.where("_id").is(id)),
+        new Update().set("fullName", "Written Meanwhile").inc("version", 1),
+        Player.class);
   }
 
   private ResultActions list(String clubId, String query) throws Exception {

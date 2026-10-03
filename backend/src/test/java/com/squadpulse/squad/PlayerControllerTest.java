@@ -9,10 +9,13 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -51,8 +54,9 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * The HTTP contract of {@link PlayerController} behind the real security chain, with {@link
  * PlayerService} mocked: who may call what, request validation (body and query string), the 201 /
- * 404 / 409 mappings, and the response shape. That the service really stays within the caller's
- * club, and what it writes, is proven on a real MongoDB in {@link PlayerApiIntegrationTest}.
+ * 204 / 404 / 409 mappings, and the response shape. That the service really stays within the
+ * caller's club, and what it writes, is proven on a real MongoDB in {@link
+ * PlayerApiIntegrationTest}.
  */
 @WebMvcTest(
     controllers = PlayerController.class,
@@ -62,6 +66,9 @@ import tools.jackson.databind.json.JsonMapper;
 class PlayerControllerTest {
 
   private static final JsonMapper JSON = JsonMapper.builder().build();
+  private static final String STALE_MESSAGE =
+      "This player was changed by someone else since you loaded it; reload it and apply your"
+          + " changes again";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private TestAccessTokens tokens;
@@ -73,6 +80,8 @@ class PlayerControllerTest {
     when(playerService.get(anyString())).thenReturn(player());
     when(playerService.create(any())).thenReturn(player());
     when(playerService.update(anyString(), any())).thenReturn(player());
+    when(playerService.release(anyString(), any())).thenReturn(player());
+    when(playerService.reactivate(anyString(), any())).thenReturn(player());
   }
 
   // --- permission matrix -------------------------------------------------------------------------
@@ -99,14 +108,30 @@ class PlayerControllerTest {
     "PUT,  /squad/players/p-1,  EDIT_FULL,    200",
     "PUT,  /squad/players/p-1,  ADMIN,        200",
     "PUT,  /squad/players/p-1,  NONE,         401",
+    "POST, /squad/players/p-1/release,     VIEW_ONLY,    403",
+    "POST, /squad/players/p-1/release,     EDIT_PARTIAL, 403",
+    "POST, /squad/players/p-1/release,     EDIT_FULL,    200",
+    "POST, /squad/players/p-1/release,     ADMIN,        200",
+    "POST, /squad/players/p-1/release,     NONE,         401",
+    "POST, /squad/players/p-1/reactivate,  VIEW_ONLY,    403",
+    "POST, /squad/players/p-1/reactivate,  EDIT_PARTIAL, 403",
+    "POST, /squad/players/p-1/reactivate,  EDIT_FULL,    200",
+    "POST, /squad/players/p-1/reactivate,  ADMIN,        200",
+    "POST, /squad/players/p-1/reactivate,  NONE,         401",
+    "DELETE, /squad/players/p-1,           VIEW_ONLY,    403",
+    "DELETE, /squad/players/p-1,           EDIT_PARTIAL, 403",
+    "DELETE, /squad/players/p-1,           EDIT_FULL,    403",
+    "DELETE, /squad/players/p-1,           ADMIN,        204",
+    "DELETE, /squad/players/p-1,           NONE,         401",
   })
   void eachEndpointAdmitsExactlyTheLevelsAtOrAboveItsMinimum(
       String method, String path, String caller, int expectedStatus) throws Exception {
     MockHttpServletRequestBuilder request =
         switch (method) {
           case "GET" -> get(path);
-          case "POST" -> post(path).contentType(MediaType.APPLICATION_JSON).content(createBody());
+          case "POST" -> post(path).contentType(MediaType.APPLICATION_JSON).content(postBody(path));
           case "PUT" -> put(path).contentType(MediaType.APPLICATION_JSON).content(updateBody());
+          case "DELETE" -> delete(path);
           default -> throw new IllegalArgumentException(method);
         };
     if (!caller.equals("NONE")) {
@@ -410,6 +435,179 @@ class PlayerControllerTest {
         .andExpect(jsonPath("$.message").value("Player not found"));
   }
 
+  // --- release / reactivate ---------------------------------------------------------------------
+
+  @Test
+  void releasePassesTheIdAndVersionThrough() throws Exception {
+    mockMvc
+        .perform(asEditor(post("/squad/players/p-1/release"), "{\"version\": 3}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value("p-1"))
+        .andExpect(content().string(not(containsString("clubId"))));
+
+    verify(playerService).release("p-1", new ReleasePlayerRequest(3L));
+  }
+
+  @Test
+  void reactivatePassesTheIdVersionAndNumberThrough() throws Exception {
+    mockMvc
+        .perform(
+            asEditor(
+                post("/squad/players/p-1/reactivate"), "{\"version\": 3, \"jerseyNumber\": 11}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value("p-1"));
+
+    verify(playerService).reactivate("p-1", new ReactivatePlayerRequest(3L, 11));
+  }
+
+  /**
+   * Verify 2: an absent and an explicit-null {@code jerseyNumber} both reach the service as {@code
+   * null} ("no number"), and unknown fields — including a forged {@code active} / {@code clubId} —
+   * are ignored rather than rejected.
+   */
+  @Test
+  void anAbsentOrNullNumberMeansNoneAndUnknownFieldsAreIgnored() throws Exception {
+    for (String body :
+        List.of(
+            "{\"version\": 3}",
+            "{\"version\": 3, \"jerseyNumber\": null}",
+            "{\"version\": 3, \"active\": false, \"clubId\": \"club-b\", \"x\": 1}")) {
+      mockMvc
+          .perform(asEditor(post("/squad/players/p-1/reactivate"), body))
+          .andExpect(status().isOk());
+    }
+    verify(playerService, times(3)).reactivate("p-1", new ReactivatePlayerRequest(3L, null));
+
+    mockMvc
+        .perform(
+            asEditor(
+                post("/squad/players/p-1/release"),
+                "{\"version\": 3, \"active\": true, \"clubId\": \"club-b\"}"))
+        .andExpect(status().isOk());
+    verify(playerService).release("p-1", new ReleasePlayerRequest(3L));
+  }
+
+  static Stream<Arguments> invalidLifecycleBodies() {
+    return Stream.of(
+        Arguments.of("release", "{}", "version"),
+        Arguments.of("release", "{\"version\": null}", "version"),
+        Arguments.of("reactivate", "{\"jerseyNumber\": 7}", "version"),
+        Arguments.of("reactivate", "{\"version\": 3, \"jerseyNumber\": 0}", "jerseyNumber"),
+        Arguments.of("reactivate", "{\"version\": 3, \"jerseyNumber\": 100}", "jerseyNumber"));
+  }
+
+  @ParameterizedTest(name = "{0} {1}")
+  @MethodSource("invalidLifecycleBodies")
+  void anInvalidLifecycleBodyIs400NamingTheField(String action, String body, String field)
+      throws Exception {
+    mockMvc
+        .perform(asEditor(post("/squad/players/p-1/" + action), body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Validation Failed"))
+        .andExpect(jsonPath("$.details").value(contains(startsWith(field + ": "))));
+    verifyNoInteractions(playerService);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @CsvSource({"release", "reactivate"})
+  void anUnreadableVersionIs400NamingItWithoutEchoingTheValue(String action) throws Exception {
+    mockMvc
+        .perform(asEditor(post("/squad/players/p-1/" + action), "{\"version\": \"seven\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("Malformed request body"))
+        .andExpect(jsonPath("$.details").value(contains("version: invalid value")))
+        .andExpect(content().string(not(containsString("seven"))));
+    verifyNoInteractions(playerService);
+  }
+
+  /**
+   * Verify 4: a POST with no body at all is a 400 (Spring's "required request body is missing"),
+   * not a 500 — with a JSON content type and with none.
+   */
+  @ParameterizedTest(name = "{0}, JSON content type: {1}")
+  @CsvSource({"release, true", "release, false", "reactivate, true", "reactivate, false"})
+  void aMissingBodyIs400(String action, boolean jsonContentType) throws Exception {
+    MockHttpServletRequestBuilder request =
+        post("/squad/players/p-1/" + action)
+            .header("Authorization", tokens.bearer("club-a", PermissionLevel.EDIT_FULL));
+    if (jsonContentType) {
+      request.contentType(MediaType.APPLICATION_JSON);
+    }
+
+    mockMvc
+        .perform(request)
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Bad Request"))
+        .andExpect(jsonPath("$.message").value("Malformed request body"));
+    verifyNoInteractions(playerService);
+  }
+
+  static Stream<Arguments> lifecycleConflicts() {
+    return Stream.of(
+        Arguments.of(
+            "release",
+            new PlayerAlreadyReleasedException(),
+            "This player has already been released"),
+        Arguments.of("release", new StalePlayerVersionException(), STALE_MESSAGE),
+        Arguments.of(
+            "reactivate", new PlayerAlreadyActiveException(), "This player is already active"),
+        Arguments.of(
+            "reactivate",
+            new JerseyNumberTakenException(7),
+            "Jersey number 7 is already taken by another active player"),
+        Arguments.of("reactivate", new StalePlayerVersionException(), STALE_MESSAGE));
+  }
+
+  @ParameterizedTest(name = "{0}: {1}")
+  @MethodSource("lifecycleConflicts")
+  void lifecycleConflictsAre409(String action, RuntimeException conflict, String message)
+      throws Exception {
+    when(playerService.release(anyString(), any())).thenThrow(conflict);
+    when(playerService.reactivate(anyString(), any())).thenThrow(conflict);
+
+    mockMvc
+        .perform(asEditor(post("/squad/players/p-1/" + action), "{\"version\": 3}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error").value("Conflict"))
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @CsvSource({"release", "reactivate"})
+  void aLifecycleChangeToAnUnknownPlayerIs404(String action) throws Exception {
+    when(playerService.release(eq("nope"), any()))
+        .thenThrow(new NotFoundException("Player not found"));
+    when(playerService.reactivate(eq("nope"), any()))
+        .thenThrow(new NotFoundException("Player not found"));
+
+    mockMvc
+        .perform(asEditor(post("/squad/players/nope/" + action), "{\"version\": 3}"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Player not found"));
+  }
+
+  // --- delete ------------------------------------------------------------------------------------
+
+  @Test
+  void deleteIs204WithNoBody() throws Exception {
+    mockMvc
+        .perform(asAdmin(delete("/squad/players/p-1")))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+
+    verify(playerService).delete("p-1");
+  }
+
+  @Test
+  void deletingAnUnknownPlayerIs404() throws Exception {
+    doThrow(new NotFoundException("Player not found")).when(playerService).delete("nope");
+
+    mockMvc
+        .perform(asAdmin(delete("/squad/players/nope")))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Player not found"));
+  }
+
   // --- helpers -----------------------------------------------------------------------------------
 
   /** Field rules shared by create and update: {field, invalid value}. */
@@ -481,6 +679,10 @@ class PlayerControllerTest {
     return request.header("Authorization", tokens.bearer("club-a", PermissionLevel.VIEW_ONLY));
   }
 
+  private MockHttpServletRequestBuilder asAdmin(MockHttpServletRequestBuilder request) {
+    return request.header("Authorization", tokens.bearer("club-a", PermissionLevel.ADMIN));
+  }
+
   private MockHttpServletRequestBuilder asEditor(
       MockHttpServletRequestBuilder request, String body) {
     return request
@@ -508,6 +710,13 @@ class PlayerControllerTest {
     body.put("medicalStatus", "INJURED");
     body.put("version", 3);
     return body;
+  }
+
+  private static String postBody(String path) {
+    if (path.endsWith("/release") || path.endsWith("/reactivate")) {
+      return "{\"version\": 3}";
+    }
+    return createBody();
   }
 
   private static String createBody() {
