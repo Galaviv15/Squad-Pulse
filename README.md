@@ -165,7 +165,7 @@ A player's response carries `id`, every field, `active`, `version`, `createdAt`,
 
 ### Errors
 
-Every error from the API has one JSON shape (`common.ApiErrorResponse`): `{ "timestamp", "status", "error", "message", "details": [] }`. `error` is the status's standard reason phrase (or `Validation Failed`). Messages never echo what the client sent (a rejected value, a `Content-Type`), and error bodies are always JSON (`Content-Type: application/json`), whatever the `Accept` header says — even one that excludes JSON, such as `Accept: application/xml`, or can't be parsed.
+Every error from the API has one JSON shape (`common.ApiErrorResponse`): `{ "timestamp", "status", "error", "message", "details": [] }`. `error` is the status's standard reason phrase (or `Validation Failed`). Rejected values and request headers (such as the `Content-Type` sent) are never echoed back in an error; only the `404` for an unknown path and the `405` name the request's method and path. Error bodies are always JSON (`Content-Type: application/json`), whatever the `Accept` header says — even one that excludes JSON, such as `Accept: application/xml`, or can't be parsed.
 
 | Status | When | `message` / `details` |
 |---|---|---|
