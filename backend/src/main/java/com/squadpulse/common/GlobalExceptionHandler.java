@@ -49,10 +49,12 @@ import tools.jackson.databind.DatabindException;
  * safety-critical failure mode in this codebase — see docs/spec.md section 03 and CLAUDE.md
  * standing rule 4.
  *
- * <p>Messages never echo client input (a rejected value, a {@code Content-Type}): Spring's own
- * messages often quote it, so they're replaced with fixed texts. Every 500 is logged at ERROR with
- * its stack trace and the request's method and path — never its query string, headers or body; a
- * client error (4xx) never is.
+ * <p>Rejected values and request headers (e.g. the {@code Content-Type} sent) are never echoed
+ * back: Spring's own messages often quote them, so they're replaced with fixed texts (a listed
+ * media type comes from the server, never from the request). Only the 404 for an unknown path and
+ * the 405 name the request's method and path. Every 500 is logged at ERROR with its stack trace and
+ * the request's method and path — never its query string, headers or body; a client error (4xx)
+ * never is.
  *
  * <p>Deliberately not a {@code ResponseEntityExceptionHandler} subclass: that renders RFC 9457
  * {@code ProblemDetail} bodies, and declares handlers for exceptions mapped here, which Spring
