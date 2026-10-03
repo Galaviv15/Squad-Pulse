@@ -114,7 +114,8 @@ class CurrentUserIntegrationTest {
         .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
         .andExpect(jsonPath("$.active").value(true))
         .andExpect(jsonPath("$.club.id").value(club.getId()))
-        .andExpect(jsonPath("$.club.name").value("Hapoel Example"));
+        .andExpect(jsonPath("$.club.name").value("Hapoel Example"))
+        .andExpect(jsonPath("$.club.hasLogo").value(false));
   }
 
   @Test
