@@ -15,6 +15,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.method.MethodValidationResult;
@@ -99,7 +100,8 @@ class GlobalExceptionHandlerTest {
                     parameterResult(minAge, "must be greater than or equal to 18"),
                     parameterResult(maxAge, "must be less than or equal to 99"))));
 
-    ResponseEntity<ApiErrorResponse> response = handler.handleMethodValidation(ex);
+    ResponseEntity<ApiErrorResponse> response =
+        handler.handleMethodValidation(ex, new MockHttpServletRequest());
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     assertThat(response.getBody().error()).isEqualTo("Validation Failed");
@@ -124,7 +126,7 @@ class GlobalExceptionHandlerTest {
                             -1),
                         "must not be null"))));
 
-    assertThat(handler.handleMethodValidation(ex).getStatusCode())
+    assertThat(handler.handleMethodValidation(ex, new MockHttpServletRequest()).getStatusCode())
         .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
   }
 

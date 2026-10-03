@@ -1,5 +1,7 @@
 package com.squadpulse.common;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,12 +14,20 @@ import org.springframework.core.MethodParameter;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.method.ParameterValidationResult;
+import org.springframework.web.ErrorResponse;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestCookieException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -27,6 +37,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.util.DisconnectedClientHelper;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DatabindException;
 
@@ -37,12 +48,27 @@ import tools.jackson.databind.DatabindException;
  * <p>{@link CrossClubAccessException} is handled here specifically because it's the most
  * safety-critical failure mode in this codebase — see docs/spec.md section 03 and CLAUDE.md
  * standing rule 4.
+ *
+ * <p>Messages never echo client input (a rejected value, a {@code Content-Type}): Spring's own
+ * messages often quote it, so they're replaced with fixed texts. Every 500 is logged at ERROR with
+ * its stack trace and the request's method and path — never its query string, headers or body; a
+ * client error (4xx) never is.
+ *
+ * <p>Deliberately not a {@code ResponseEntityExceptionHandler} subclass: that renders RFC 9457
+ * {@code ProblemDetail} bodies, and declares handlers for exceptions mapped here, which Spring
+ * refuses at startup as ambiguous. The framework exceptions it would cover that aren't mapped
+ * explicitly are caught by {@link #handleUnexpected}, which answers an {@link ErrorResponse} with
+ * its own status.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
   static final String CONCURRENT_MODIFICATION_MESSAGE =
       "The resource was modified concurrently, please retry";
+
+  static final String UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred";
+
+  static final String CLIENT_ERROR_MESSAGE = "The request could not be processed";
 
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
@@ -114,8 +140,11 @@ public class GlobalExceptionHandler {
                 HttpStatus.TOO_MANY_REQUESTS.value(), "Too Many Requests", ex.getMessage()));
   }
 
+  /** Always a server bug: a code path that reads tenant data ran without a club context. */
   @ExceptionHandler(MissingClubContextException.class)
-  public ResponseEntity<ApiErrorResponse> handleMissingClubContext(MissingClubContextException ex) {
+  public ResponseEntity<ApiErrorResponse> handleMissingClubContext(
+      MissingClubContextException ex, HttpServletRequest request) {
+    logServerError(ex, request);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
         .body(
             ApiErrorResponse.of(
@@ -160,9 +189,10 @@ public class GlobalExceptionHandler {
    */
   @ExceptionHandler(HandlerMethodValidationException.class)
   public ResponseEntity<ApiErrorResponse> handleMethodValidation(
-      HandlerMethodValidationException ex) {
+      HandlerMethodValidationException ex, HttpServletRequest request) {
     if (ex.isForReturnValue()) {
-      return handleUnexpected(ex);
+      logServerError(ex, request);
+      return serverError();
     }
     List<String> details = new ArrayList<>();
     for (ParameterValidationResult result : ex.getParameterValidationResults()) {
@@ -288,14 +318,144 @@ public class GlobalExceptionHandler {
                 details));
   }
 
+  /**
+   * The request's {@code Content-Type} isn't one the endpoint reads — or can't be parsed at all.
+   * {@code details} and the {@code Accept} header (plus {@code Accept-Patch} for a PATCH) list the
+   * types it does read; the type the client sent is never echoed.
+   */
+  @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+  public ResponseEntity<ApiErrorResponse> handleMediaTypeNotSupported(
+      HttpMediaTypeNotSupportedException ex) {
+    return json(
+        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+        ex.getHeaders(),
+        "Unsupported Content-Type",
+        mediaTypes(ex.getSupportedMediaTypes()));
+  }
+
+  /**
+   * The endpoint can't produce anything the request's {@code Accept} header allows, or the header
+   * can't be parsed. {@code details} lists what it can produce. The body is JSON regardless of
+   * {@code Accept} (see {@link #json}).
+   */
+  @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+  public ResponseEntity<ApiErrorResponse> handleMediaTypeNotAcceptable(
+      HttpMediaTypeNotAcceptableException ex) {
+    return json(
+        HttpStatus.NOT_ACCEPTABLE,
+        ex.getHeaders(),
+        "None of the accepted media types can be produced",
+        mediaTypes(ex.getSupportedMediaTypes()));
+  }
+
+  /** A required query parameter is absent — reported like a missing field. */
+  @ExceptionHandler(MissingServletRequestParameterException.class)
+  public ResponseEntity<ApiErrorResponse> handleMissingParameter(
+      MissingServletRequestParameterException ex) {
+    return validationFailed(List.of(ex.getParameterName() + ": is required"));
+  }
+
+  /** A required {@code @RequestHeader} is absent — reported like a missing field. */
+  @ExceptionHandler(MissingRequestHeaderException.class)
+  public ResponseEntity<ApiErrorResponse> handleMissingHeader(MissingRequestHeaderException ex) {
+    return validationFailed(List.of(ex.getHeaderName() + ": is required"));
+  }
+
+  /** A required {@code @CookieValue} is absent — reported like a missing field. */
+  @ExceptionHandler(MissingRequestCookieException.class)
+  public ResponseEntity<ApiErrorResponse> handleMissingCookie(MissingRequestCookieException ex) {
+    return validationFailed(List.of(ex.getCookieName() + ": is required"));
+  }
+
+  /**
+   * Everything not mapped above.
+   *
+   * <ul>
+   *   <li>A client that went away mid-response (Tomcat's {@code ClientAbortException}, a broken
+   *       pipe — as Spring's {@link DisconnectedClientHelper} recognises them): logged at DEBUG
+   *       only, and nothing is written, as there's no one to read it.
+   *   <li>A response already committed (e.g. a photo whose stream failed halfway): logged, but its
+   *       status can't change, and a JSON body would be appended to what was sent.
+   *   <li>A Spring framework exception that knows its status — an {@link ErrorResponse}, e.g. a
+   *       {@code ResponseStatusException} or an unmapped {@code ServletRequestBindingException} —
+   *       answered with that status and its headers, under a fixed message, since its own detail
+   *       can quote the request. Logged at ERROR only if it's a 5xx.
+   *   <li>Anything else: a bug, logged at ERROR, answered with a generic 500.
+   * </ul>
+   */
   @ExceptionHandler(Exception.class)
-  public ResponseEntity<ApiErrorResponse> handleUnexpected(Exception ex) {
+  public ResponseEntity<ApiErrorResponse> handleUnexpected(
+      Exception ex, HttpServletRequest request, HttpServletResponse response) {
+    if (DisconnectedClientHelper.isClientDisconnectedException(ex)) {
+      log.debug(
+          "Client disconnected during {} {}: {}", request.getMethod(), request.getRequestURI(), ex);
+      return null;
+    }
+    HttpStatusCode status =
+        ex instanceof ErrorResponse errorResponse
+            ? errorResponse.getStatusCode()
+            : HttpStatus.INTERNAL_SERVER_ERROR;
+    if (status.is5xxServerError()) {
+      logServerError(ex, request);
+    } else {
+      log.debug(
+          "Answered {} {} with {}: {}",
+          request.getMethod(),
+          request.getRequestURI(),
+          status.value(),
+          ex.getClass().getName());
+    }
+    if (response.isCommitted()) {
+      return null;
+    }
+    if (!(ex instanceof ErrorResponse errorResponse)) {
+      return serverError();
+    }
+    return json(
+        status,
+        errorResponse.getHeaders(),
+        status.is5xxServerError() ? UNEXPECTED_ERROR_MESSAGE : CLIENT_ERROR_MESSAGE,
+        List.of());
+  }
+
+  private static void logServerError(Exception ex, HttpServletRequest request) {
+    log.error("Unexpected error handling {} {}", request.getMethod(), request.getRequestURI(), ex);
+  }
+
+  private static ResponseEntity<ApiErrorResponse> serverError() {
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .contentType(MediaType.APPLICATION_JSON)
         .body(
             ApiErrorResponse.of(
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
                 "Internal Server Error",
-                "An unexpected error occurred"));
+                UNEXPECTED_ERROR_MESSAGE));
+  }
+
+  /**
+   * An error response under {@code status}'s standard reason phrase. Its {@code Content-Type} is
+   * set explicitly, so Spring writes the JSON without negotiating it against the request's {@code
+   * Accept} header — otherwise a client accepting only, say, XML would get an empty body (that very
+   * negotiation fails), and an unparseable {@code Accept} header a 500.
+   */
+  private static ResponseEntity<ApiErrorResponse> json(
+      HttpStatusCode status, HttpHeaders headers, String message, List<String> details) {
+    return ResponseEntity.status(status)
+        .headers(headers)
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(ApiErrorResponse.of(status.value(), reasonPhrase(status), message, details));
+  }
+
+  private static String reasonPhrase(HttpStatusCode status) {
+    HttpStatus known = HttpStatus.resolve(status.value());
+    if (known != null) {
+      return known.getReasonPhrase();
+    }
+    return status.is5xxServerError() ? "Server Error" : "Client Error";
+  }
+
+  private static List<String> mediaTypes(List<MediaType> mediaTypes) {
+    return mediaTypes.stream().map(MediaType::toString).toList();
   }
 
   private static ResponseEntity<ApiErrorResponse> payloadTooLarge(String message) {
