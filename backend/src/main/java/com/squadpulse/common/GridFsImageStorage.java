@@ -26,6 +26,9 @@ import org.springframework.stereotype.Component;
  * {@code images.files} and {@code images.chunks}). The only class in the codebase that touches
  * GridFS — an ArchUnit rule keeps GridFS types out of every other package.
  *
+ * <p>Package-private, like everything about it: callers depend on {@link ImageStorage} only, so a
+ * move to object storage is a matter of swapping this class.
+ *
  * <p><b>Club isolation is applied here, by hand.</b> GridFS isn't a Spring Data repository, so
  * {@link ClubScopedRepositoryImpl} doesn't protect it, and nothing would catch a query missing its
  * clubId. So every file carries {@code metadata.clubId}, and every query in this class is built by
@@ -52,10 +55,10 @@ import org.springframework.stereotype.Component;
  * ties. Clock skew between instances can only change which upload wins, not that exactly one does.
  */
 @Component
-public class GridFsImageStorage implements ImageStorage {
+class GridFsImageStorage implements ImageStorage {
 
   /** The GridFS bucket for every image; its collections are {@code images.files/chunks}. */
-  public static final String BUCKET = "images";
+  static final String BUCKET = "images";
 
   static final String FILES_COLLECTION = BUCKET + ".files";
 
@@ -86,7 +89,7 @@ public class GridFsImageStorage implements ImageStorage {
   /**
    * @param gridFs bound to the {@value #BUCKET} bucket (see {@link ImageStorageConfig})
    */
-  public GridFsImageStorage(GridFsOperations gridFs, ClubContext clubContext) {
+  GridFsImageStorage(GridFsOperations gridFs, ClubContext clubContext) {
     this.gridFs = gridFs;
     this.clubContext = clubContext;
   }
