@@ -2,7 +2,7 @@
 
 **Version:** v3 · draft
 **Updated:** Oct 3, 2026
-**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25), the squad API for listing, getting, creating and updating players (KAN-26), and releasing, re-activating and permanently deleting players (KAN-27) are in place. The squad summary (KAN-28) and player photos (KAN-29) are next. Frontend and scraper are still skeletons.
+**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25), the squad API for listing, getting, creating and updating players (KAN-26), releasing, re-activating and permanently deleting players (KAN-27), and the squad summary (KAN-28) are in place. Player photos (KAN-29) are next. Frontend and scraper are still skeletons.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
 
@@ -140,6 +140,7 @@ Every endpoint declares the **minimum** permission level it requires; the levels
 | `POST /squad/players/{id}/release` | `EDIT_FULL` |
 | `POST /squad/players/{id}/reactivate` | `EDIT_FULL` |
 | `DELETE /squad/players/{id}` (permanent) | `ADMIN` |
+| `GET /squad/summary` | `VIEW_ONLY` |
 
 Releasing and re-activating a player need only `EDIT_FULL`, but permanently deleting one needs `ADMIN`: an `EDIT_FULL` user can release a player, but never delete one.
 
@@ -186,10 +187,17 @@ If players ever get logins (see section 04, "Player — future"), the intended e
 - **Another club's player** is simply not found (`404`), exactly like an id that doesn't exist.
 - **List filters** (all optional, combined with AND): status `active` (default) / `released` / `all`; position — matches the **primary** position only; age range `minAge`–`maxAge`, inclusive, each 18–99; medical status; preferred foot. Filtering runs in memory on the club's own players (section 03).
 - **List order** is fixed: primary position (GK → ST), then jersey number (players without one last), then name. No pagination.
+- **Squad summary** (`GET /squad/summary`) covers the club's **active** players only, whatever their medical status. It returns `playerCount`, `averageAge` and `lines`:
+  - `lines` always has all four lines (see "Positions" below), in the order `GOALKEEPERS`, `DEFENSE`, `MIDFIELD`, `ATTACK`, with `0` for an empty one. Each player counts once, by **primary position only**, so for data written through the API the four add up to `playerCount`.
+  - `averageAge` is the mean of each player's **exact** age: completed years plus the elapsed fraction of the current birthday year. Averaging whole years would skew it down by about half a year. A 29 February birthday counts as 1 March in non-leap years, the same as for the age filters, so the whole-number part always matches them. It is rounded half up to one decimal.
+  - A player without a date of birth (only possible in data not written through the API) is counted but left out of the average. `averageAge` is `null` when no active player has one, including an empty squad.
+  - Like the list filters, it is computed in memory on the club's own players.
 
 ### Positions
 
 `GK` Goalkeeper · `CB` Center Back · `RB` Right Back · `LB` Left Back · `DM` Defensive Midfielder · `CM` Central Midfielder · `AM` Attacking Midfielder · `RW` Right Winger · `LW` Left Winger · `ST` Striker
+
+Each position belongs to one **line**, which the squad summary groups by: goalkeepers (`GK`); defense (`CB`, `RB`, `LB`); midfield (`DM`, `CM`, `AM`); attack (`RW`, `LW`, `ST`). The mapping is defined in one place in the code (`Position.line()`).
 
 Shown in the UI as these English abbreviations, not translated to Hebrew — see the terminology exception in section 01.
 
@@ -211,7 +219,7 @@ A combination of automatic scraping and manual entry. The approved scraping scop
 
 ## 08. Dashboard
 
-The home screen shows clickable components: upcoming schedule, squad, league table, and stats. Clicking any component opens its dedicated, expanded screen.
+The home screen shows clickable components: upcoming schedule, squad, league table, and stats. Clicking any component opens its dedicated, expanded screen. The squad component can use `GET /squad/summary` (section 05).
 
 ## 09. New club onboarding
 
@@ -254,7 +262,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 |---|---|
 |✅ **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. | *Except CI Pipeline
 |✅ **1 — Local environment** | Docker Compose with MongoDB + Redis. | 
-| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion done (KAN-27); squad summary (KAN-28) and player photos (KAN-29) next.* |
+| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion done (KAN-27); squad summary done (KAN-28); player photos (KAN-29) next.* |
 | **3 — Frontend MVP** | Dashboard and squad table against the real API — the first "walking skeleton" that runs end to end. |
 | **4 — Tactical board** | The Canvas module with Konva.js. |
 | **5 — Scraping service** | A separate Node worker, fed manually / by Cron — by now there's actually something for it to feed. |
