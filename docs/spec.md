@@ -1,8 +1,8 @@
 # SquadPulse — Technical & Product Spec
 
 **Version:** v3 · draft
-**Updated:** Sep 29, 2026
-**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25) and the squad API for listing, getting, creating and updating players (KAN-26) are in place. Release / re-activation / deletion (KAN-27), the squad summary (KAN-28) and player photos (KAN-29) are next. Frontend and scraper are still skeletons.
+**Updated:** Oct 3, 2026
+**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25), the squad API for listing, getting, creating and updating players (KAN-26), and releasing, re-activating and permanently deleting players (KAN-27) are in place. The squad summary (KAN-28) and player photos (KAN-29) are next. Frontend and scraper are still skeletons.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
 
@@ -137,6 +137,11 @@ Every endpoint declares the **minimum** permission level it requires; the levels
 | `GET /squad/players/{id}` | `VIEW_ONLY` |
 | `POST /squad/players` | `EDIT_FULL` |
 | `PUT /squad/players/{id}` (incl. medical status) | `EDIT_FULL` |
+| `POST /squad/players/{id}/release` | `EDIT_FULL` |
+| `POST /squad/players/{id}/reactivate` | `EDIT_FULL` |
+| `DELETE /squad/players/{id}` (permanent) | `ADMIN` |
+
+Releasing and re-activating a player need only `EDIT_FULL`, but permanently deleting one needs `ADMIN`: an `EDIT_FULL` user can release a player, but never delete one.
 
 ## 05. Player entity
 
@@ -164,15 +169,19 @@ If players ever get logins (see section 04, "Player — future"), the intended e
 
 ### Leaving the club, and permanent deletion
 
-- **Leaving the club is a soft delete:** the player is released (`active = false`) rather than deleted, so references to them from training sessions and lineups stay valid. A released player can be re-activated.
-- **Jersey numbers** are unique only among a club's active players: releasing a player frees their number, and re-activating a player whose number has since been taken is rejected. This is guaranteed by a partial unique index on `(clubId, jerseyNumber)` in the database, not by a check in code, so concurrent writes can't both take the same number.
-- **Permanent deletion** exists only for records created by mistake, and requires `ADMIN`. Once training sessions or lineups reference players, permanent deletion of a referenced player must be blocked.
+- **Leaving the club is a soft delete:** the player is released (`active = false`) rather than deleted, so references to them from training sessions and lineups stay valid. A released player can be re-activated, back into the same club only (a player who moved to another club is a separate record there — see above).
+- **Jersey numbers** are unique only among a club's active players. This is guaranteed by a partial unique index on `(clubId, jerseyNumber)` in the database, not by a check in code, so concurrent writes can't both take the same number.
+  - **Releasing keeps the number on the record** as history; it just stops being reserved, so another player can take it.
+  - **Re-activation sets the number from the request** — a full replacement, like an update: a missing or `null` number means the player comes back without one, not "keep the old one". The client pre-fills the old number. Since a released player can't be edited, this is the only way to change a released player's number, so a player whose old number has since been taken can still come back.
+  - **A taken number is rejected** (`409 Conflict`, also under a race) and the player stays released. There is deliberately no automatic fallback to "no number": the user decides.
+- **Permanent deletion** exists only for records created by mistake, and requires `ADMIN`. It works on active and released players alike. It is deliberately **not** version-checked: a deletion may win over a concurrent edit, and a deletion that finds the player already gone (deleted concurrently) still succeeds (`204`). Once training sessions or lineups reference players, permanent deletion of a referenced player must be refused with `409 Conflict` (not enforced yet — nothing references players today). Once player photos exist (KAN-29), permanent deletion must delete the photo too.
 
 ### Squad API behaviour
 
 - **Update is a full replacement** (`PUT`): every editable field is sent; an optional field that's missing or `null` clears the stored value, and the medical status is required. Neither create nor update can set `active` or `clubId` — such fields in the body are ignored.
 - **Stale edits are refused.** An update carries the `version` the client loaded. If the player has been saved since — detected either by that check or by the save itself losing a race — the answer is `409 Conflict` with a "reload and apply your changes again" message, and the edit is never retried on the server (see section 10).
 - **A released player is read-only** until re-activated: it can be fetched by id (`active: false`), but an update returns `409 Conflict`.
+- **Release and re-activation** (`POST /squad/players/{id}/release`, `POST /squad/players/{id}/reactivate`) carry the `version` the client loaded, with the same stale-version `409` as an update, and return the updated player. Releasing an already released player, or re-activating an already active one, is a `409 Conflict`, not a silent success. A missing body or missing `version` is a `400`.
 - **A jersey number already taken** by an active player of the club returns `409 Conflict`, also when two writes race (the database index decides).
 - **Another club's player** is simply not found (`404`), exactly like an id that doesn't exist.
 - **List filters** (all optional, combined with AND): status `active` (default) / `released` / `all`; position — matches the **primary** position only; age range `minAge`–`maxAge`, inclusive, each 18–99; medical status; preferred foot. Filtering runs in memory on the club's own players (section 03).
@@ -245,7 +254,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 |---|---|
 |✅ **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. | *Except CI Pipeline
 |✅ **1 — Local environment** | Docker Compose with MongoDB + Redis. | 
-| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion (KAN-27), squad summary (KAN-28) and player photos (KAN-29) next.* |
+| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion done (KAN-27); squad summary (KAN-28) and player photos (KAN-29) next.* |
 | **3 — Frontend MVP** | Dashboard and squad table against the real API — the first "walking skeleton" that runs end to end. |
 | **4 — Tactical board** | The Canvas module with Konva.js. |
 | **5 — Scraping service** | A separate Node worker, fed manually / by Cron — by now there's actually something for it to feed. |

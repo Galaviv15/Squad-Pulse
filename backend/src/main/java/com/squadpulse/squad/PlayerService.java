@@ -19,8 +19,15 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
 /**
- * The club's roster: list (with filters), get, create and update players (see docs/spec.md section
- * 05). Everything is within the caller's club, whose id comes only from {@link ClubContext}.
+ * The club's roster: list (with filters), get, create, update, release, re-activate and permanently
+ * delete players (see docs/spec.md section 05). Everything is within the caller's club, whose id
+ * comes only from {@link ClubContext}.
+ *
+ * <p><b>Lifecycle.</b> Leaving the club is a release ({@code active = false}), not a delete: the
+ * player stays as history, keeps their jersey number on record, and the number stops being reserved
+ * (the index only covers active players). A released player is read-only until re-activated, which
+ * also sets their number. Permanent deletion is only for records created by mistake (see {@link
+ * #delete}).
  *
  * <p><b>Club isolation.</b> A player is always loaded through the club-scoped {@link
  * PlayerRepository#findById} first, so another club's player is simply not found — the same 404 as
@@ -38,10 +45,11 @@ import org.springframework.stereotype.Service;
  *
  * <p><b>Edits are refused, never retried, on a conflict.</b> An update is a multi-field form edit
  * based on what the user saw, so unlike {@code auth.UserWriteRetry}, reapplying it on top of a
- * newer state would silently overwrite someone else's change. The client's {@code version} is
- * compared to the stored one before any write; a race lost between that check and the save fails
- * the save's own version condition. Both are the same {@link StalePlayerVersionException}: to the
- * client they're the same situation — someone else saved first — with the same remedy, reload.
+ * newer state would silently overwrite someone else's change; a release or re-activation is
+ * likewise a decision taken on what the user saw. The client's {@code version} is compared to the
+ * stored one before any write; a race lost between that check and the save fails the save's own
+ * version condition. Both are the same {@link StalePlayerVersionException}: to the client they're
+ * the same situation — someone else saved first — with the same remedy, reload.
  */
 @Service
 class PlayerService {
@@ -145,10 +153,7 @@ class PlayerService {
     if (!player.isActive()) {
       throw new ReleasedPlayerException();
     }
-    // Compared, never copied onto the entity: Player.version is Spring Data's alone to manage.
-    if (!Objects.equals(request.version(), player.getVersion())) {
-      throw new StalePlayerVersionException();
-    }
+    requireVersion(request.version(), player);
     player.setFullName(request.fullName());
     player.setPrimaryPosition(request.primaryPosition());
     player.setSecondaryPosition(request.secondaryPosition());
@@ -158,13 +163,67 @@ class PlayerService {
     player.setWeightKg(request.weightKg());
     player.setPreferredFoot(request.preferredFoot());
     player.setMedicalStatus(request.medicalStatus());
-    try {
-      return playerRepository.save(player);
-    } catch (OptimisticLockingFailureException e) {
-      throw new StalePlayerVersionException();
-    } catch (DuplicateKeyException e) {
-      throw translateDuplicateKey(e, player);
+    return saveChanges(player);
+  }
+
+  /**
+   * The player leaves the club: {@code active = false}. Their jersey number is left on the record
+   * as history; the index no longer reserves it, so another player can take it.
+   *
+   * @throws NotFoundException if there's no such player in the caller's club
+   * @throws PlayerAlreadyReleasedException if the player has already been released
+   * @throws StalePlayerVersionException if {@code request.version()} isn't the stored version, or
+   *     the player was saved by someone else between the version check and this save
+   */
+  Player release(String id, ReleasePlayerRequest request) {
+    Player player = get(id);
+    if (!player.isActive()) {
+      throw new PlayerAlreadyReleasedException();
     }
+    requireVersion(request.version(), player);
+    player.setActive(false);
+    return saveChanges(player);
+  }
+
+  /**
+   * Brings a released player back, with the jersey number in the request — {@code null} for none.
+   * There's no pre-check and no fallback: if the number is taken, the index rejects the save and
+   * the player stays released.
+   *
+   * @throws NotFoundException if there's no such player in the caller's club
+   * @throws PlayerAlreadyActiveException if the player is already active
+   * @throws StalePlayerVersionException if {@code request.version()} isn't the stored version, or
+   *     the player was saved by someone else between the version check and this save
+   * @throws JerseyNumberTakenException if another active player in the club has that number
+   */
+  Player reactivate(String id, ReactivatePlayerRequest request) {
+    Player player = get(id);
+    if (player.isActive()) {
+      throw new PlayerAlreadyActiveException();
+    }
+    requireVersion(request.version(), player);
+    player.setActive(true);
+    player.setJerseyNumber(request.jerseyNumber());
+    return saveChanges(player);
+  }
+
+  /**
+   * Permanently removes a player record created by mistake, active or released; leaving the club is
+   * {@link #release}, not this.
+   *
+   * <p><b>Not version-checked, deliberately.</b> An ADMIN removing a mistaken record may win over a
+   * concurrent edit. The club-scoped {@code delete} removes by id and clubId only and ignores
+   * {@code @Version} — don't assume a delete is guarded against concurrent writes. If the player is
+   * already gone by the time of the delete (a concurrent delete), nothing is removed and no error
+   * is raised.
+   *
+   * <p>Nothing references players yet. Once training sessions or lineups do, deleting a referenced
+   * player must be refused with a 409 here — the reason releasing exists at all.
+   *
+   * @throws NotFoundException if there's no such player in the caller's club
+   */
+  void delete(String id) {
+    playerRepository.delete(get(id));
   }
 
   /**
@@ -210,6 +269,24 @@ class PlayerService {
     int age = Period.between(player.getDateOfBirth(), today).getYears();
     return (filter.minAge() == null || age >= filter.minAge())
         && (filter.maxAge() == null || age <= filter.maxAge());
+  }
+
+  /** Compared, never copied onto the entity: {@code Player.version} is Spring Data's alone. */
+  private static void requireVersion(Long expected, Player player) {
+    if (!Objects.equals(expected, player.getVersion())) {
+      throw new StalePlayerVersionException();
+    }
+  }
+
+  /** Saves an existing player, turning a lost version race or a jersey clash into its 409. */
+  private Player saveChanges(Player player) {
+    try {
+      return playerRepository.save(player);
+    } catch (OptimisticLockingFailureException e) {
+      throw new StalePlayerVersionException();
+    } catch (DuplicateKeyException e) {
+      throw translateDuplicateKey(e, player);
+    }
   }
 
   private static RuntimeException translateDuplicateKey(DuplicateKeyException e, Player player) {
