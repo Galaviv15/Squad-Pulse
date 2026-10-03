@@ -2,7 +2,7 @@
 
 **Version:** v3 · draft
 **Updated:** Oct 3, 2026
-**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25), the squad API for listing, getting, creating and updating players (KAN-26), releasing, re-activating and permanently deleting players (KAN-27), and the squad summary (KAN-28) are in place. Player photos (KAN-29) are next. Frontend and scraper are still skeletons.
+**Status:** Phase 2 in progress. Auth & roles are done (epic KAN-10). The Player entity (KAN-25), the squad API for listing, getting, creating and updating players (KAN-26), releasing, re-activating and permanently deleting players (KAN-27), the squad summary (KAN-28) and player photos (KAN-29) are in place. The club logo (KAN-30) is next. Frontend and scraper are still skeletons.
 **Jira:** SquadPulse (`KAN`), at `squadpulse.atlassian.net`
 **Target:** Adult clubs only
 
@@ -104,6 +104,8 @@ Some Data may be shared for exameple league table (if both clubs are in the same
 > **Filtering happens in memory, on club-scoped loads.** A query built by hand against `MongoTemplate` would bypass that layer too, and nothing — no test, no ArchUnit rule — would catch a missing `clubId` criterion in it. So list filters (e.g. the squad filters in section 05) load the club's records through a club-scoped repository method and filter and sort them in Java. At a squad's size (30–40 players) this costs nothing; if a future list is too large for this, its query needs the same review as a `@GloballyScoped` finder.
 >
 > A second, deliberate bypass exists outside the repository layer: `UserVersionBackfill` (KAN-24), a startup schema backfill that sets a `version` field on `users` documents missing one, across all clubs. It filters and writes only that field and reads no tenant data. It can be removed once every environment has been backfilled.
+>
+> **A third bypass, confined by design: the image store** (KAN-29). Images (player photos, later the club logo) live in MongoDB GridFS, in the `images` bucket, which is not a Spring Data repository, so the central layer doesn't protect it. Instead, every image goes through one interface, `common.ImageStorage`, which takes no `clubId`: its only implementation, `GridFsImageStorage` (package-private in `common`), stores the caller's `clubId` (from the request context), the image kind and the owner's id as metadata on every file, and builds every query through a single helper that adds the `clubId` criterion. An ArchUnit rule forbids GridFS anywhere outside `common`. The interface uses no GridFS types, so the store can move to object storage (S3/R2, Phase 6) by replacing the implementation only.
 
 The Silo model (a separate database per club) was considered and rejected for now — the operational overhead (running migrations across N databases) is too high relative to the benefit for a small-to-medium number of clubs.
 
@@ -140,6 +142,9 @@ Every endpoint declares the **minimum** permission level it requires; the levels
 | `POST /squad/players/{id}/release` | `EDIT_FULL` |
 | `POST /squad/players/{id}/reactivate` | `EDIT_FULL` |
 | `DELETE /squad/players/{id}` (permanent) | `ADMIN` |
+| `PUT /squad/players/{id}/photo` | `EDIT_FULL` |
+| `GET /squad/players/{id}/photo` | `VIEW_ONLY` |
+| `DELETE /squad/players/{id}/photo` | `EDIT_FULL` |
 | `GET /squad/summary` | `VIEW_ONLY` |
 
 Releasing and re-activating a player need only `EDIT_FULL`, but permanently deleting one needs `ADMIN`: an `EDIT_FULL` user can release a player, but never delete one.
@@ -158,6 +163,7 @@ Releasing and re-activating a player need only `EDIT_FULL`, but permanently dele
 | Preferred foot | Optional: right / left / both |
 | Medical status | Fit / injured (V1), defaults to fit; extended fields (injury type, expected return) later |
 | Active | Whether the player is currently on the club's squad; defaults to true (see "Leaving the club" below) |
+| Photo | Optional, one per player. Stored outside the player document (in the image store, section 03), so changing it never changes the player's `version`. Player responses carry `hasPhoto` |
 | Performance data | Minutes played, distance covered, speed, sprints — **phase 2+**, depends on the data source (Veo / chips) |
 
 Players use optimistic locking (`@Version`) from day one, like `User` (see section 10).
@@ -175,7 +181,7 @@ If players ever get logins (see section 04, "Player — future"), the intended e
   - **Releasing keeps the number on the record** as history; it just stops being reserved, so another player can take it.
   - **Re-activation sets the number from the request** — a full replacement, like an update: a missing or `null` number means the player comes back without one, not "keep the old one". The client pre-fills the old number. Since a released player can't be edited, this is the only way to change a released player's number, so a player whose old number has since been taken can still come back.
   - **A taken number is rejected** (`409 Conflict`, also under a race) and the player stays released. There is deliberately no automatic fallback to "no number": the user decides.
-- **Permanent deletion** exists only for records created by mistake, and requires `ADMIN`. It works on active and released players alike. It is deliberately **not** version-checked: a deletion may win over a concurrent edit, and a deletion that finds the player already gone (deleted concurrently) still succeeds (`204`). Once training sessions or lineups reference players, permanent deletion of a referenced player must be refused with `409 Conflict` (not enforced yet — nothing references players today). Once player photos exist (KAN-29), permanent deletion must delete the photo too.
+- **Permanent deletion** exists only for records created by mistake, and requires `ADMIN`. It works on active and released players alike. It is deliberately **not** version-checked: a deletion may win over a concurrent edit, and a deletion that finds the player already gone (deleted concurrently) still succeeds (`204`). Once training sessions or lineups reference players, permanent deletion of a referenced player must be refused with `409 Conflict` (not enforced yet — nothing references players today). Permanent deletion also deletes the player's photo, photo first: a failure in between leaves a player without a photo, which a retry of the deletion cleans up, never a file that no longer belongs to any player.
 
 ### Squad API behaviour
 
@@ -192,6 +198,13 @@ If players ever get logins (see section 04, "Player — future"), the intended e
   - `averageAge` is the mean of each player's **exact** age: completed years plus the elapsed fraction of the current birthday year. Averaging whole years would skew it down by about half a year. A 29 February birthday counts as 1 March in non-leap years, the same as for the age filters, so the whole-number part always matches them. It is rounded half up to one decimal.
   - A player without a date of birth (only possible in data not written through the API) is counted but left out of the average. `averageAge` is `null` when no active player has one, including an empty squad.
   - Like the list filters, it is computed in memory on the club's own players.
+- **Player photo** (`PUT` / `GET` / `DELETE /squad/players/{id}/photo`, permissions in section 04):
+  - Upload is a multipart request with one `file` part, and replaces any existing photo (`204`). Only JPEG, PNG and WebP are accepted, recognized by the file's **content** (its leading bytes), never by its name or the client's declared type. At most 2 MB: a larger file is `413 Content Too Large`. An empty file, another format (SVG included), a missing `file` part or a request that isn't multipart is a `400`.
+  - `GET` returns the image itself with its detected type, only to an authenticated request (there's no public URL), or `404` when the player has no photo. `DELETE` returns `204`, also when there was no photo.
+  - A **released player's photo is read-only**, like the rest of the record: upload and delete are `409 Conflict`, `GET` still works, and release and re-activation keep the photo.
+  - Another club's player, or an unknown one, is `404`, checked before the image store is touched. An invalid upload is still a `400` / `413` first, as for any invalid request body, which reveals nothing about the player.
+  - A player has exactly one current photo, even when two uploads race; this is done by ordering the stored files, without a transaction. An upload that races a permanent deletion of its player removes its own file again (`404`); a tiny remaining window that can still leave an unreachable file is documented in the code.
+  - A list sets `hasPhoto` with one image-store query for the whole list, not one per player.
 
 ### Positions
 
@@ -238,6 +251,7 @@ A newly invited user is created with no password set — not even a temporary on
 - **Concurrent writes:** `User` and `Player` use optimistic locking (`@Version`), so a concurrent write can never silently overwrite another — and in particular a user's deactivation (`active = false`) can never be undone by a racing write such as a password reset. A single-field absolute change to a user (reset, permission level) reloads and retries; a conflict that can't be resolved returns `409 Conflict`. Any future endpoint that writes a user (deactivation, profile edit) must follow the same rule (KAN-24). Player edits are multi-field form edits based on what the user saw, so they are never retried: the client sends the `version` it loaded, and a mismatch — or a save race lost after that check — returns `409 Conflict` asking the user to reload (section 05).
 - **Known accepted trade-off:** inviting a user whose email is already registered (in any club) returns `409 Conflict`, which tells an authenticated `ADMIN` that the email exists somewhere in the system. Accepted because the endpoint itself requires an authenticated `ADMIN` (it's not public), and email is unique system-wide by design (section 03).
 - **Additional protections:** CORS restricted to approved domains, input validation on every endpoint, HTTPS everywhere, and automated dependency vulnerability scanning (Dependabot) in CI. Validation happens on the incoming request; entity constraints are **not** re-checked when a document is saved to the database, so every endpoint that writes must validate its full input first.
+- **Image uploads** (KAN-29): the image type is taken from the file's content (magic bytes) only; the client's `Content-Type` and file name are ignored, never stored and never echoed. SVG is rejected (it can carry script). Limits: 2 MB per image in the application, enforced again by the servlet container (2 MB per file, 3 MB per request), with Tomcat's `max-swallow-size` raised to 20 MB so an oversize upload of up to 20 MB gets a clean `413` rather than a dropped connection (beyond that the connection may still be reset, so the client should check the size before uploading). Images are served with `X-Content-Type-Options: nosniff` and `Cache-Control: no-store` (Spring Security defaults). EXIF metadata, which can include a GPS location, is **not** stripped (see section 14).
 - **Error responses:** every error has the same JSON shape (`status`, `error`, `message`, `details`). A validation `400` lists one `"name: message"` entry per invalid body field or query parameter in `details`; a body value that can't be read (e.g. a malformed date) is reported as `"<field>: invalid value"`. Rejected values are never echoed back in an error.
 - **Rate limiting:** Redis-backed rate limiting covers both the activation/reset code above and `/auth/login` itself: 5 failed attempts on a given (email, IP) pair within a 15-minute window return 429 Too Many Requests with Retry-After (KAN-22).
 - **Secrets management:** environment variables / a secrets manager only — no key, password, or pepper ever goes into git.
@@ -262,7 +276,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 |---|---|
 |✅ **0 — Project skeleton** | Private repo, package structure inside the monolith, linters, a basic GitHub Actions pipeline, Jira board. | *Except CI Pipeline
 |✅ **1 — Local environment** | Docker Compose with MongoDB + Redis. | 
-| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion done (KAN-27); squad summary done (KAN-28); player photos (KAN-29) next.* |
+| **2 — Backend core** | Auth plus a single Player entity all the way to a real DB, with a unit test and an integration test from day one. *Auth & roles done (KAN-10); Player entity done (KAN-25); squad list/get/create/update done (KAN-26); release / re-activation / deletion done (KAN-27); squad summary done (KAN-28); player photos done (KAN-29); club logo (KAN-30) next.* |
 | **3 — Frontend MVP** | Dashboard and squad table against the real API — the first "walking skeleton" that runs end to end. |
 | **4 — Tactical board** | The Canvas module with Konva.js. |
 | **5 — Scraping service** | A separate Node worker, fed manually / by Cron — by now there's actually something for it to feed. |
@@ -272,6 +286,7 @@ A trimmed-down local environment: `docker-compose.yml` with just MongoDB + Redis
 
 - **[future]** The scope of Veo/chip integration isn't known yet — it depends on what can actually be pulled out of those systems.
 - **[Phase 5]** The scraper also brings in jersey numbers (section 07). If it ever writes player records, how it reconciles with manually entered numbers (which are unique among a club's active players) has to be decided then.
+- **[Phase 6]** Images: uploaded photos keep their EXIF metadata (possibly a GPS location); stripping it needs server-side re-encoding. When images move to object storage (S3/R2), decide whether to keep serving them through the API or hand out short-lived signed URLs (or a CDN), which would change the photo API, and migrate the existing GridFS files once.
 
 ---
 
