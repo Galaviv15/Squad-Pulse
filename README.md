@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's optional logo — see [Club API](#club-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -56,7 +56,7 @@ Every repository's entity must either extend `ClubScopedEntity` or be explicitly
 
 A `Player` (`players` collection) is a roster record owned by one club, not a global person: the same person in two clubs is two independent records with no link between them. Leaving the club sets `active: false` rather than deleting the document. Jersey numbers are unique among a club's **active** players, enforced by the partial unique index `clubId_jerseyNumber_active_unique` (only documents where `jerseyNumber` is a number and `active` is `true`), created at startup by `auto-index-creation` like the `users` email index. A write that breaks it fails with `DuplicateKeyException`, which the squad API turns into a `409` only when it names that index. Like `User`, `Player` uses optimistic locking (`@Version`). The list filters run in memory on the club's players, loaded through the club-scoped repository, never through a hand-built `MongoTemplate` query, which would bypass the `clubId` filter.
 
-Images (player photos today, the club logo next) are stored in MongoDB **GridFS**, in the dedicated `images` bucket (`images.files` / `images.chunks`), and the rest of the code reaches them only through `common.ImageStorage`, which takes no `clubId` — it uses the one in `ClubContext`. GridFS isn't a Spring Data repository, so the club-scoped layer doesn't cover it: `common.GridFsImageStorage`, the only GridFS code, stores `clubId`, kind and owner id as metadata on every file and adds the `clubId` to every query itself, and an ArchUnit test fails the build if anything outside `common` uses GridFS. Each owner has one current image (the latest by upload date, then id); storing a new one removes the older ones, and that's safe under concurrent uploads without a transaction. The index `images_club_kind_owner_uploadDate` on `images.files` is created at startup. The interface uses no GridFS types, so it can move to object storage (S3/R2) later by swapping the implementation.
+Images (player photos and the club logo) are stored in MongoDB **GridFS**, in the dedicated `images` bucket (`images.files` / `images.chunks`), and the rest of the code reaches them only through `common.ImageStorage`, which takes no `clubId` — it uses the one in `ClubContext`. GridFS isn't a Spring Data repository, so the club-scoped layer doesn't cover it: `common.GridFsImageStorage`, the only GridFS code, stores `clubId`, kind and owner id as metadata on every file and adds the `clubId` to every query itself, and an ArchUnit test fails the build if anything outside `common` uses GridFS. Each owner has one current image (the latest by upload date, then id); storing a new one removes the older ones, and that's safe under concurrent uploads without a transaction. The index `images_club_kind_owner_uploadDate` on `images.files` is created at startup. The interface uses no GridFS types, so it can move to object storage (S3/R2) later by swapping the implementation.
 
 ## Language
 
@@ -128,6 +128,18 @@ Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
 Errors use the same JSON shape as every other endpoint (`common.ApiErrorResponse`). An access token stays valid until it expires (at most 15 minutes) even after logout or revocation — only refresh tokens are revocable. The one exception is `GET /auth/users/me`, which re-reads the user and answers `401` once they're deactivated or deleted.
 
 **Concurrent writes to a user.** `User` is protected by optimistic locking (a `@Version` field): a save made from a stale copy fails instead of silently overwriting a concurrent change. Users stored before that field existed get it automatically: on startup, before the server accepts requests, `auth.UserVersionBackfill` sets `version: 0` on every user document that has none — nothing to do by hand. `/auth/reset-password` and `PATCH /auth/users/{id}/permission-level` resolve a conflict themselves by reloading the user and retrying (up to 3 attempts; a reset re-checks on each one that the user is still active, so it can never undo a deactivation). A conflict that isn't resolved that way is a `409` with a generic "modified concurrently, please retry" message.
+
+### Club API
+
+The caller's own club only: "me" is the club of the access token — there's never a club id in the path, and none is read from the request. Deliberately **not** under `/auth`: the refresh-token cookie is scoped to `Path=/auth`, and a logo fetched on every app load mustn't carry it.
+
+| Endpoint | Access | What it does |
+|---|---|---|
+| `PUT /clubs/me/logo` | `ADMIN` | `multipart/form-data` with the image in the part named `file` → `204`. Replaces any existing logo. Doesn't change the club itself |
+| `GET /clubs/me/logo` | `VIEW_ONLY` | `200` with the image bytes, `Content-Type` = the detected type, `Content-Length`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. `404` (`"This club has no logo"`) if there's none |
+| `DELETE /clubs/me/logo` | `ADMIN` | Removes the logo → `204`, also when there was none |
+
+The same upload rules, limits and errors as [player photos](#squad-api) (JPEG, PNG or WebP by content, at most 2 MB, `400` / `413` as described there); there's no `409`, as a club has no released state. `403` for non-admins on `PUT` / `DELETE`. Like the photo, `GET` needs the `Authorization` header — no public URL — so the frontend fetches it as a blob (see the frontend note under Squad API).
 
 ### Squad API
 
@@ -210,7 +222,7 @@ In production, give `OWNER_BOOTSTRAP_SECRET` only to the environment of the boot
 
 Nothing is deployed yet (Phase 6+). Things the deployment must respect:
 
-- **Request body size at the reverse proxy.** A reverse proxy or load balancer in front of the app must allow request bodies of **at least 3MB** (the app's `spring.servlet.multipart.max-request-size`), or player photo uploads fail at the proxy before they reach the app — and with the proxy's error, not the app's JSON `413`. nginx's default `client_max_body_size` is 1MB, so it must be raised (e.g. `client_max_body_size 3m;`).
+- **Request body size at the reverse proxy.** A reverse proxy or load balancer in front of the app must allow request bodies of **at least 3MB** (the app's `spring.servlet.multipart.max-request-size`), or image uploads (player photos, the club logo) fail at the proxy before they reach the app — and with the proxy's error, not the app's JSON `413`. nginx's default `client_max_body_size` is 1MB, so it must be raised (e.g. `client_max_body_size 3m;`).
 - **Email:** `common.LoggingEmailSender` must be replaced by a real provider first (see [Security](#security)).
 
 ## Working with Claude Code
