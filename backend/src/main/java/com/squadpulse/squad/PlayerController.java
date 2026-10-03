@@ -152,8 +152,8 @@ class PlayerController {
    * missing part, 413 if too large, 409 for a released player. The player's {@code version} is
    * unchanged.
    *
-   * <p>No {@code consumes}: a non-multipart request then fails as a {@code MultipartException}
-   * (400) rather than a {@code HttpMediaTypeNotSupportedException}, which isn't mapped yet.
+   * <p>No {@code consumes}: a non-multipart request fails as a {@code MultipartException} (400, as
+   * documented in the README), not as a {@code HttpMediaTypeNotSupportedException} (415).
    */
   @PutMapping("/{id}/photo")
   @PreAuthorize("hasAuthority('EDIT_FULL')")

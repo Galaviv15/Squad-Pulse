@@ -163,6 +163,31 @@ A player's response carries `id`, every field, `active`, `version`, `createdAt`,
 - **Released player:** a released player can be read but not edited — nor their photo replaced or removed — until they're re-activated.
 - **Already released / already active:** releasing a released player ("This player has already been released") or re-activating an active one ("This player is already active").
 
+### Errors
+
+Every error from the API has one JSON shape (`common.ApiErrorResponse`): `{ "timestamp", "status", "error", "message", "details": [] }`. `error` is the status's standard reason phrase (or `Validation Failed`). Rejected values and request headers (such as the `Content-Type` sent) are never echoed back in an error; only the `404` for an unknown path and the `405` name the request's method and path. Error bodies are always JSON (`Content-Type: application/json`), whatever the `Accept` header says — even one that excludes JSON, such as `Accept: application/xml`, or can't be parsed.
+
+| Status | When | `message` / `details` |
+|---|---|---|
+| `400` Validation Failed | An invalid body field or query parameter, a query parameter of the wrong type, or a missing required query parameter / header / cookie / file part | `"Request validation failed"`; one `"name: problem"` entry per problem, e.g. `"minAge: must be greater than or equal to 18"`, `"q: is required"` |
+| `400` Bad Request | A body that isn't valid JSON or has a value that can't be read; a broken multipart request; a request the endpoint rejects as a whole | `"Malformed request body"` (with `"<field>: invalid value"` when the field is known), `"Malformed multipart request"`, or the endpoint's own message |
+| `401` Unauthorized | No or invalid access token (`"Authentication required"`), or an auth failure such as bad credentials | |
+| `403` Forbidden | The caller's permission level is too low | `"Access denied"` |
+| `404` Not Found | No such resource in the caller's club, or no such endpoint (`"No endpoint GET /x"`) | |
+| `405` Method Not Allowed | The path exists, but not for this method | `details` and the `Allow` header list the supported methods |
+| `406` Not Acceptable | The `Accept` header allows nothing the endpoint produces (all JSON endpoints produce `application/json`) | `"None of the accepted media types can be produced"`; `details` lists what it produces |
+| `409` Conflict | A duplicate, a stale `version`, a released player, ... | the reason |
+| `413` Content Too Large | An upload over its limit | |
+| `415` Unsupported Media Type | A body whose `Content-Type` the endpoint doesn't read (e.g. `text/plain` instead of `application/json`) | `"Unsupported Content-Type"`; `details` and the `Accept` header list the accepted types |
+| `429` Too Many Requests | Too many failed logins | `Retry-After` header in seconds |
+| `500` Internal Server Error | A bug | `"An unexpected error occurred"` |
+
+Authentication comes first: a request without a valid token is a `401` whatever else is wrong with it. After that, the request's form is checked before the permission level, so a malformed request from a caller who couldn't make it anyway gets a `400` / `415` rather than a `403` (nothing is read or changed either way). Any other status Spring itself raises is passed on with a generic message (`"The request could not be processed"`, or `"An unexpected error occurred"` for a 5xx).
+
+**Logging.** Every `500` is logged at `ERROR` with its stack trace, the HTTP method and the path — never the query string, headers, body or cookies. Client errors (`4xx`) are never logged at `ERROR`. A client that disconnects mid-response (e.g. leaving a page while a photo downloads) isn't logged above `DEBUG`.
+
+**Known gap.** An exception thrown before Spring MVC — inside a servlet filter such as the JWT filter — is rendered by Spring Boot's `/error` instead: JSON `{ "timestamp", "status", "error", "path" }` (no `message` / `details`), or an HTML page for a browser that asks for `text/html`. Tomcat logs it at `ERROR`.
+
 ### Bootstrapping a new club
 
 Only the system owner can create a club, together with its initial Club Manager (`CLUB_MANAGER` / `ADMIN`) — see spec section 09. There's no endpoint for this: it's a one-off run of the backend under the `bootstrap` profile, which starts no web server (so it can run alongside the real one), creates both documents in one transaction, and exits (code `0` on success, `1` otherwise). It's gated by the owner secret, not by RBAC: you're prompted for it, and it's compared with `OWNER_BOOTSTRAP_SECRET` (which only the `bootstrap` profile loads — a normal server never binds it). With a missing or wrong secret nothing is written.
