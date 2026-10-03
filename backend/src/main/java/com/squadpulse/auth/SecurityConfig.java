@@ -47,6 +47,13 @@ import tools.jackson.databind.json.JsonMapper;
 class SecurityConfig {
 
   /**
+   * The message of every 401 for a request without a usable caller: no or an invalid access token
+   * here, and a token whose user is deactivated or gone in {@link CurrentUserUnavailableException}
+   * — one text, so a client can't tell those cases apart.
+   */
+  static final String AUTHENTICATION_REQUIRED_MESSAGE = "Authentication required";
+
+  /**
    * Public because they authenticate by other means, or are for someone who can't log in: login by
    * email + password, refresh and logout by the refresh-token cookie (logout has to work after the
    * access token has expired), forgot-password by nothing — it's for a user without a working
@@ -116,7 +123,7 @@ class SecurityConfig {
                                 response,
                                 jsonMapper,
                                 HttpStatus.UNAUTHORIZED,
-                                "Authentication required"))
+                                AUTHENTICATION_REQUIRED_MESSAGE))
                     .accessDeniedHandler(
                         (request, response, e) ->
                             writeError(
