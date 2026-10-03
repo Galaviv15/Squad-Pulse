@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's optional logo — see [Club API](#club-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's optional logo — see [Club API](#club-api). An optional photo per staff user — see [Staff photo API](#staff-photo-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -56,7 +56,7 @@ Every repository's entity must either extend `ClubScopedEntity` or be explicitly
 
 A `Player` (`players` collection) is a roster record owned by one club, not a global person: the same person in two clubs is two independent records with no link between them. Leaving the club sets `active: false` rather than deleting the document. Jersey numbers are unique among a club's **active** players, enforced by the partial unique index `clubId_jerseyNumber_active_unique` (only documents where `jerseyNumber` is a number and `active` is `true`), created at startup by `auto-index-creation` like the `users` email index. A write that breaks it fails with `DuplicateKeyException`, which the squad API turns into a `409` only when it names that index. Like `User`, `Player` uses optimistic locking (`@Version`). The list filters run in memory on the club's players, loaded through the club-scoped repository, never through a hand-built `MongoTemplate` query, which would bypass the `clubId` filter.
 
-Images (player photos and the club logo) are stored in MongoDB **GridFS**, in the dedicated `images` bucket (`images.files` / `images.chunks`), and the rest of the code reaches them only through `common.ImageStorage`, which takes no `clubId` — it uses the one in `ClubContext`. GridFS isn't a Spring Data repository, so the club-scoped layer doesn't cover it: `common.GridFsImageStorage`, the only GridFS code, stores `clubId`, kind and owner id as metadata on every file and adds the `clubId` to every query itself, and an ArchUnit test fails the build if anything outside `common` uses GridFS. Each owner has one current image (the latest by upload date, then id); storing a new one removes the older ones, and that's safe under concurrent uploads without a transaction. The index `images_club_kind_owner_uploadDate` on `images.files` is created at startup. The interface uses no GridFS types, so it can move to object storage (S3/R2) later by swapping the implementation.
+Images (player photos, the club logo and staff photos) are stored in MongoDB **GridFS**, in the dedicated `images` bucket (`images.files` / `images.chunks`), and the rest of the code reaches them only through `common.ImageStorage`, which takes no `clubId` — it uses the one in `ClubContext`. GridFS isn't a Spring Data repository, so the club-scoped layer doesn't cover it: `common.GridFsImageStorage`, the only GridFS code, stores `clubId`, kind and owner id as metadata on every file and adds the `clubId` to every query itself, and an ArchUnit test fails the build if anything outside `common` uses GridFS. Each owner has one current image (the latest by upload date, then id); storing a new one removes the older ones, and that's safe under concurrent uploads without a transaction. The index `images_club_kind_owner_uploadDate` on `images.files` is created at startup. The interface uses no GridFS types, so it can move to object storage (S3/R2) later by swapping the implementation.
 
 ## Language
 
@@ -141,6 +141,21 @@ The caller's own club only: "me" is the club of the access token — there's nev
 
 The same upload rules, limits and errors as [player photos](#squad-api) (JPEG, PNG or WebP by content, at most 2 MB, `400` / `413` as described there); there's no `409`, as a club has no released state. `403` for non-admins on `PUT` / `DELETE`. Like the photo, `GET` needs the `Authorization` header — no public URL — so the frontend fetches it as a blob (see the frontend note under Squad API); use `club.hasLogo` from `GET /auth/users/me` to skip the request when there's no logo.
 
+### Staff photo API
+
+Each staff user can have one optional profile photo. Deliberately **not** under `/auth` (unlike the other user endpoints), for the same reason as the club logo: the refresh-token cookie is scoped to `Path=/auth`, and photos fetched often (app header, staff lists) mustn't carry it. `me` is always the user of the access token — never read from the request.
+
+| Endpoint | Who | What it does |
+|---|---|---|
+| `PUT /users/me/photo` | any authenticated user (`VIEW_ONLY`) | `multipart/form-data` with the image in the part named `file` → `204`. Sets the caller's own photo, replacing any existing one |
+| `GET /users/me/photo` | any authenticated user (`VIEW_ONLY`) | The caller's own photo (see `GET /users/{id}/photo`) |
+| `DELETE /users/me/photo` | any authenticated user (`VIEW_ONLY`) | Removes the caller's own photo → `204`, also when there was none |
+| `PUT /users/{id}/photo` | `ADMIN` | Like `PUT /users/me/photo`, for any user of the caller's club (an admin may also use it on themselves) |
+| `GET /users/{id}/photo` | `VIEW_ONLY` | `200` with the image bytes, `Content-Type` = the detected type, `Content-Length`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. `404` (`"This user has no photo"`) if there's none |
+| `DELETE /users/{id}/photo` | `ADMIN` | Like `DELETE /users/me/photo`, for any user of the caller's club |
+
+The `me` endpoints are the only ones where `VIEW_ONLY` writes anything: it's the caller's own profile, never another user's or club data. The same upload rules, limits and errors as [player photos](#squad-api) (JPEG, PNG or WebP by content, at most 2 MB, `400` / `413` as described there). `404` (`"User not found"`) on any `{id}` operation if there's no such user in the caller's club — a user of another club looks exactly like a nonexistent id. A **deactivated** user is treated like a released player: their photo can still be read, but `PUT` / `DELETE` are a `409` (`"This user has been deactivated; their profile can't be changed"`), whoever the caller is — including the deactivated user with an access token that hasn't expired yet. `403` for non-admins on `PUT` / `DELETE /users/{id}/photo`. The user itself is never modified (its `version` doesn't change). Like the other images, `GET` needs the `Authorization` header — no public URL — so the frontend fetches it as a blob (see the frontend note under Squad API).
+
 ### Squad API
 
 Every endpoint works on the caller's own club only (the `clubId` comes from the access token, never from the request). A player in another club looks exactly like a nonexistent id: `404`.
@@ -222,7 +237,7 @@ In production, give `OWNER_BOOTSTRAP_SECRET` only to the environment of the boot
 
 Nothing is deployed yet (Phase 6+). Things the deployment must respect:
 
-- **Request body size at the reverse proxy.** A reverse proxy or load balancer in front of the app must allow request bodies of **at least 3MB** (the app's `spring.servlet.multipart.max-request-size`), or image uploads (player photos, the club logo) fail at the proxy before they reach the app — and with the proxy's error, not the app's JSON `413`. nginx's default `client_max_body_size` is 1MB, so it must be raised (e.g. `client_max_body_size 3m;`).
+- **Request body size at the reverse proxy.** A reverse proxy or load balancer in front of the app must allow request bodies of **at least 3MB** (the app's `spring.servlet.multipart.max-request-size`), or image uploads (player photos, the club logo, staff photos) fail at the proxy before they reach the app — and with the proxy's error, not the app's JSON `413`. nginx's default `client_max_body_size` is 1MB, so it must be raised (e.g. `client_max_body_size 3m;`).
 - **Email:** `common.LoggingEmailSender` must be replaced by a real provider first (see [Security](#security)).
 
 ## Working with Claude Code
