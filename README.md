@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, and inviting users (who activate their account with an emailed code) — see [Auth API](#auth-api). Squad: listing (with filters), viewing, adding and editing players — see [Squad API](#squad-api); releasing / re-activating players isn't there yet. No other feature code has shipped yet; the frontend and scraper are still skeletons.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, and inviting users (who activate their account with an emailed code) — see [Auth API](#auth-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players — see [Squad API](#squad-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -135,15 +135,20 @@ Every endpoint works on the caller's own club only (the `clubId` comes from the 
 | `GET /squad/players/{id}` | `VIEW_ONLY` | One player, including a released one (`"active": false`). `404` if there's no such player in the caller's club |
 | `POST /squad/players` | `EDIT_FULL` | `{ "fullName", "primaryPosition", "secondaryPosition"?, "jerseyNumber"?, "dateOfBirth", "heightCm"?, "weightKg"?, "preferredFoot"?, "medicalStatus"? }` → `201` with the new player and its URL in `Location`. Always an active player of the caller's club; `medicalStatus` defaults to `FIT` |
 | `PUT /squad/players/{id}` | `EDIT_FULL` | The same fields plus `"version"`, with `medicalStatus` required → `200` with the updated player. A **full replacement**: an optional field that's missing or `null` is cleared |
+| `POST /squad/players/{id}/release` | `EDIT_FULL` | `{ "version" }` → `200` with the player, now `"active": false`. The player leaves the club but stays on record; their `jerseyNumber` is kept as history and is free for another player |
+| `POST /squad/players/{id}/reactivate` | `EDIT_FULL` | `{ "version", "jerseyNumber"? }` → `200` with the player, `"active": true`, wearing exactly the `jerseyNumber` sent: missing or `null` means **no number** (not "keep the old one"). The client should pre-fill the old number; if it has been taken, pick another or none |
+| `DELETE /squad/players/{id}` | `ADMIN` | Permanently deletes a player, active or released → `204`, no body. Only for records created by mistake — leaving the club is a release. **Not version-checked**: it wins over a concurrent edit |
 
 Filters for `GET /squad/players`, all optional and combined with AND: `status` = `active` (default) / `released` / `all`; `position` (matches the **primary** position only); `minAge` / `maxAge` (whole years, inclusive, each 18–99); `medicalStatus`; `preferredFoot`. An unknown value, an out-of-range age or `minAge` > `maxAge` is a `400` naming the parameter in `details` (e.g. `"minAge: must be less than or equal to maxAge"`).
 
-A player's response carries `id`, every field, `active`, `version`, `createdAt` and `updatedAt`, never `clubId`. Field rules (a `400` naming the field in `details` otherwise, e.g. `"fullName: must not be blank"`; a value that can't be read at all, like an unknown enum or a malformed date, is `"dateOfBirth: invalid value"`): `fullName` 1–100 characters after trimming; `secondaryPosition`, if set, differs from `primaryPosition`; `jerseyNumber` 1–99; age from `dateOfBirth` (`yyyy-MM-dd`) 18–99; `heightCm` 140–220; `weightKg` 40–150. Body fields that aren't part of the request (`clubId`, `active`, `id`, ...) are ignored. Releasing and re-activating players aren't part of this API yet.
+A player's response carries `id`, every field, `active`, `version`, `createdAt` and `updatedAt`, never `clubId`. Field rules (a `400` naming the field in `details` otherwise, e.g. `"fullName: must not be blank"`; a value that can't be read at all, like an unknown enum or a malformed date, is `"dateOfBirth: invalid value"`): `fullName` 1–100 characters after trimming; `secondaryPosition`, if set, differs from `primaryPosition`; `jerseyNumber` 1–99; age from `dateOfBirth` (`yyyy-MM-dd`) 18–99; `heightCm` 140–220; `weightKg` 40–150. Body fields that aren't part of the request (`clubId`, `active`, `id`, ...) are ignored. A missing body on `POST` / `PUT` is a `400` (`"Malformed request body"`); a missing `version` is a `400` naming it.
 
 **Conflicts (`409`).**
 - **Jersey number taken:** another *active* player in the club already has it (checked by a unique database index, so it holds under concurrent writes too). A released player's number is free, and players without a number never clash.
-- **Stale edit:** `PUT` must send the `version` the client loaded. If the player has been saved since, the edit is refused ("reload it and apply your changes again") and nothing is written. The client should reload and re-apply; it's never retried automatically. A save that loses a race right after that check gets the same `409` and message.
+- **Jersey number taken on re-activation:** the number sent is held by another active player (possibly taken while the player was away). Same message as above; the player stays released — there's no silent fallback to "no number".
+- **Stale edit:** `PUT`, `release` and `reactivate` must send the `version` the client loaded. If the player has been saved since, the request is refused ("reload it and apply your changes again") and nothing is written. The client should reload and re-apply; it's never retried automatically. A save that loses a race right after that check gets the same `409` and message. `DELETE` has no version check.
 - **Released player:** a released player can be read but not edited until they're re-activated.
+- **Already released / already active:** releasing a released player ("This player has already been released") or re-activating an active one ("This player is already active").
 
 ### Bootstrapping a new club
 
