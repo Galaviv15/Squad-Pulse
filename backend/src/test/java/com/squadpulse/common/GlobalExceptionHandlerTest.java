@@ -25,6 +25,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -256,6 +259,78 @@ class GlobalExceptionHandlerTest {
         .isEqualTo(handlerMethod("handleMethodValidation"));
     assertThat(resolver.resolveMethod(new BadRequestException("bad")))
         .isEqualTo(handlerMethod("handleBadRequest"));
+  }
+
+  /**
+   * Upload failures (KAN-29), all 500s before: the size exception reaches its own 413 handler, not
+   * the broader multipart one it extends; a missing part is a field-style 400.
+   */
+  @Test
+  void theMultipartExceptionsReachTheirOwnHandlers() {
+    ExceptionHandlerMethodResolver resolver =
+        new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class);
+
+    assertThat(resolver.resolveMethod(new MaxUploadSizeExceededException(2_097_152)))
+        .isEqualTo(handlerMethod("handleMaxUploadSizeExceeded"));
+    assertThat(resolver.resolveMethod(new MultipartException("Failed to parse multipart")))
+        .isEqualTo(handlerMethod("handleMultipart"));
+    assertThat(resolver.resolveMethod(new MissingServletRequestPartException("file")))
+        .isEqualTo(handlerMethod("handleMissingPart"));
+    assertThat(resolver.resolveMethod(new PayloadTooLargeException("too large")))
+        .isEqualTo(handlerMethod("handlePayloadTooLarge"));
+  }
+
+  /** The container's message quotes the limit and the actual size; neither is passed on. */
+  @Test
+  void anOversizeUploadIsAGeneric413() {
+    ResponseEntity<ApiErrorResponse> response =
+        handler.handleMaxUploadSizeExceeded(
+            new MaxUploadSizeExceededException(
+                2_097_152, new IllegalStateException("size 3145728 exceeds 2097152")));
+
+    assertThat(response.getStatusCode().value()).isEqualTo(413);
+    ApiErrorResponse body = response.getBody();
+    assertThat(body.status()).isEqualTo(413);
+    assertThat(body.error()).isEqualTo("Content Too Large");
+    assertThat(body.message()).isEqualTo("Upload exceeds the maximum allowed size");
+    assertThat(body.message()).doesNotContain("2097152").doesNotContain("3145728");
+    assertThat(body.details()).isEmpty();
+  }
+
+  @Test
+  void aPayloadTooLargeExceptionIs413WithItsMessage() {
+    ApiErrorResponse body =
+        handler
+            .handlePayloadTooLarge(new PayloadTooLargeException("Image must be at most 2 MB"))
+            .getBody();
+
+    assertThat(body.status()).isEqualTo(413);
+    assertThat(body.error()).isEqualTo("Content Too Large");
+    assertThat(body.message()).isEqualTo("Image must be at most 2 MB");
+  }
+
+  @Test
+  void aMissingPartIsReportedLikeAMissingField() {
+    ApiErrorResponse body =
+        handler.handleMissingPart(new MissingServletRequestPartException("file")).getBody();
+
+    assertThat(body.status()).isEqualTo(400);
+    assertThat(body.error()).isEqualTo("Validation Failed");
+    assertThat(body.details()).containsExactly("file: is required");
+  }
+
+  /** The parser's message may quote the request; it isn't passed on. */
+  @Test
+  void aMalformedMultipartRequestIsAPlain400() {
+    ApiErrorResponse body =
+        handler
+            .handleMultipart(new MultipartException("Stream ended unexpectedly near <script>"))
+            .getBody();
+
+    assertThat(body.status()).isEqualTo(400);
+    assertThat(body.error()).isEqualTo("Bad Request");
+    assertThat(body.message()).isEqualTo("Malformed multipart request");
+    assertThat(body.details()).isEmpty();
   }
 
   /** Stands in for a controller method with two query parameters. */

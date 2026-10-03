@@ -1,10 +1,16 @@
 package com.squadpulse.squad;
 
+import com.squadpulse.common.ImageValidator;
+import com.squadpulse.common.StoredImage;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.net.URI;
 import java.util.List;
+import java.util.Set;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.WebDataBinder;
@@ -17,13 +23,18 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 /**
  * The club's roster (see {@link PlayerService}). Reading needs {@code VIEW_ONLY}; creating,
- * editing, releasing and re-activating {@code EDIT_FULL}; permanently deleting {@code ADMIN}.
- * Always the caller's own club: no clubId is ever read from the request.
+ * editing, releasing and re-activating, and changing a photo {@code EDIT_FULL}; permanently
+ * deleting {@code ADMIN}. Always the caller's own club: no clubId is ever read from the request.
+ *
+ * <p>Every player in a response carries {@code hasPhoto}; the photo itself is served on its own
+ * URL, with the access token like any other endpoint.
  *
  * <p>Deliberately not {@code @Validated}: that would move the {@code @Min}/{@code @Max} checks on
  * the query parameters from Spring MVC's built-in method validation (a 400 via {@code
@@ -35,9 +46,11 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 class PlayerController {
 
   private final PlayerService playerService;
+  private final ImageValidator imageValidator;
 
-  PlayerController(PlayerService playerService) {
+  PlayerController(PlayerService playerService, ImageValidator imageValidator) {
     this.playerService = playerService;
+    this.imageValidator = imageValidator;
   }
 
   @InitBinder
@@ -60,21 +73,26 @@ class PlayerController {
       @RequestParam(required = false) PreferredFoot preferredFoot) {
     PlayerFilter filter =
         new PlayerFilter(status, position, minAge, maxAge, medicalStatus, preferredFoot);
-    return playerService.list(filter).stream().map(PlayerResponse::from).toList();
+    List<Player> players = playerService.list(filter);
+    Set<String> withPhoto = playerService.playerIdsWithPhoto();
+    return players.stream()
+        .map(player -> PlayerResponse.from(player, withPhoto.contains(player.getId())))
+        .toList();
   }
 
   /** One player of the club, including a released one ({@code active: false}). */
   @GetMapping("/{id}")
   @PreAuthorize("hasAuthority('VIEW_ONLY')")
   PlayerResponse get(@PathVariable String id) {
-    return PlayerResponse.from(playerService.get(id));
+    return withPhotoFlag(playerService.get(id));
   }
 
   /** Adds an active player to the club: 201, with the new player's URL in {@code Location}. */
   @PostMapping
   @PreAuthorize("hasAuthority('EDIT_FULL')")
   ResponseEntity<PlayerResponse> create(@Valid @RequestBody CreatePlayerRequest request) {
-    PlayerResponse created = PlayerResponse.from(playerService.create(request));
+    // A new player can't have a photo yet: no storage query needed.
+    PlayerResponse created = PlayerResponse.from(playerService.create(request), false);
     URI location =
         ServletUriComponentsBuilder.fromCurrentRequest()
             .path("/{id}")
@@ -90,7 +108,7 @@ class PlayerController {
   @PutMapping("/{id}")
   @PreAuthorize("hasAuthority('EDIT_FULL')")
   PlayerResponse update(@PathVariable String id, @Valid @RequestBody UpdatePlayerRequest request) {
-    return PlayerResponse.from(playerService.update(id, request));
+    return withPhotoFlag(playerService.update(id, request));
   }
 
   /**
@@ -101,7 +119,7 @@ class PlayerController {
   @PreAuthorize("hasAuthority('EDIT_FULL')")
   PlayerResponse release(
       @PathVariable String id, @Valid @RequestBody ReleasePlayerRequest request) {
-    return PlayerResponse.from(playerService.release(id, request));
+    return withPhotoFlag(playerService.release(id, request));
   }
 
   /**
@@ -113,7 +131,7 @@ class PlayerController {
   @PreAuthorize("hasAuthority('EDIT_FULL')")
   PlayerResponse reactivate(
       @PathVariable String id, @Valid @RequestBody ReactivatePlayerRequest request) {
-    return PlayerResponse.from(playerService.reactivate(id, request));
+    return withPhotoFlag(playerService.reactivate(id, request));
   }
 
   /**
@@ -125,5 +143,51 @@ class PlayerController {
   ResponseEntity<Void> delete(@PathVariable String id) {
     playerService.delete(id);
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Sets the player's photo, replacing any earlier one: a multipart request with the image in the
+   * {@code file} part. JPEG, PNG or WebP by content (the declared type and file name are ignored),
+   * at most {@code squadpulse.images.max-size}: 204. 400 for an empty or non-image file or a
+   * missing part, 413 if too large, 409 for a released player. The player's {@code version} is
+   * unchanged.
+   *
+   * <p>No {@code consumes}: a non-multipart request then fails as a {@code MultipartException}
+   * (400) rather than a {@code HttpMediaTypeNotSupportedException}, which isn't mapped yet.
+   */
+  @PutMapping("/{id}/photo")
+  @PreAuthorize("hasAuthority('EDIT_FULL')")
+  ResponseEntity<Void> uploadPhoto(
+      @PathVariable String id, @RequestPart("file") MultipartFile file) {
+    playerService.uploadPhoto(id, imageValidator.validate(file));
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * The player's photo, released players' too: the image bytes with their detected {@code
+   * Content-Type} and {@code Content-Length}; 404 if there's none. Spring Security adds {@code
+   * X-Content-Type-Options: nosniff} (so a browser never second-guesses the type) and {@code
+   * Cache-Control: no-store} to every response.
+   */
+  @GetMapping("/{id}/photo")
+  @PreAuthorize("hasAuthority('VIEW_ONLY')")
+  ResponseEntity<Resource> photo(@PathVariable String id) {
+    StoredImage photo = playerService.photo(id);
+    return ResponseEntity.ok()
+        .contentType(MediaType.parseMediaType(photo.type().mediaType()))
+        .contentLength(photo.length())
+        .body(new InputStreamResource(photo.content()));
+  }
+
+  /** Removes the player's photo: 204, also if there was none. 409 for a released player. */
+  @DeleteMapping("/{id}/photo")
+  @PreAuthorize("hasAuthority('EDIT_FULL')")
+  ResponseEntity<Void> deletePhoto(@PathVariable String id) {
+    playerService.deletePhoto(id);
+    return ResponseEntity.noContent().build();
+  }
+
+  private PlayerResponse withPhotoFlag(Player player) {
+    return PlayerResponse.from(player, playerService.hasPhoto(player));
   }
 }

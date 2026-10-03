@@ -23,6 +23,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DatabindException;
@@ -209,6 +212,50 @@ public class GlobalExceptionHandler {
   }
 
   /**
+   * A file bigger than the application's own limit for it (e.g. {@link ImageValidator}). 413 under
+   * its RFC 9110 name, "Content Too Large" ({@code PAYLOAD_TOO_LARGE} is deprecated in Spring 7).
+   */
+  @ExceptionHandler(PayloadTooLargeException.class)
+  public ResponseEntity<ApiErrorResponse> handlePayloadTooLarge(PayloadTooLargeException ex) {
+    return payloadTooLarge(ex.getMessage());
+  }
+
+  /**
+   * The servlet container refused a multipart body over {@code
+   * spring.servlet.multipart.max-file-size} or {@code max-request-size} — the outer guard; the
+   * limits the API promises are checked in code ({@link PayloadTooLargeException}). Raised while
+   * the multipart body is parsed, before any handler runs. The container's own message, which
+   * quotes the sizes, isn't passed on.
+   */
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  public ResponseEntity<ApiErrorResponse> handleMaxUploadSizeExceeded(
+      MaxUploadSizeExceededException ex) {
+    return payloadTooLarge("Upload exceeds the maximum allowed size");
+  }
+
+  /**
+   * A multipart request without the part a handler requires — reported like a missing field: {@code
+   * "file: is required"}.
+   */
+  @ExceptionHandler(MissingServletRequestPartException.class)
+  public ResponseEntity<ApiErrorResponse> handleMissingPart(MissingServletRequestPartException ex) {
+    return validationFailed(List.of(ex.getRequestPartName() + ": is required"));
+  }
+
+  /**
+   * Any other multipart failure: a body that can't be parsed as multipart, or a request that isn't
+   * multipart at all to a handler expecting a file. {@link MaxUploadSizeExceededException} is a
+   * subclass but has its own handler above, which Spring prefers as the closer match.
+   */
+  @ExceptionHandler(MultipartException.class)
+  public ResponseEntity<ApiErrorResponse> handleMultipart(MultipartException ex) {
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed multipart request"));
+  }
+
+  /**
    * No controller mapped to the path. Only reachable for authenticated requests — without a token,
    * the security chain answers 401 before routing runs — and only because static-resource mappings
    * are off in application.yml; otherwise the {@code /**} resource handler would claim the path.
@@ -249,6 +296,13 @@ public class GlobalExceptionHandler {
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
                 "Internal Server Error",
                 "An unexpected error occurred"));
+  }
+
+  private static ResponseEntity<ApiErrorResponse> payloadTooLarge(String message) {
+    return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE)
+        .body(
+            ApiErrorResponse.of(
+                HttpStatus.CONTENT_TOO_LARGE.value(), "Content Too Large", message));
   }
 
   private static ResponseEntity<ApiErrorResponse> validationFailed(List<String> details) {

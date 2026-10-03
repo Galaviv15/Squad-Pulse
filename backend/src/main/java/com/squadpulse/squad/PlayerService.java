@@ -3,7 +3,12 @@ package com.squadpulse.squad;
 import com.mongodb.ErrorCategory;
 import com.mongodb.MongoWriteException;
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.common.ImageKind;
+import com.squadpulse.common.ImageOwner;
+import com.squadpulse.common.ImageStorage;
 import com.squadpulse.common.NotFoundException;
+import com.squadpulse.common.StoredImage;
+import com.squadpulse.common.ValidatedImage;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
@@ -18,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +63,12 @@ import org.springframework.stereotype.Service;
  * stored one before any write; a race lost between that check and the save fails the save's own
  * version condition. Both are the same {@link StalePlayerVersionException}: to the client they're
  * the same situation — someone else saved first — with the same remedy, reload.
+ *
+ * <p><b>Photos.</b> A player's optional photo lives in {@link ImageStorage}, not on the {@link
+ * Player} document, so uploading or removing one never changes the player's {@code version} — a
+ * photo can't make a client's pending edit stale. The player is still loaded (club-scoped) first,
+ * so another club's player is a 404 before storage is touched. Like every other edit, changing the
+ * photo of a released player is refused; reading it isn't, and release and re-activation keep it.
  */
 @Service
 class PlayerService {
@@ -77,6 +89,7 @@ class PlayerService {
 
   private final PlayerRepository playerRepository;
   private final ClubContext clubContext;
+  private final ImageStorage imageStorage;
   private final Clock clock;
 
   /**
@@ -85,14 +98,20 @@ class PlayerService {
    * and in the age filter.
    */
   @Autowired
-  PlayerService(PlayerRepository playerRepository, ClubContext clubContext) {
-    this(playerRepository, clubContext, Clock.systemDefaultZone());
+  PlayerService(
+      PlayerRepository playerRepository, ClubContext clubContext, ImageStorage imageStorage) {
+    this(playerRepository, clubContext, imageStorage, Clock.systemDefaultZone());
   }
 
   /** For tests: {@code clock} decides "today" for the age filters and the average age. */
-  PlayerService(PlayerRepository playerRepository, ClubContext clubContext, Clock clock) {
+  PlayerService(
+      PlayerRepository playerRepository,
+      ClubContext clubContext,
+      ImageStorage imageStorage,
+      Clock clock) {
     this.playerRepository = playerRepository;
     this.clubContext = clubContext;
+    this.imageStorage = imageStorage;
     this.clock = clock;
   }
 
@@ -249,14 +268,18 @@ class PlayerService {
   }
 
   /**
-   * Permanently removes a player record created by mistake, active or released; leaving the club is
-   * {@link #release}, not this.
+   * Permanently removes a player record created by mistake, active or released, and their photo;
+   * leaving the club is {@link #release}, not this.
+   *
+   * <p><b>Photo first, then the player.</b> If the second step fails, what's left is a player
+   * without a photo, and retrying the delete finishes the job. The other order could leave a photo
+   * whose player is gone, which no API call can reach any more.
    *
    * <p><b>Not version-checked, deliberately.</b> An ADMIN removing a mistaken record may win over a
    * concurrent edit. The club-scoped {@code delete} removes by id and clubId only and ignores
-   * {@code @Version} — don't assume a delete is guarded against concurrent writes. If the player is
-   * already gone by the time of the delete (a concurrent delete), nothing is removed and no error
-   * is raised.
+   * {@code @Version} — don't assume a delete is guarded against concurrent writes. If the player or
+   * the photo is already gone by the time of the delete (a concurrent delete), nothing is removed
+   * and no error is raised.
    *
    * <p>Nothing references players yet. Once training sessions or lineups do, deleting a referenced
    * player must be refused with a 409 here — the reason releasing exists at all.
@@ -264,7 +287,73 @@ class PlayerService {
    * @throws NotFoundException if there's no such player in the caller's club
    */
   void delete(String id) {
-    playerRepository.delete(get(id));
+    Player player = get(id);
+    imageStorage.delete(photoOf(id));
+    playerRepository.delete(player);
+  }
+
+  /**
+   * Stores {@code photo} as the player's photo, replacing any earlier one. The player document
+   * isn't modified, so its {@code version} stays the same.
+   *
+   * <p><b>Racing a permanent delete.</b> If the player is deleted while the photo is being stored,
+   * the delete may have removed the old photo before this one landed. So the player is looked up
+   * again after storing; if they're gone, the photo is removed again and this is a 404 — no orphan
+   * is left behind. What remains is a tiny window: a delete that removes the photos before the
+   * store completes but the player only after that second lookup still leaves an orphan file.
+   * Likewise, a release landing after the active check leaves a released player with the new photo
+   * — the same state as releasing right after the upload.
+   *
+   * @throws NotFoundException if there's no such player in the caller's club, or the player was
+   *     deleted meanwhile
+   * @throws ReleasedPlayerException if the player has been released
+   */
+  void uploadPhoto(String id, ValidatedImage photo) {
+    Player player = get(id);
+    if (!player.isActive()) {
+      throw new ReleasedPlayerException();
+    }
+    imageStorage.store(photoOf(id), photo);
+    if (!playerRepository.existsById(id)) {
+      imageStorage.delete(photoOf(id));
+      throw notFound();
+    }
+  }
+
+  /**
+   * The player's photo; released players' too.
+   *
+   * @throws NotFoundException if there's no such player in the caller's club, or they have no photo
+   */
+  StoredImage photo(String id) {
+    get(id);
+    return imageStorage
+        .find(photoOf(id))
+        .orElseThrow(() -> new NotFoundException("This player has no photo"));
+  }
+
+  /**
+   * Removes the player's photo; nothing to do if there's none. The player document isn't modified.
+   *
+   * @throws NotFoundException if there's no such player in the caller's club
+   * @throws ReleasedPlayerException if the player has been released
+   */
+  void deletePhoto(String id) {
+    Player player = get(id);
+    if (!player.isActive()) {
+      throw new ReleasedPlayerException();
+    }
+    imageStorage.delete(photoOf(id));
+  }
+
+  /** Whether {@code player} — already loaded through the club-scoped repository — has a photo. */
+  boolean hasPhoto(Player player) {
+    return imageStorage.exists(photoOf(player.getId()));
+  }
+
+  /** The ids of the club's players that have a photo, in one storage query. */
+  Set<String> playerIdsWithPhoto() {
+    return imageStorage.ownerIdsWithImage(ImageKind.PLAYER_PHOTO);
   }
 
   /**
@@ -366,6 +455,10 @@ class PlayerService {
       return new JerseyNumberTakenException(player.getJerseyNumber());
     }
     return e;
+  }
+
+  private static ImageOwner photoOf(String playerId) {
+    return new ImageOwner(ImageKind.PLAYER_PHOTO, playerId);
   }
 
   private static NotFoundException notFound() {

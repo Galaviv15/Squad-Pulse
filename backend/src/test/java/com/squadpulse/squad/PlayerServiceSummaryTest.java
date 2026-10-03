@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.common.ImageStorage;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -37,6 +38,7 @@ class PlayerServiceSummaryTest {
       new PlayerService(
           playerRepository,
           clubContext,
+          mock(ImageStorage.class),
           Clock.fixed(TODAY.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
 
   @BeforeEach

@@ -34,9 +34,26 @@ spring:
   web:
     resources:
       add-mappings: false
+  # The servlet container's limits on multipart uploads (player photos, KAN-29) — the outer guard:
+  # an oversize file is refused while the body is parsed, before any handler runs (413 via
+  # common.GlobalExceptionHandler). Boot's default max-file-size is 1MB, which would refuse valid
+  # photos, so it's raised to the image limit below (squadpulse.images.max-size); the request limit
+  # leaves room for the multipart framing around the file. DataSize "MB" is 1024 * 1024 bytes.
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
 
 server:
   port: 8080
+  tomcat:
+    # When a request is answered before its body has been read — an oversize upload refused with a
+    # 413 (spring.servlet.multipart above), or a 401 before the body is looked at — Tomcat reads and
+    # discards at most this much of the rest, and resets the connection beyond it. The default 2MB is
+    # below the upload limit itself, so a 3 MB photo got a reset instead of its 413, depending on
+    # timing (KAN-29). 20MB covers any photo a user might pick by mistake (phone cameras produce up
+    # to ~15 MB) while still bounding how much a client can make the server read for nothing.
+    max-swallow-size: 20MB
 
 # App-specific config — real values come from environment variables / a secrets manager,
 # never hardcoded here (see docs/spec.md section 10, CLAUDE.md standing rule 5).
@@ -61,3 +78,7 @@ squadpulse:
       max-attempts: 5
       max-requests: 5
       request-window: 24h
+  # Uploaded images (see common.ImageProperties, common.ImageValidator): the largest accepted, the
+  # limit the API promises. spring.servlet.multipart.max-file-size above must not be lower.
+  images:
+    max-size: 2MB

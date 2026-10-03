@@ -7,6 +7,7 @@ import java.time.LocalDate;
  * A player as returned by the API. Never includes {@code clubId}: it's always the caller's own.
  *
  * @param version what the client must send back in {@link UpdatePlayerRequest#version()}
+ * @param hasPhoto whether {@code GET /squad/players/{id}/photo} has a photo to return
  */
 record PlayerResponse(
     String id,
@@ -22,9 +23,10 @@ record PlayerResponse(
     boolean active,
     Long version,
     Instant createdAt,
-    Instant updatedAt) {
+    Instant updatedAt,
+    boolean hasPhoto) {
 
-  static PlayerResponse from(Player player) {
+  static PlayerResponse from(Player player, boolean hasPhoto) {
     return new PlayerResponse(
         player.getId(),
         player.getFullName(),
@@ -39,6 +41,7 @@ record PlayerResponse(
         player.isActive(),
         player.getVersion(),
         player.getCreatedAt(),
-        player.getUpdatedAt());
+        player.getUpdatedAt(),
+        hasPhoto);
   }
 }

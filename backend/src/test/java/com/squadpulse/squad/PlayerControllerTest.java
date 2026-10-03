@@ -17,6 +17,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -27,11 +28,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.squadpulse.auth.AuthWebMvcTestConfig;
 import com.squadpulse.auth.PermissionLevel;
 import com.squadpulse.auth.TestAccessTokens;
+import com.squadpulse.common.ImageProperties;
+import com.squadpulse.common.ImageType;
+import com.squadpulse.common.ImageValidator;
 import com.squadpulse.common.NotFoundException;
+import com.squadpulse.common.StoredImage;
+import com.squadpulse.common.TestImages;
+import com.squadpulse.common.ValidatedImage;
+import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,31 +50,38 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.AbstractMockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The HTTP contract of {@link PlayerController} behind the real security chain, with {@link
- * PlayerService} mocked: who may call what, request validation (body and query string), the 201 /
- * 204 / 404 / 409 mappings, and the response shape. That the service really stays within the
- * caller's club, and what it writes, is proven on a real MongoDB in {@link
- * PlayerApiIntegrationTest}.
+ * PlayerService} mocked: who may call what, request validation (body, query string and photo
+ * uploads, with the real {@link ImageValidator}), the 201 / 204 / 404 / 409 / 413 mappings, and the
+ * response shape. That the service really stays within the caller's club, and what it writes, is
+ * proven on a real MongoDB in {@link PlayerApiIntegrationTest}.
  */
 @WebMvcTest(
     controllers = PlayerController.class,
     excludeAutoConfiguration = UserDetailsServiceAutoConfiguration.class,
     properties = {AuthWebMvcTestConfig.JWT_SECRET, AuthWebMvcTestConfig.PASSWORD_PEPPER})
-@Import({AuthWebMvcTestConfig.class, TestAccessTokens.class})
+@Import({AuthWebMvcTestConfig.class, TestAccessTokens.class, ImageValidator.class})
+@EnableConfigurationProperties(ImageProperties.class)
 class PlayerControllerTest {
 
   private static final JsonMapper JSON = JsonMapper.builder().build();
+  private static final int TWO_MIB = 2 * 1024 * 1024;
   private static final String STALE_MESSAGE =
       "This player was changed by someone else since you loaded it; reload it and apply your"
           + " changes again";
@@ -82,6 +98,13 @@ class PlayerControllerTest {
     when(playerService.update(anyString(), any())).thenReturn(player());
     when(playerService.release(anyString(), any())).thenReturn(player());
     when(playerService.reactivate(anyString(), any())).thenReturn(player());
+    when(playerService.photo(anyString()))
+        .thenAnswer(
+            invocation ->
+                new StoredImage(
+                    ImageType.PNG,
+                    TestImages.png().length,
+                    new ByteArrayInputStream(TestImages.png())));
   }
 
   // --- permission matrix -------------------------------------------------------------------------
@@ -123,14 +146,32 @@ class PlayerControllerTest {
     "DELETE, /squad/players/p-1,           EDIT_FULL,    403",
     "DELETE, /squad/players/p-1,           ADMIN,        204",
     "DELETE, /squad/players/p-1,           NONE,         401",
+    "PUT,    /squad/players/p-1/photo,     VIEW_ONLY,    403",
+    "PUT,    /squad/players/p-1/photo,     EDIT_PARTIAL, 403",
+    "PUT,    /squad/players/p-1/photo,     EDIT_FULL,    204",
+    "PUT,    /squad/players/p-1/photo,     ADMIN,        204",
+    "PUT,    /squad/players/p-1/photo,     NONE,         401",
+    "GET,    /squad/players/p-1/photo,     VIEW_ONLY,    200",
+    "GET,    /squad/players/p-1/photo,     EDIT_PARTIAL, 200",
+    "GET,    /squad/players/p-1/photo,     EDIT_FULL,    200",
+    "GET,    /squad/players/p-1/photo,     ADMIN,        200",
+    "GET,    /squad/players/p-1/photo,     NONE,         401",
+    "DELETE, /squad/players/p-1/photo,     VIEW_ONLY,    403",
+    "DELETE, /squad/players/p-1/photo,     EDIT_PARTIAL, 403",
+    "DELETE, /squad/players/p-1/photo,     EDIT_FULL,    204",
+    "DELETE, /squad/players/p-1/photo,     ADMIN,        204",
+    "DELETE, /squad/players/p-1/photo,     NONE,         401",
   })
   void eachEndpointAdmitsExactlyTheLevelsAtOrAboveItsMinimum(
       String method, String path, String caller, int expectedStatus) throws Exception {
-    MockHttpServletRequestBuilder request =
+    AbstractMockHttpServletRequestBuilder<?> request =
         switch (method) {
           case "GET" -> get(path);
           case "POST" -> post(path).contentType(MediaType.APPLICATION_JSON).content(postBody(path));
-          case "PUT" -> put(path).contentType(MediaType.APPLICATION_JSON).content(updateBody());
+          case "PUT" ->
+              path.endsWith("/photo")
+                  ? photoUpload(path, TestImages.png())
+                  : put(path).contentType(MediaType.APPLICATION_JSON).content(updateBody());
           case "DELETE" -> delete(path);
           default -> throw new IllegalArgumentException(method);
         };
@@ -247,6 +288,7 @@ class PlayerControllerTest {
         .andExpect(jsonPath("$.version").hasJsonPath())
         .andExpect(jsonPath("$.createdAt").hasJsonPath())
         .andExpect(jsonPath("$.updatedAt").hasJsonPath())
+        .andExpect(jsonPath("$.hasPhoto").value(false))
         .andExpect(content().string(not(containsString("clubId"))))
         .andExpect(content().string(not(containsString("club-a"))));
   }
@@ -611,6 +653,231 @@ class PlayerControllerTest {
   // --- helpers -----------------------------------------------------------------------------------
 
   /** Field rules shared by create and update: {field, invalid value}. */
+  // --- photo -------------------------------------------------------------------------------------
+
+  /** The type comes from the bytes alone: a PNG declared as {@code image/jpeg} is a PNG. */
+  @Test
+  void uploadIs204AndPassesTheImageWithItsDetectedTypeToTheService() throws Exception {
+    mockMvc
+        .perform(
+            asPhotoEditor(
+                multipart(HttpMethod.PUT, "/squad/players/p-1/photo")
+                    .file(new MockMultipartFile("file", "x.jpg", "image/jpeg", TestImages.png()))))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+
+    ArgumentCaptor<ValidatedImage> image = ArgumentCaptor.forClass(ValidatedImage.class);
+    verify(playerService).uploadPhoto(eq("p-1"), image.capture());
+    assertThat(image.getValue().type()).isEqualTo(ImageType.PNG);
+    assertThat(image.getValue().content()).isEqualTo(TestImages.png());
+  }
+
+  @Test
+  void anImageOfExactlyTheLimitIsAccepted() throws Exception {
+    mockMvc
+        .perform(asPhotoEditor(photoUpload("/squad/players/p-1/photo", jpegOfSize(TWO_MIB))))
+        .andExpect(status().isNoContent());
+  }
+
+  /**
+   * The application's own limit. MockMvc doesn't enforce the container's multipart limits, so this
+   * is the in-code check; the container's is proven on a real server in {@code
+   * PlayerPhotoUploadLimitIntegrationTest}.
+   */
+  @Test
+  void anImageOneByteOverTheLimitIs413() throws Exception {
+    mockMvc
+        .perform(asPhotoEditor(photoUpload("/squad/players/p-1/photo", jpegOfSize(TWO_MIB + 1))))
+        .andExpect(status().is(413))
+        .andExpect(jsonPath("$.status").value(413))
+        .andExpect(jsonPath("$.error").value("Content Too Large"))
+        .andExpect(jsonPath("$.message").value("Image must be at most 2 MB"))
+        .andExpect(jsonPath("$.details").isEmpty());
+
+    verify(playerService, never()).uploadPhoto(anyString(), any());
+  }
+
+  static Stream<Arguments> invalidPhotos() {
+    return Stream.of(
+        Arguments.of("empty", new byte[0], "file: must not be empty"),
+        Arguments.of("SVG", TestImages.svg(), "file: must be a JPEG, PNG or WebP image"),
+        Arguments.of(
+            "HTML",
+            "<html><body>evil-marker</body></html>".getBytes(),
+            "file: must be a JPEG, PNG or WebP image"));
+  }
+
+  /** Neither the content nor the client's filename or declared type is echoed back. */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("invalidPhotos")
+  void anInvalidPhotoIs400NamingTheFileField(String description, byte[] content, String detail)
+      throws Exception {
+    mockMvc
+        .perform(
+            asPhotoEditor(
+                multipart(HttpMethod.PUT, "/squad/players/p-1/photo")
+                    .file(new MockMultipartFile("file", "secret-name.png", "image/png", content))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Validation Failed"))
+        .andExpect(jsonPath("$.details").value(contains(detail)))
+        .andExpect(content().string(not(containsString("secret-name"))))
+        .andExpect(content().string(not(containsString("svg"))))
+        .andExpect(content().string(not(containsString("evil-marker"))))
+        .andExpect(content().string(not(containsString("image/png"))));
+
+    verify(playerService, never()).uploadPhoto(anyString(), any());
+  }
+
+  @Test
+  void aMissingFilePartIs400() throws Exception {
+    mockMvc
+        .perform(
+            asPhotoEditor(
+                multipart(HttpMethod.PUT, "/squad/players/p-1/photo")
+                    .file(new MockMultipartFile("photo", "x.png", "image/png", TestImages.png()))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("Validation Failed"))
+        .andExpect(jsonPath("$.details").value(contains("file: is required")));
+  }
+
+  /**
+   * A request that isn't multipart at all is a {@code MultipartException} — 400, not a 500. (No
+   * {@code consumes} on the mapping, which would make it an unmapped {@code
+   * HttpMediaTypeNotSupportedException}.)
+   */
+  @ParameterizedTest(name = "{0}")
+  @CsvSource({"application/json, {}", "image/png, not-really-a-png"})
+  void aNonMultipartUploadIs400(String contentType, String body) throws Exception {
+    mockMvc
+        .perform(
+            asPhotoEditor(put("/squad/players/p-1/photo"))
+                .contentType(MediaType.parseMediaType(contentType))
+                .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("Malformed multipart request"))
+        .andExpect(jsonPath("$.details").isEmpty());
+
+    verify(playerService, never()).uploadPhoto(anyString(), any());
+  }
+
+  @Test
+  void aPhotoForAReleasedPlayerIs409() throws Exception {
+    doThrow(new ReleasedPlayerException()).when(playerService).uploadPhoto(eq("p-1"), any());
+    doThrow(new ReleasedPlayerException()).when(playerService).deletePhoto("p-1");
+
+    mockMvc
+        .perform(asPhotoEditor(photoUpload("/squad/players/p-1/photo", TestImages.png())))
+        .andExpect(status().isConflict())
+        .andExpect(
+            jsonPath("$.message")
+                .value("This player has been released; re-activate them before editing"));
+    mockMvc
+        .perform(asPhotoEditor(delete("/squad/players/p-1/photo")))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
+  void aPhotoOfAnUnknownPlayerIs404() throws Exception {
+    NotFoundException notFound = new NotFoundException("Player not found");
+    doThrow(notFound).when(playerService).uploadPhoto(eq("nope"), any());
+    doThrow(notFound).when(playerService).deletePhoto("nope");
+    when(playerService.photo("nope")).thenThrow(notFound);
+
+    mockMvc
+        .perform(asPhotoEditor(photoUpload("/squad/players/nope/photo", TestImages.png())))
+        .andExpect(status().isNotFound());
+    mockMvc.perform(asViewer(get("/squad/players/nope/photo"))).andExpect(status().isNotFound());
+    mockMvc
+        .perform(asPhotoEditor(delete("/squad/players/nope/photo")))
+        .andExpect(status().isNotFound());
+  }
+
+  /**
+   * The bytes with their stored type and length; {@code nosniff} and {@code no-store} come from
+   * Spring Security's default headers, unchanged by {@code SecurityConfig}.
+   */
+  @Test
+  void thePhotoIsServedWithItsTypeLengthAndNosniff() throws Exception {
+    mockMvc
+        .perform(asViewer(get("/squad/players/p-1/photo")))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Content-Type", "image/png"))
+        .andExpect(header().longValue("Content-Length", TestImages.png().length))
+        .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+        .andExpect(header().string("Cache-Control", containsString("no-store")))
+        .andExpect(content().bytes(TestImages.png()));
+  }
+
+  @Test
+  void noPhotoIs404() throws Exception {
+    when(playerService.photo("p-1")).thenThrow(new NotFoundException("This player has no photo"));
+
+    mockMvc
+        .perform(asViewer(get("/squad/players/p-1/photo")))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("This player has no photo"));
+  }
+
+  @Test
+  void deletingThePhotoIs204() throws Exception {
+    mockMvc
+        .perform(asPhotoEditor(delete("/squad/players/p-1/photo")))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+
+    verify(playerService).deletePhoto("p-1");
+  }
+
+  // --- hasPhoto ----------------------------------------------------------------------------------
+
+  /** One lookup for the whole list, never one per player. */
+  @Test
+  void theListFlagsPhotosFromOneLookup() throws Exception {
+    Player other = player();
+    other.setId("p-2");
+    when(playerService.list(any())).thenReturn(List.of(player(), other));
+    when(playerService.playerIdsWithPhoto()).thenReturn(Set.of("p-2"));
+
+    mockMvc
+        .perform(asViewer(get("/squad/players")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].hasPhoto").value(false))
+        .andExpect(jsonPath("$[1].hasPhoto").value(true));
+
+    verify(playerService, times(1)).playerIdsWithPhoto();
+    verify(playerService, never()).hasPhoto(any());
+  }
+
+  @Test
+  void singlePlayerResponsesFlagThePhoto() throws Exception {
+    when(playerService.hasPhoto(any())).thenReturn(true);
+
+    mockMvc
+        .perform(asViewer(get("/squad/players/p-1")))
+        .andExpect(jsonPath("$.hasPhoto").value(true));
+    mockMvc
+        .perform(asEditor(put("/squad/players/p-1"), updateBody()))
+        .andExpect(jsonPath("$.hasPhoto").value(true));
+    mockMvc
+        .perform(asEditor(post("/squad/players/p-1/release"), "{\"version\": 3}"))
+        .andExpect(jsonPath("$.hasPhoto").value(true));
+    mockMvc
+        .perform(asEditor(post("/squad/players/p-1/reactivate"), "{\"version\": 3}"))
+        .andExpect(jsonPath("$.hasPhoto").value(true));
+  }
+
+  /** A player who has just been created can't have a photo: no lookup at all. */
+  @Test
+  void aCreatedPlayerHasNoPhotoWithoutALookup() throws Exception {
+    mockMvc
+        .perform(asEditor(post("/squad/players"), createBody()))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.hasPhoto").value(false));
+
+    verify(playerService, never()).hasPhoto(any());
+    verify(playerService, never()).playerIdsWithPhoto();
+  }
+
   private static Stream<Arguments> commonInvalidFields() {
     return Stream.of(
         Arguments.of("fullName", null),
@@ -677,6 +944,19 @@ class PlayerControllerTest {
 
   private MockHttpServletRequestBuilder asViewer(MockHttpServletRequestBuilder request) {
     return request.header("Authorization", tokens.bearer("club-a", PermissionLevel.VIEW_ONLY));
+  }
+
+  private <B extends AbstractMockHttpServletRequestBuilder<B>> B asPhotoEditor(B request) {
+    return request.header("Authorization", tokens.bearer("club-a", PermissionLevel.EDIT_FULL));
+  }
+
+  private static MockMultipartHttpServletRequestBuilder photoUpload(String path, byte[] content) {
+    return multipart(HttpMethod.PUT, path)
+        .file(new MockMultipartFile("file", "photo", "application/octet-stream", content));
+  }
+
+  private static byte[] jpegOfSize(int size) {
+    return TestImages.jpegOfSize(size);
   }
 
   private MockHttpServletRequestBuilder asAdmin(MockHttpServletRequestBuilder request) {
