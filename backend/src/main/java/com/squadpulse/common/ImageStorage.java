@@ -4,7 +4,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Where images (player photos, later the club logo) are kept: the only API the rest of the codebase
+ * Where images (player photos and the club logo) are kept: the only API the rest of the codebase
  * uses for them. Today's implementation is {@link GridFsImageStorage}; this contract is written so
  * it can be replaced by object storage (S3/R2, Phase 6) without touching any caller, which is why
  * nothing here mentions GridFS, file ids or upload dates.

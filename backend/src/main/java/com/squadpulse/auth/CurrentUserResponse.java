@@ -24,10 +24,14 @@ record CurrentUserResponse(
     boolean active,
     ClubSummary club) {
 
-  /** The caller's club, as much of it as the app header needs. */
-  record ClubSummary(String id, String name) {}
+  /**
+   * The caller's club, as much of it as the app header needs. {@code hasLogo} says whether {@code
+   * GET /clubs/me/logo} has an image, so the client can skip that request when it hasn't.
+   */
+  record ClubSummary(String id, String name, boolean hasLogo) {}
 
-  static CurrentUserResponse from(User user, PermissionLevel effectiveLevel, Club club) {
+  static CurrentUserResponse from(
+      User user, PermissionLevel effectiveLevel, Club club, boolean clubHasLogo) {
     return new CurrentUserResponse(
         user.getId(),
         user.getEmail(),
@@ -36,6 +40,6 @@ record CurrentUserResponse(
         effectiveLevel,
         user.getDateOfBirth(),
         user.isActive(),
-        new ClubSummary(club.getId(), club.getName()));
+        new ClubSummary(club.getId(), club.getName(), clubHasLogo));
   }
 }

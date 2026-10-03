@@ -8,9 +8,10 @@ import org.springframework.stereotype.Service;
  *
  * <p><b>Club isolation.</b> The user is loaded through the club-scoped {@link
  * UserRepository#findById}, with the clubId {@link JwtAuthenticationFilter} took from the access
- * token; the club by the same token clubId. Nothing is ever read from the request itself. A token
- * whose {@code sub} names a user of another club therefore finds no user — a 401, exactly like a
- * deleted user.
+ * token; the club by the same token clubId, and whether it has a logo from {@link ClubLogoService}
+ * (one storage query, club-scoped by the same clubId). Nothing is ever read from the request
+ * itself. A token whose {@code sub} names a user of another club therefore finds no user — a 401,
+ * exactly like a deleted user.
  *
  * <p><b>Effective permission level.</b> The response's level is the one in the caller's access
  * token, i.e. what every endpoint enforces right now; every other field is read from the database.
@@ -31,10 +32,15 @@ class CurrentUserService {
 
   private final UserRepository userRepository;
   private final ClubRepository clubRepository;
+  private final ClubLogoService clubLogoService;
 
-  CurrentUserService(UserRepository userRepository, ClubRepository clubRepository) {
+  CurrentUserService(
+      UserRepository userRepository,
+      ClubRepository clubRepository,
+      ClubLogoService clubLogoService) {
     this.userRepository = userRepository;
     this.clubRepository = clubRepository;
+    this.clubLogoService = clubLogoService;
   }
 
   /**
@@ -56,6 +62,7 @@ class CurrentUserService {
                 () ->
                     new IllegalStateException(
                         "Club " + caller.clubId() + " of user " + user.getId() + " not found"));
-    return CurrentUserResponse.from(user, caller.permissionLevel(), club);
+    return CurrentUserResponse.from(
+        user, caller.permissionLevel(), club, clubLogoService.hasLogo());
   }
 }

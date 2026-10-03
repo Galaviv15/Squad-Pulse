@@ -23,7 +23,9 @@ class CurrentUserServiceTest {
 
   private final UserRepository userRepository = mock(UserRepository.class);
   private final ClubRepository clubRepository = mock(ClubRepository.class);
-  private final CurrentUserService service = new CurrentUserService(userRepository, clubRepository);
+  private final ClubLogoService clubLogoService = mock(ClubLogoService.class);
+  private final CurrentUserService service =
+      new CurrentUserService(userRepository, clubRepository, clubLogoService);
 
   @Test
   void theLevelComesFromTheTokenAndEverythingElseFromTheDatabase() {
@@ -42,7 +44,17 @@ class CurrentUserServiceTest {
                 PermissionLevel.EDIT_FULL,
                 LocalDate.of(1985, 3, 1),
                 true,
-                new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example")));
+                new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example", false)));
+  }
+
+  @Test
+  void hasLogoComesFromTheLogoStorage() {
+    when(userRepository.findById("user-1")).thenReturn(Optional.of(user(true)));
+    when(clubRepository.findById("club-a")).thenReturn(Optional.of(club()));
+    when(clubLogoService.hasLogo()).thenReturn(true);
+
+    assertThat(service.currentUser(CALLER).club())
+        .isEqualTo(new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example", true));
   }
 
   @Test
@@ -87,7 +99,8 @@ class CurrentUserServiceTest {
 
     verify(userRepository).findById("user-1");
     verify(clubRepository).findById("club-a");
-    verifyNoMoreInteractions(userRepository, clubRepository);
+    verify(clubLogoService).hasLogo();
+    verifyNoMoreInteractions(userRepository, clubRepository, clubLogoService);
   }
 
   private static User user(boolean active) {

@@ -6,5 +6,9 @@ package com.squadpulse.common;
  * id can never collide.
  */
 public enum ImageKind {
-  PLAYER_PHOTO
+  /** A player's photo; the owner id is the player's id. */
+  PLAYER_PHOTO,
+
+  /** The club's logo; the owner id is the clubId itself, taken from {@link ClubContext}. */
+  CLUB_LOGO
 }
