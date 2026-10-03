@@ -19,6 +19,8 @@ import jakarta.servlet.http.Cookie;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -94,6 +96,36 @@ class AuthControllerTest {
         .andExpect(content().string(not(containsString("text/plain"))));
 
     verify(authService, never()).login(anyString(), anyString(), anyString());
+  }
+
+  /** Errors are JSON whatever the {@code Accept} header says (see PlayerControllerTest). */
+  @ParameterizedTest(name = "{0}")
+  @CsvSource({"401, Unauthorized", "429, Too Many Requests"})
+  void loginErrorsAreJsonEvenWhenTheClientAcceptsOnlyXml(int status, String reason)
+      throws Exception {
+    when(authService.login(anyString(), anyString(), anyString()))
+        .thenThrow(
+            status == 401
+                ? new InvalidCredentialsException()
+                : new LoginThrottledException(Duration.ofMinutes(10)));
+
+    mockMvc
+        .perform(
+            login("{\"email\":\"coach@example.com\",\"password\":\"secret\"}")
+                .accept(MediaType.APPLICATION_XML))
+        .andExpect(status().is(status))
+        .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "application/json"))
+        .andExpect(jsonPath("$.status").value(status))
+        .andExpect(jsonPath("$.error").value(reason))
+        .andExpect(jsonPath("$.message").isString())
+        .andExpect(jsonPath("$.details").isArray());
+    if (status == 429) {
+      mockMvc
+          .perform(
+              login("{\"email\":\"coach@example.com\",\"password\":\"secret\"}")
+                  .accept(MediaType.APPLICATION_XML))
+          .andExpect(header().string(HttpHeaders.RETRY_AFTER, "600"));
+    }
   }
 
   @Test

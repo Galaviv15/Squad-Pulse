@@ -74,15 +74,12 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(NotFoundException.class)
   public ResponseEntity<ApiErrorResponse> handleNotFound(NotFoundException ex) {
-    return ResponseEntity.status(HttpStatus.NOT_FOUND)
-        .body(ApiErrorResponse.of(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage()));
+    return respond(HttpStatus.NOT_FOUND, "Not Found", ex.getMessage());
   }
 
   @ExceptionHandler(UnauthorizedException.class)
   public ResponseEntity<ApiErrorResponse> handleUnauthorized(UnauthorizedException ex) {
-    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-        .body(
-            ApiErrorResponse.of(HttpStatus.UNAUTHORIZED.value(), "Unauthorized", ex.getMessage()));
+    return respond(HttpStatus.UNAUTHORIZED, "Unauthorized", ex.getMessage());
   }
 
   /**
@@ -91,20 +88,17 @@ public class GlobalExceptionHandler {
    */
   @ExceptionHandler(AccessDeniedException.class)
   public ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException ex) {
-    return ResponseEntity.status(HttpStatus.FORBIDDEN)
-        .body(ApiErrorResponse.of(HttpStatus.FORBIDDEN.value(), "Forbidden", "Access denied"));
+    return respond(HttpStatus.FORBIDDEN, "Forbidden", "Access denied");
   }
 
   @ExceptionHandler(CrossClubAccessException.class)
   public ResponseEntity<ApiErrorResponse> handleCrossClubAccess(CrossClubAccessException ex) {
-    return ResponseEntity.status(HttpStatus.FORBIDDEN)
-        .body(ApiErrorResponse.of(HttpStatus.FORBIDDEN.value(), "Forbidden", ex.getMessage()));
+    return respond(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage());
   }
 
   @ExceptionHandler(ConflictException.class)
   public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
-    return ResponseEntity.status(HttpStatus.CONFLICT)
-        .body(ApiErrorResponse.of(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage()));
+    return respond(HttpStatus.CONFLICT, "Conflict", ex.getMessage());
   }
 
   /**
@@ -121,10 +115,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorResponse> handleOptimisticLockingFailure(
       OptimisticLockingFailureException ex) {
     log.warn("Concurrent modification not resolved by retry, answering 409: {}", ex.getMessage());
-    return ResponseEntity.status(HttpStatus.CONFLICT)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.CONFLICT.value(), "Conflict", CONCURRENT_MODIFICATION_MESSAGE));
+    return respond(HttpStatus.CONFLICT, "Conflict", CONCURRENT_MODIFICATION_MESSAGE);
   }
 
   /** {@code Retry-After} in whole seconds, rounded up so a client never retries too early. */
@@ -133,11 +124,10 @@ public class GlobalExceptionHandler {
     Duration retryAfter = ex.getRetryAfter();
     long retryAfterSeconds =
         Math.max(1, retryAfter.toSeconds() + (retryAfter.toNanosPart() > 0 ? 1 : 0));
-    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-        .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.TOO_MANY_REQUESTS.value(), "Too Many Requests", ex.getMessage()));
+    HttpHeaders headers = new HttpHeaders();
+    headers.set(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
+    return respond(
+        HttpStatus.TOO_MANY_REQUESTS, headers, "Too Many Requests", ex.getMessage(), List.of());
   }
 
   /** Always a server bug: a code path that reads tenant data ran without a club context. */
@@ -145,12 +135,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorResponse> handleMissingClubContext(
       MissingClubContextException ex, HttpServletRequest request) {
     logServerError(ex, request);
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                "Internal Server Error",
-                ex.getMessage()));
+    return respond(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", ex.getMessage());
   }
 
   /**
@@ -162,8 +147,7 @@ public class GlobalExceptionHandler {
     if (ex.getField().isPresent()) {
       return validationFailed(List.of(ex.getMessage()));
     }
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(ApiErrorResponse.of(HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage()));
+    return respond(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage());
   }
 
   /**
@@ -235,10 +219,12 @@ public class GlobalExceptionHandler {
                 .map(path -> List.of(path + ": invalid value"))
                 .orElse(List.of())
             : List.of();
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed request body", details));
+    return respond(
+        HttpStatus.BAD_REQUEST,
+        HttpHeaders.EMPTY,
+        "Bad Request",
+        "Malformed request body",
+        details);
   }
 
   /**
@@ -279,10 +265,7 @@ public class GlobalExceptionHandler {
    */
   @ExceptionHandler(MultipartException.class)
   public ResponseEntity<ApiErrorResponse> handleMultipart(MultipartException ex) {
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.BAD_REQUEST.value(), "Bad Request", "Malformed multipart request"));
+    return respond(HttpStatus.BAD_REQUEST, "Bad Request", "Malformed multipart request");
   }
 
   /**
@@ -292,12 +275,10 @@ public class GlobalExceptionHandler {
    */
   @ExceptionHandler(NoHandlerFoundException.class)
   public ResponseEntity<ApiErrorResponse> handleNoHandlerFound(NoHandlerFoundException ex) {
-    return ResponseEntity.status(HttpStatus.NOT_FOUND)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.NOT_FOUND.value(),
-                "Not Found",
-                "No endpoint " + ex.getHttpMethod() + " " + ex.getRequestURL()));
+    return respond(
+        HttpStatus.NOT_FOUND,
+        "Not Found",
+        "No endpoint " + ex.getHttpMethod() + " " + ex.getRequestURL());
   }
 
   /**
@@ -308,14 +289,12 @@ public class GlobalExceptionHandler {
       HttpRequestMethodNotSupportedException ex) {
     String[] supported = ex.getSupportedMethods();
     List<String> details = supported == null ? List.of() : List.of(supported);
-    return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-        .headers(ex.getHeaders())
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.METHOD_NOT_ALLOWED.value(),
-                "Method Not Allowed",
-                "Method " + ex.getMethod() + " is not supported for this endpoint",
-                details));
+    return respond(
+        HttpStatus.METHOD_NOT_ALLOWED,
+        ex.getHeaders(),
+        "Method Not Allowed",
+        "Method " + ex.getMethod() + " is not supported for this endpoint",
+        details);
   }
 
   /**
@@ -326,7 +305,7 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
   public ResponseEntity<ApiErrorResponse> handleMediaTypeNotSupported(
       HttpMediaTypeNotSupportedException ex) {
-    return json(
+    return withReasonPhrase(
         HttpStatus.UNSUPPORTED_MEDIA_TYPE,
         ex.getHeaders(),
         "Unsupported Content-Type",
@@ -336,12 +315,12 @@ public class GlobalExceptionHandler {
   /**
    * The endpoint can't produce anything the request's {@code Accept} header allows, or the header
    * can't be parsed. {@code details} lists what it can produce. The body is JSON regardless of
-   * {@code Accept} (see {@link #json}).
+   * {@code Accept} (see {@link #respond}).
    */
   @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
   public ResponseEntity<ApiErrorResponse> handleMediaTypeNotAcceptable(
       HttpMediaTypeNotAcceptableException ex) {
-    return json(
+    return withReasonPhrase(
         HttpStatus.NOT_ACCEPTABLE,
         ex.getHeaders(),
         "None of the accepted media types can be produced",
@@ -411,7 +390,7 @@ public class GlobalExceptionHandler {
     if (!(ex instanceof ErrorResponse errorResponse)) {
       return serverError();
     }
-    return json(
+    return withReasonPhrase(
         status,
         errorResponse.getHeaders(),
         status.is5xxServerError() ? UNEXPECTED_ERROR_MESSAGE : CLIENT_ERROR_MESSAGE,
@@ -423,27 +402,38 @@ public class GlobalExceptionHandler {
   }
 
   private static ResponseEntity<ApiErrorResponse> serverError() {
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .contentType(MediaType.APPLICATION_JSON)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                "Internal Server Error",
-                UNEXPECTED_ERROR_MESSAGE));
+    return respond(
+        HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", UNEXPECTED_ERROR_MESSAGE);
   }
 
   /**
-   * An error response under {@code status}'s standard reason phrase. Its {@code Content-Type} is
-   * set explicitly, so Spring writes the JSON without negotiating it against the request's {@code
-   * Accept} header — otherwise a client accepting only, say, XML would get an empty body (that very
-   * negotiation fails), and an unparseable {@code Accept} header a 500.
+   * Every response this class returns is built here. Its {@code Content-Type} is set explicitly, so
+   * Spring writes the JSON without negotiating it against the request's {@code Accept} header.
+   * Otherwise, for a client accepting only, say, XML, that negotiation would fail while the error
+   * was being written: a framework error then lost its body, and any other exception went
+   * unresolved — a 500 from the servlet container, whatever its real status.
    */
-  private static ResponseEntity<ApiErrorResponse> json(
-      HttpStatusCode status, HttpHeaders headers, String message, List<String> details) {
+  private static ResponseEntity<ApiErrorResponse> respond(
+      HttpStatusCode status,
+      HttpHeaders headers,
+      String error,
+      String message,
+      List<String> details) {
     return ResponseEntity.status(status)
         .headers(headers)
         .contentType(MediaType.APPLICATION_JSON)
-        .body(ApiErrorResponse.of(status.value(), reasonPhrase(status), message, details));
+        .body(ApiErrorResponse.of(status.value(), error, message, details));
+  }
+
+  private static ResponseEntity<ApiErrorResponse> respond(
+      HttpStatusCode status, String error, String message) {
+    return respond(status, HttpHeaders.EMPTY, error, message, List.of());
+  }
+
+  /** {@link #respond} under {@code status}'s standard reason phrase. */
+  private static ResponseEntity<ApiErrorResponse> withReasonPhrase(
+      HttpStatusCode status, HttpHeaders headers, String message, List<String> details) {
+    return respond(status, headers, reasonPhrase(status), message, details);
   }
 
   private static String reasonPhrase(HttpStatusCode status) {
@@ -459,20 +449,16 @@ public class GlobalExceptionHandler {
   }
 
   private static ResponseEntity<ApiErrorResponse> payloadTooLarge(String message) {
-    return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.CONTENT_TOO_LARGE.value(), "Content Too Large", message));
+    return respond(HttpStatus.CONTENT_TOO_LARGE, "Content Too Large", message);
   }
 
   private static ResponseEntity<ApiErrorResponse> validationFailed(List<String> details) {
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(
-            ApiErrorResponse.of(
-                HttpStatus.BAD_REQUEST.value(),
-                "Validation Failed",
-                "Request validation failed",
-                details));
+    return respond(
+        HttpStatus.BAD_REQUEST,
+        HttpHeaders.EMPTY,
+        "Validation Failed",
+        "Request validation failed",
+        details);
   }
 
   private static String detail(String name, MessageSourceResolvable error) {

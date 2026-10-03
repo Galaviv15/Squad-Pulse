@@ -966,6 +966,68 @@ class PlayerControllerTest {
   }
 
   /**
+   * Every error is JSON whatever the {@code Accept} header says: before, an error answered to a
+   * client accepting only XML failed its own content negotiation and lost its body.
+   */
+  @ParameterizedTest(name = "{0}")
+  @CsvSource({
+    "validation,       400, Validation Failed",
+    "malformed body,   400, Bad Request",
+    "forbidden,        403, Forbidden",
+    "not found,        404, Not Found",
+    "no handler,       404, Not Found",
+    "wrong method,     405, Method Not Allowed",
+    "conflict,         409, Conflict",
+    "too large,        413, Content Too Large"
+  })
+  void everyErrorIsJsonEvenWhenTheClientAcceptsOnlyXml(String error, int status, String reason)
+      throws Exception {
+    mockMvc
+        .perform(failing(error).header("Accept", MediaType.APPLICATION_XML_VALUE))
+        .andExpect(status().is(status))
+        .andExpect(header().string("Content-Type", "application/json"))
+        .andExpect(jsonPath("$.timestamp").exists())
+        .andExpect(jsonPath("$.status").value(status))
+        .andExpect(jsonPath("$.error").value(reason))
+        .andExpect(jsonPath("$.message").isString())
+        .andExpect(jsonPath("$.details").isArray());
+  }
+
+  @Test
+  void anErrorIsJsonEvenWithAnUnparseableAcceptHeader() throws Exception {
+    mockMvc
+        .perform(failing("not found").header("Accept", ";;;"))
+        .andExpect(status().isNotFound())
+        .andExpect(header().string("Content-Type", "application/json"))
+        .andExpect(jsonPath("$.message").value("Player not found"));
+  }
+
+  /** A request that fails with {@code error}, stubbing the service where it has to fail. */
+  private AbstractMockHttpServletRequestBuilder<?> failing(String error) {
+    return switch (error) {
+      case "validation" -> asEditor(post("/squad/players"), "{}");
+      case "malformed body" -> asEditor(post("/squad/players"), "{\"fullName\": ");
+      case "forbidden" ->
+          asViewer(post("/squad/players"))
+              .contentType(MediaType.APPLICATION_JSON)
+              .content(createBody());
+      case "not found" -> {
+        when(playerService.get("nope")).thenThrow(new NotFoundException("Player not found"));
+        yield asViewer(get("/squad/players/nope"));
+      }
+      case "no handler" -> asViewer(get("/squad/no-such-path"));
+      case "wrong method" -> asViewer(delete("/squad/players"));
+      case "conflict" -> {
+        when(playerService.create(any())).thenThrow(new JerseyNumberTakenException(7));
+        yield asEditor(post("/squad/players"), createBody());
+      }
+      case "too large" ->
+          asPhotoEditor(photoUpload("/squad/players/p-1/photo", jpegOfSize(TWO_MIB + 1)));
+      default -> throw new IllegalArgumentException(error);
+    };
+  }
+
+  /**
    * The photo's {@code Content-Type} is set by the controller, so Spring doesn't negotiate it: the
    * image is served even to a client asking only for JSON.
    */

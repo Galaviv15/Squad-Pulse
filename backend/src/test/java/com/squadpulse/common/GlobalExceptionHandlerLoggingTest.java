@@ -172,6 +172,16 @@ class GlobalExceptionHandlerLoggingTest {
         .isEqualTo("Unexpected error handling GET /probe/bug");
   }
 
+  /** Not reachable through a real endpoint: the club-scoped layer is mocked in controller tests. */
+  @Test
+  void aMissingClubContextIsJsonEvenWhenTheClientAcceptsOnlyXml() throws Exception {
+    mockMvc
+        .perform(get("/probe/no-club").accept(MediaType.APPLICATION_XML))
+        .andExpect(status().isInternalServerError())
+        .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.message").value(new MissingClubContextException().getMessage()));
+  }
+
   @Test
   void anUnmappedClientErrorKeepsItsStatusAndIsNotLoggedAtError() throws Exception {
     mockMvc
