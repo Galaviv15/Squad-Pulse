@@ -4,11 +4,18 @@ import com.mongodb.ErrorCategory;
 import com.mongodb.MongoWriteException;
 import com.squadpulse.common.ClubContext;
 import com.squadpulse.common.NotFoundException;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.Period;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
@@ -20,8 +27,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * The club's roster: list (with filters), get, create, update, release, re-activate and permanently
- * delete players (see docs/spec.md section 05). Everything is within the caller's club, whose id
- * comes only from {@link ClubContext}.
+ * delete players, and the squad summary (see docs/spec.md section 05). Everything is within the
+ * caller's club, whose id comes only from {@link ClubContext}.
  *
  * <p><b>Lifecycle.</b> Leaving the club is a release ({@code active = false}), not a delete: the
  * player stays as history, keeps their jersey number on record, and the number stops being reserved
@@ -33,10 +40,10 @@ import org.springframework.stereotype.Service;
  * PlayerRepository#findById} first, so another club's player is simply not found — the same 404 as
  * an id that doesn't exist. The club check inside {@code save} is a backstop that never answers.
  *
- * <p><b>Filters run in memory.</b> The club's players are loaded through a club-scoped repository
- * method and filtered and sorted in Java. A hand-built {@code MongoTemplate} query would bypass the
- * club-scoped layer, and nothing would catch a missing {@code clubId} criterion in it. A squad is
- * 30-40 players, so this costs nothing.
+ * <p><b>Filters and the summary run in memory.</b> The club's players are loaded through a
+ * club-scoped repository method and filtered, sorted and counted in Java. A hand-built {@code
+ * MongoTemplate} query would bypass the club-scoped layer, and nothing would catch a missing {@code
+ * clubId} criterion in it. A squad is 30-40 players, so this costs nothing.
  *
  * <p><b>Jersey numbers.</b> Uniqueness is left entirely to the {@value Player#JERSEY_NUMBER_INDEX}
  * index: a pre-check query couldn't stop two concurrent writes from both passing it. A write the
@@ -82,7 +89,7 @@ class PlayerService {
     this(playerRepository, clubContext, Clock.systemDefaultZone());
   }
 
-  /** For tests: {@code clock} decides "today" for the age filters. */
+  /** For tests: {@code clock} decides "today" for the age filters and the average age. */
   PlayerService(PlayerRepository playerRepository, ClubContext clubContext, Clock clock) {
     this.playerRepository = playerRepository;
     this.clubContext = clubContext;
@@ -102,6 +109,40 @@ class PlayerService {
         .filter(player -> matches(filter, player, today))
         .sorted(SQUAD_ORDER)
         .toList();
+  }
+
+  /**
+   * The club's active players (any medical status): how many, their average {@link #exactAge exact
+   * age} rounded half up to one decimal, and how many in each {@link Line} by primary position.
+   * Players without a date of birth are counted but left out of the average, which is {@code null}
+   * if none has one. A player without a primary position (only possible in data not written through
+   * the API) is in the count but in no line.
+   */
+  SquadSummaryResponse summary() {
+    LocalDate today = LocalDate.now(clock);
+    List<Player> players = load(PlayerStatus.ACTIVE);
+    Map<Line, Integer> lines = new EnumMap<>(Line.class);
+    for (Line line : Line.values()) {
+      lines.put(line, 0);
+    }
+    BigDecimal ageSum = BigDecimal.ZERO;
+    int withAge = 0;
+    for (Player player : players) {
+      if (player.getPrimaryPosition() != null) {
+        lines.merge(player.getPrimaryPosition().line(), 1, Integer::sum);
+      }
+      if (player.getDateOfBirth() != null) {
+        ageSum = ageSum.add(exactAge(player.getDateOfBirth(), today));
+        withAge++;
+      }
+    }
+    BigDecimal averageAge =
+        withAge == 0
+            ? null
+            : ageSum
+                .divide(BigDecimal.valueOf(withAge), MathContext.DECIMAL128)
+                .setScale(1, RoundingMode.HALF_UP);
+    return new SquadSummaryResponse(players.size(), averageAge, Collections.unmodifiableMap(lines));
   }
 
   /**
@@ -266,9 +307,39 @@ class PlayerService {
     if (player.getDateOfBirth() == null) {
       return false;
     }
-    int age = Period.between(player.getDateOfBirth(), today).getYears();
+    int age = completedYears(player.getDateOfBirth(), today);
     return (filter.minAge() == null || age >= filter.minAge())
         && (filter.maxAge() == null || age <= filter.maxAge());
+  }
+
+  /** Age in whole years, as the list filters and {@code @AdultAge} count it. */
+  static int completedYears(LocalDate dateOfBirth, LocalDate today) {
+    return Period.between(dateOfBirth, today).getYears();
+  }
+
+  /**
+   * Age as a fraction: {@link #completedYears} plus the elapsed share of the current birthday year
+   * (days since the last birthday / days from the last to the next). Its whole-number part is
+   * always {@link #completedYears}. Averaging this rather than whole years avoids skewing an
+   * average down by about half a year.
+   */
+  static BigDecimal exactAge(LocalDate dateOfBirth, LocalDate today) {
+    int years = completedYears(dateOfBirth, today);
+    LocalDate lastBirthday = birthday(dateOfBirth, years);
+    LocalDate nextBirthday = birthday(dateOfBirth, years + 1);
+    BigDecimal elapsed = BigDecimal.valueOf(ChronoUnit.DAYS.between(lastBirthday, today));
+    BigDecimal length = BigDecimal.valueOf(ChronoUnit.DAYS.between(lastBirthday, nextBirthday));
+    return BigDecimal.valueOf(years).add(elapsed.divide(length, MathContext.DECIMAL128));
+  }
+
+  /**
+   * The day {@link #completedYears} reaches {@code age}. For 29 February in a non-leap year that's
+   * 1 March: {@link Period} only counts the year complete then, whereas {@link LocalDate#plusYears}
+   * would clamp to 28 February.
+   */
+  private static LocalDate birthday(LocalDate dateOfBirth, int age) {
+    LocalDate date = dateOfBirth.plusYears(age);
+    return date.getDayOfMonth() == dateOfBirth.getDayOfMonth() ? date : date.plusDays(1);
   }
 
   /** Compared, never copied onto the entity: {@code Player.version} is Spring Data's alone. */

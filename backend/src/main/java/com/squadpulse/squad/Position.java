@@ -6,26 +6,38 @@ package com.squadpulse.squad;
  * <p>These codes are shown <b>as-is, in English</b> everywhere in the UI, including the Hebrew one
  * — a deliberate exception to localization (docs/spec.md section 01, CLAUDE.md rule 3). Don't
  * translate them.
+ *
+ * <p>Each position belongs to one {@link Line}; this is the only place that mapping is defined.
  */
 public enum Position {
   /** Goalkeeper. */
-  GK,
+  GK(Line.GOALKEEPERS),
   /** Center Back. */
-  CB,
+  CB(Line.DEFENSE),
   /** Right Back. */
-  RB,
+  RB(Line.DEFENSE),
   /** Left Back. */
-  LB,
+  LB(Line.DEFENSE),
   /** Defensive Midfielder. */
-  DM,
+  DM(Line.MIDFIELD),
   /** Central Midfielder. */
-  CM,
+  CM(Line.MIDFIELD),
   /** Attacking Midfielder. */
-  AM,
+  AM(Line.MIDFIELD),
   /** Right Winger. */
-  RW,
+  RW(Line.ATTACK),
   /** Left Winger. */
-  LW,
+  LW(Line.ATTACK),
   /** Striker. */
-  ST
+  ST(Line.ATTACK);
+
+  private final Line line;
+
+  Position(Line line) {
+    this.line = line;
+  }
+
+  public Line line() {
+    return line;
+  }
 }
