@@ -50,6 +50,7 @@ class CurrentUserControllerTest {
                 CurrentUserResponse.from(
                     storedUser(),
                     invocation.<AuthenticatedUser>getArgument(0).permissionLevel(),
+                    false,
                     club(),
                     false));
 
@@ -66,7 +67,7 @@ class CurrentUserControllerTest {
   void mapsEveryFieldInUserResponsesOrderPlusTheClub() throws Exception {
     when(currentUserService.currentUser(any()))
         .thenReturn(
-            CurrentUserResponse.from(storedUser(), PermissionLevel.EDIT_FULL, club(), true));
+            CurrentUserResponse.from(storedUser(), PermissionLevel.EDIT_FULL, true, club(), true));
 
     MvcResult result =
         mockMvc
@@ -79,6 +80,7 @@ class CurrentUserControllerTest {
             .andExpect(jsonPath("$.permissionLevel").value("EDIT_FULL"))
             .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
             .andExpect(jsonPath("$.active").value(true))
+            .andExpect(jsonPath("$.hasPhoto").value(true))
             .andExpect(jsonPath("$.club.id").value("club-a"))
             .andExpect(jsonPath("$.club.name").value("Hapoel Example"))
             .andExpect(jsonPath("$.club.hasLogo").value(true))
@@ -87,7 +89,15 @@ class CurrentUserControllerTest {
     String body = result.getResponse().getContentAsString();
     assertThat(JsonPath.<Map<String, Object>>read(body, "$").keySet())
         .containsExactly(
-            "id", "email", "fullName", "title", "permissionLevel", "dateOfBirth", "active", "club");
+            "id",
+            "email",
+            "fullName",
+            "title",
+            "permissionLevel",
+            "dateOfBirth",
+            "active",
+            "hasPhoto",
+            "club");
     assertThat(JsonPath.<Map<String, Object>>read(body, "$.club").keySet())
         .containsExactly("id", "name", "hasLogo");
     assertThat(body).doesNotContain("password", "hash-that-must-not-leak");

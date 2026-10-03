@@ -113,6 +113,7 @@ class CurrentUserIntegrationTest {
         .andExpect(jsonPath("$.permissionLevel").value("EDIT_FULL"))
         .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
         .andExpect(jsonPath("$.active").value(true))
+        .andExpect(jsonPath("$.hasPhoto").value(false))
         .andExpect(jsonPath("$.club.id").value(club.getId()))
         .andExpect(jsonPath("$.club.name").value("Hapoel Example"))
         .andExpect(jsonPath("$.club.hasLogo").value(false));
@@ -132,7 +133,15 @@ class CurrentUserIntegrationTest {
 
     assertThat(JsonPath.<Map<String, Object>>read(body, "$").keySet())
         .containsExactly(
-            "id", "email", "fullName", "title", "permissionLevel", "dateOfBirth", "active", "club")
+            "id",
+            "email",
+            "fullName",
+            "title",
+            "permissionLevel",
+            "dateOfBirth",
+            "active",
+            "hasPhoto",
+            "club")
         .doesNotContain("passwordHash", "version", "sessionsInvalidatedAt", "clubId");
     assertThat(body).doesNotContain("password", "$argon2", "version", "sessionsInvalidatedAt");
   }

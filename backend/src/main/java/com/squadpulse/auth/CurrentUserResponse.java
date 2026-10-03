@@ -12,7 +12,8 @@ import java.time.LocalDate;
  * database (see {@link CurrentUserService}).
  *
  * <p>{@link #active} is always {@code true} in a response (an inactive caller gets a 401 instead);
- * it's kept for parity with {@link UserResponse}.
+ * it's kept for parity with {@link UserResponse}. {@link #hasPhoto} says whether {@code GET
+ * /users/me/photo} has an image, so the client can skip that request when it hasn't.
  */
 record CurrentUserResponse(
     String id,
@@ -22,6 +23,7 @@ record CurrentUserResponse(
     PermissionLevel permissionLevel,
     LocalDate dateOfBirth,
     boolean active,
+    boolean hasPhoto,
     ClubSummary club) {
 
   /**
@@ -31,7 +33,7 @@ record CurrentUserResponse(
   record ClubSummary(String id, String name, boolean hasLogo) {}
 
   static CurrentUserResponse from(
-      User user, PermissionLevel effectiveLevel, Club club, boolean clubHasLogo) {
+      User user, PermissionLevel effectiveLevel, boolean hasPhoto, Club club, boolean clubHasLogo) {
     return new CurrentUserResponse(
         user.getId(),
         user.getEmail(),
@@ -40,6 +42,7 @@ record CurrentUserResponse(
         effectiveLevel,
         user.getDateOfBirth(),
         user.isActive(),
+        hasPhoto,
         new ClubSummary(club.getId(), club.getName(), clubHasLogo));
   }
 }
