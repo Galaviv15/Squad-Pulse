@@ -2,33 +2,50 @@ package com.squadpulse.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
+import org.apache.catalina.connector.ClientAbortException;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.MethodParameter;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.method.MethodValidationResult;
 import org.springframework.validation.method.ParameterValidationResult;
+import org.springframework.web.ErrorResponseException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingPathVariableException;
+import org.springframework.web.bind.MissingRequestCookieException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -333,6 +350,272 @@ class GlobalExceptionHandlerTest {
     assertThat(body.error()).isEqualTo("Bad Request");
     assertThat(body.message()).isEqualTo("Malformed multipart request");
     assertThat(body.details()).isEmpty();
+  }
+
+  // --- standard Spring MVC exceptions (KAN-31) ---------------------------------------------------
+
+  /**
+   * Each of these fell through to the catch-all as a 500 before KAN-31. The exceptions Spring knows
+   * a status for, but that aren't mapped explicitly, still reach the catch-all — which now answers
+   * with that status (see the safety-net tests below).
+   */
+  @Test
+  void theStandardSpringMvcExceptionsReachTheirOwnHandlers() throws Exception {
+    ExceptionHandlerMethodResolver resolver =
+        new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class);
+
+    assertThat(
+            resolver.resolveMethod(
+                new HttpMediaTypeNotSupportedException(
+                    MediaType.TEXT_PLAIN, List.of(MediaType.APPLICATION_JSON))))
+        .isEqualTo(handlerMethod("handleMediaTypeNotSupported"));
+    assertThat(
+            resolver.resolveMethod(
+                new HttpMediaTypeNotAcceptableException(List.of(MediaType.APPLICATION_JSON))))
+        .isEqualTo(handlerMethod("handleMediaTypeNotAcceptable"));
+    assertThat(resolver.resolveMethod(new MissingServletRequestParameterException("q", "String")))
+        .isEqualTo(handlerMethod("handleMissingParameter"));
+    assertThat(
+            resolver.resolveMethod(new MissingRequestHeaderException("X-Club", probeParameter(0))))
+        .isEqualTo(handlerMethod("handleMissingHeader"));
+    assertThat(
+            resolver.resolveMethod(new MissingRequestCookieException("session", probeParameter(0))))
+        .isEqualTo(handlerMethod("handleMissingCookie"));
+    assertThat(resolver.resolveMethod(new MissingPathVariableException("id", probeParameter(0))))
+        .isEqualTo(handlerMethod("handleUnexpected"));
+    assertThat(resolver.resolveMethod(new ResponseStatusException(HttpStatus.GONE)))
+        .isEqualTo(handlerMethod("handleUnexpected"));
+  }
+
+  /** Spring's own message quotes the sent type; only the server's supported types are passed on. */
+  @Test
+  void anUnsupportedMediaTypeIs415ListingTheSupportedTypesInTheBodyAndAcceptHeader() {
+    HttpMediaTypeNotSupportedException ex =
+        new HttpMediaTypeNotSupportedException(
+            MediaType.parseMediaType("text/x-marker-12345"),
+            List.of(MediaType.APPLICATION_JSON, MediaType.parseMediaType("application/*+json")),
+            HttpMethod.POST);
+
+    ResponseEntity<ApiErrorResponse> response = handler.handleMediaTypeNotSupported(ex);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+    assertThat(response.getHeaders().getAccept())
+        .containsExactly(
+            MediaType.APPLICATION_JSON, MediaType.parseMediaType("application/*+json"));
+    assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+    ApiErrorResponse body = response.getBody();
+    assertThat(body.status()).isEqualTo(415);
+    assertThat(body.error()).isEqualTo("Unsupported Media Type");
+    assertThat(body.message()).isEqualTo("Unsupported Content-Type");
+    assertThat(body.details()).containsExactly("application/json", "application/*+json");
+    assertThat(body.toString()).doesNotContain("x-marker-12345");
+  }
+
+  /** RFC 5789: a PATCH endpoint also advertises what it reads in {@code Accept-Patch}. */
+  @Test
+  void anUnsupportedMediaTypeOnAPatchAlsoCarriesAcceptPatch() {
+    HttpMediaTypeNotSupportedException ex =
+        new HttpMediaTypeNotSupportedException(
+            MediaType.TEXT_PLAIN, List.of(MediaType.APPLICATION_JSON), HttpMethod.PATCH);
+
+    assertThat(handler.handleMediaTypeNotSupported(ex).getHeaders().getAcceptPatch())
+        .containsExactly(MediaType.APPLICATION_JSON);
+  }
+
+  /** An unparseable {@code Content-Type}: Spring knows no supported types, so there are none. */
+  @Test
+  void anUnparseableContentTypeIs415WithoutDetailsOrEcho() {
+    ResponseEntity<ApiErrorResponse> response =
+        handler.handleMediaTypeNotSupported(
+            new HttpMediaTypeNotSupportedException("Invalid mime type \"marker-12345\""));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+    assertThat(response.getHeaders().getAccept()).isEmpty();
+    assertThat(response.getBody().details()).isEmpty();
+    assertThat(response.getBody().toString()).doesNotContain("marker-12345");
+  }
+
+  @Test
+  void aNotAcceptableRequestIs406AsJsonListingWhatCanBeProduced() {
+    ResponseEntity<ApiErrorResponse> response =
+        handler.handleMediaTypeNotAcceptable(
+            new HttpMediaTypeNotAcceptableException(List.of(MediaType.APPLICATION_JSON)));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_ACCEPTABLE);
+    assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+    assertThat(response.getHeaders().getAccept()).containsExactly(MediaType.APPLICATION_JSON);
+    ApiErrorResponse body = response.getBody();
+    assertThat(body.status()).isEqualTo(406);
+    assertThat(body.error()).isEqualTo("Not Acceptable");
+    assertThat(body.message()).isEqualTo("None of the accepted media types can be produced");
+    assertThat(body.details()).containsExactly("application/json");
+  }
+
+  @Test
+  void anUnparseableAcceptHeaderIs406WithoutEcho() {
+    ApiErrorResponse body =
+        handler
+            .handleMediaTypeNotAcceptable(
+                new HttpMediaTypeNotAcceptableException("Could not parse 'Accept' header [<x>]"))
+            .getBody();
+
+    assertThat(body.status()).isEqualTo(406);
+    assertThat(body.details()).isEmpty();
+    assertThat(body.toString()).doesNotContain("<x>");
+  }
+
+  @Test
+  void aMissingQueryParameterIsReportedLikeAMissingField() {
+    ApiErrorResponse body =
+        handler
+            .handleMissingParameter(
+                new MissingServletRequestParameterException("min-age", "Integer"))
+            .getBody();
+
+    assertMissing(body, "min-age: is required");
+  }
+
+  @Test
+  void aMissingHeaderIsReportedLikeAMissingField() throws Exception {
+    ApiErrorResponse body =
+        handler
+            .handleMissingHeader(new MissingRequestHeaderException("X-Club", probeParameter(0)))
+            .getBody();
+
+    assertMissing(body, "X-Club: is required");
+  }
+
+  @Test
+  void aMissingCookieIsReportedLikeAMissingField() throws Exception {
+    ApiErrorResponse body =
+        handler
+            .handleMissingCookie(
+                new MissingRequestCookieException("refresh_token", probeParameter(0)))
+            .getBody();
+
+    assertMissing(body, "refresh_token: is required");
+  }
+
+  private static void assertMissing(ApiErrorResponse body, String detail) {
+    assertThat(body.status()).isEqualTo(400);
+    assertThat(body.error()).isEqualTo("Validation Failed");
+    assertThat(body.message()).isEqualTo("Request validation failed");
+    assertThat(body.details()).containsExactly(detail);
+  }
+
+  // --- the catch-all: ErrorResponse safety net, disconnects, committed responses (KAN-31)
+  // ---------
+
+  /** Its own status, reason phrase and headers, but a fixed message: the reason may quote input. */
+  @Test
+  void anUnmappedClientErrorResponseKeepsItsStatusAndHeadersUnderAGenericMessage() {
+    ResponseStatusException ex =
+        new ResponseStatusException(HttpStatus.GONE, "marker-12345") {
+          @Override
+          public HttpHeaders getHeaders() {
+            HttpHeaders headers = new HttpHeaders();
+            headers.add("X-Probe", "kept");
+            return headers;
+          }
+        };
+
+    ResponseEntity<ApiErrorResponse> response = unexpected(ex);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GONE);
+    assertThat(response.getHeaders().getFirst("X-Probe")).isEqualTo("kept");
+    ApiErrorResponse body = response.getBody();
+    assertThat(body.status()).isEqualTo(410);
+    assertThat(body.error()).isEqualTo("Gone");
+    assertThat(body.message()).isEqualTo("The request could not be processed");
+    assertThat(body.details()).isEmpty();
+    assertThat(body.toString()).doesNotContain("marker-12345");
+  }
+
+  @Test
+  void anUnmappedServerErrorResponseKeepsItsStatusUnderTheGenericMessage() {
+    ApiErrorResponse body =
+        unexpected(new ErrorResponseException(HttpStatus.SERVICE_UNAVAILABLE)).getBody();
+
+    assertThat(body.status()).isEqualTo(503);
+    assertThat(body.error()).isEqualTo("Service Unavailable");
+    assertThat(body.message()).isEqualTo("An unexpected error occurred");
+  }
+
+  /**
+   * A path variable the handler declares but its mapping lacks is a server bug — 500, as Spring has
+   * it — unless the value was there but converted to null, which is the client's.
+   */
+  @Test
+  void aMissingPathVariableIsA500UnlessItWasConvertedToNull() throws Exception {
+    assertThat(unexpected(new MissingPathVariableException("id", probeParameter(0))).getBody())
+        .extracting(ApiErrorResponse::status, ApiErrorResponse::message)
+        .containsExactly(500, "An unexpected error occurred");
+    assertThat(unexpected(new MissingPathVariableException("id", probeParameter(0), true)))
+        .extracting(response -> response.getStatusCode().value())
+        .isEqualTo(400);
+  }
+
+  /** Not an {@link org.springframework.web.ErrorResponse}: the generic 500, exactly as before. */
+  @Test
+  void anyOtherExceptionIsTheGeneric500() {
+    ResponseEntity<ApiErrorResponse> response =
+        unexpected(new IllegalStateException("internal detail"));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    ApiErrorResponse body = response.getBody();
+    assertThat(body.status()).isEqualTo(500);
+    assertThat(body.error()).isEqualTo("Internal Server Error");
+    assertThat(body.message()).isEqualTo("An unexpected error occurred");
+    assertThat(body.details()).isEmpty();
+  }
+
+  /**
+   * Nothing to write to a client that's gone. Recognised as Spring's {@code
+   * DisconnectedClientHelper} does: by Tomcat's exception type anywhere in the cause chain, or a
+   * broken-pipe / connection-reset message.
+   */
+  @Test
+  void aClientThatWentAwayGetsNoResponseBody() {
+    assertThat(unexpected(new ClientAbortException(new IOException("Broken pipe")))).isNull();
+    assertThat(unexpected(new AsyncRequestNotUsableException("Response not usable"))).isNull();
+    assertThat(
+            unexpected(
+                new HttpMessageNotWritableException(
+                    "Could not write", new ClientAbortException("closed"))))
+        .isNull();
+    assertThat(unexpected(new IOException("Connection reset by peer"))).isNull();
+  }
+
+  /**
+   * Spring's own exclusion: a dropped connection to the database is our failure, not the client's.
+   */
+  @Test
+  void aDroppedDatabaseConnectionIsNotAClientDisconnect() {
+    assertThat(
+            unexpected(
+                    new DataAccessResourceFailureException(
+                        "Mongo", new IOException("Connection reset by peer")))
+                .getStatusCode())
+        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  /** Once the status and part of the body are sent, an error body would only corrupt them. */
+  @Test
+  void nothingIsWrittenToAnAlreadyCommittedResponse() {
+    MockHttpServletResponse committed = new MockHttpServletResponse();
+    committed.setCommitted(true);
+
+    assertThat(
+            handler.handleUnexpected(
+                new IllegalStateException("stream failed"),
+                new MockHttpServletRequest(),
+                committed))
+        .isNull();
+  }
+
+  private ResponseEntity<ApiErrorResponse> unexpected(Exception ex) {
+    return handler.handleUnexpected(
+        ex, new MockHttpServletRequest("GET", "/probe"), new MockHttpServletResponse());
   }
 
   /** Stands in for a controller method with two query parameters. */
