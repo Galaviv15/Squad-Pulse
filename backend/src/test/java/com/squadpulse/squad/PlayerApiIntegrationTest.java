@@ -18,6 +18,7 @@ import com.mongodb.MongoWriteException;
 import com.squadpulse.auth.PermissionLevel;
 import com.squadpulse.auth.TestAccessTokens;
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.common.ImageStorage;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -96,6 +97,7 @@ class PlayerApiIntegrationTest {
   @Autowired private MongoTemplate mongoTemplate;
   @Autowired private PlayerRepository playerRepository;
   @Autowired private ClubContext clubContext;
+  @Autowired private ImageStorage imageStorage;
   @Autowired private TestAccessTokens tokens;
   @Autowired private PlayerLoadHook loadHook;
   @Autowired private PlayerInsertBarrier insertBarrier;
@@ -291,7 +293,7 @@ class PlayerApiIntegrationTest {
     assertThat(PlayerService.violatedIndex(idClash)).contains("_id_");
     PlayerRepository failingRepository = mock(PlayerRepository.class);
     when(failingRepository.insert(any(Player.class))).thenThrow(idClash);
-    PlayerService service = new PlayerService(failingRepository, clubContext);
+    PlayerService service = new PlayerService(failingRepository, clubContext, imageStorage);
     assertThatThrownBy(() -> service.create(createRequest("Same Id", Position.CB, 8)))
         .isSameAs(idClash);
   }
@@ -1103,7 +1105,7 @@ class PlayerApiIntegrationTest {
 
   private PlayerService serviceOn(LocalDate today) {
     Clock clock = Clock.fixed(today.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
-    return new PlayerService(playerRepository, clubContext, clock);
+    return new PlayerService(playerRepository, clubContext, imageStorage, clock);
   }
 
   private Player saveAs(String clubId, Player player) {

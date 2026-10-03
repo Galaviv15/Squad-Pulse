@@ -27,6 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.squadpulse.auth.AuthWebMvcTestConfig;
 import com.squadpulse.auth.PermissionLevel;
 import com.squadpulse.auth.TestAccessTokens;
+import com.squadpulse.common.ImageProperties;
+import com.squadpulse.common.ImageValidator;
 import com.squadpulse.common.NotFoundException;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
@@ -41,6 +43,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -62,7 +65,8 @@ import tools.jackson.databind.json.JsonMapper;
     controllers = PlayerController.class,
     excludeAutoConfiguration = UserDetailsServiceAutoConfiguration.class,
     properties = {AuthWebMvcTestConfig.JWT_SECRET, AuthWebMvcTestConfig.PASSWORD_PEPPER})
-@Import({AuthWebMvcTestConfig.class, TestAccessTokens.class})
+@Import({AuthWebMvcTestConfig.class, TestAccessTokens.class, ImageValidator.class})
+@EnableConfigurationProperties(ImageProperties.class)
 class PlayerControllerTest {
 
   private static final JsonMapper JSON = JsonMapper.builder().build();
