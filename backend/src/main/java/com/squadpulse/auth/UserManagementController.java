@@ -16,8 +16,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * User management within the caller's club — only a Club Manager ({@code ADMIN}) may use it: the
- * staff list, invitations and permission-level changes. The caller's own profile, {@code GET
- * /auth/users/me}, is {@link CurrentUserController}'s, open to every authenticated user.
+ * staff list, invitations, permission-level changes, and deactivation / re-activation. The caller's
+ * own profile, {@code GET /auth/users/me}, is {@link CurrentUserController}'s, open to every
+ * authenticated user.
  *
  * <p>Every write here re-reads the caller first and answers the generic 401 if they've been
  * deactivated or no longer exist, even while their access token is still valid (see {@link
@@ -30,16 +31,19 @@ class UserManagementController {
   private final StaffListService staffListService;
   private final UserInvitationService userInvitationService;
   private final UserPermissionLevelService userPermissionLevelService;
+  private final UserActivationService userActivationService;
   private final StaffPhotoService staffPhotoService;
 
   UserManagementController(
       StaffListService staffListService,
       UserInvitationService userInvitationService,
       UserPermissionLevelService userPermissionLevelService,
+      UserActivationService userActivationService,
       StaffPhotoService staffPhotoService) {
     this.staffListService = staffListService;
     this.userInvitationService = userInvitationService;
     this.userPermissionLevelService = userPermissionLevelService;
+    this.userActivationService = userActivationService;
     this.staffPhotoService = staffPhotoService;
   }
 
@@ -84,6 +88,30 @@ class UserManagementController {
       @AuthenticationPrincipal AuthenticatedUser caller) {
     User user =
         userPermissionLevelService.changePermissionLevel(id, request.permissionLevel(), caller);
+    return UserResponse.from(user, staffPhotoService.hasPhoto(user));
+  }
+
+  /**
+   * Deactivates another user of the caller's club and ends their refresh sessions; already
+   * deactivated is a no-op (see {@link UserActivationService}).
+   */
+  @PostMapping("/{id}/deactivate")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  UserResponse deactivate(
+      @PathVariable String id, @AuthenticationPrincipal AuthenticatedUser caller) {
+    User user = userActivationService.deactivate(id, caller);
+    return UserResponse.from(user, staffPhotoService.hasPhoto(user));
+  }
+
+  /**
+   * Re-activates another user of the caller's club; already active is a no-op (see {@link
+   * UserActivationService}).
+   */
+  @PostMapping("/{id}/reactivate")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  UserResponse reactivate(
+      @PathVariable String id, @AuthenticationPrincipal AuthenticatedUser caller) {
+    User user = userActivationService.reactivate(id, caller);
     return UserResponse.from(user, staffPhotoService.hasPhoto(user));
   }
 }

@@ -5,8 +5,8 @@ import org.springframework.stereotype.Component;
 /**
  * Whether the caller named by an access token can still act: they exist in the token's club and are
  * active. The one definition of that, shared by {@code GET /auth/users/me} (see {@link
- * CurrentUserService}) and every user-management write (invite, permission level — see {@link
- * UserManagementController}).
+ * CurrentUserService}) and every user-management write (invite, permission level, deactivate,
+ * re-activate — see {@link UserManagementController}).
  *
  * <p><b>Why the writes re-check at all</b> (KAN-37). {@link JwtAuthenticationFilter} doesn't look
  * the user up, so an access token keeps working for up to one access-token lifetime after its user

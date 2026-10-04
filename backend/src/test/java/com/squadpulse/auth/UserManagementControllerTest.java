@@ -59,6 +59,7 @@ class UserManagementControllerTest {
   @MockitoBean private StaffListService staffListService;
   @MockitoBean private UserInvitationService userInvitationService;
   @MockitoBean private UserPermissionLevelService userPermissionLevelService;
+  @MockitoBean private UserActivationService userActivationService;
   @MockitoBean private StaffPhotoService staffPhotoService;
 
   // --- GET /auth/users ---------------------------------------------------------------------------
