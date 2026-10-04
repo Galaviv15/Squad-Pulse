@@ -6,6 +6,7 @@ import com.squadpulse.common.ImageStorage;
 import com.squadpulse.common.NotFoundException;
 import com.squadpulse.common.StoredImage;
 import com.squadpulse.common.ValidatedImage;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 /**
@@ -84,6 +85,13 @@ class StaffPhotoService {
    */
   boolean hasPhoto(User user) {
     return imageStorage.exists(photoOf(user.getId()));
+  }
+
+  /**
+   * The ids of the club's users that have a photo, in one storage query (see {@link #hasPhoto}).
+   */
+  Set<String> userIdsWithPhoto() {
+    return imageStorage.ownerIdsWithImage(ImageKind.STAFF_PHOTO);
   }
 
   private User load(String userId) {
