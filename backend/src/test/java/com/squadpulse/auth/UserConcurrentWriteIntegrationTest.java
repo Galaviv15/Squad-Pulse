@@ -9,7 +9,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.common.EmailSender;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import org.bson.Document;
 import org.bson.types.ObjectId;
@@ -42,6 +47,10 @@ import org.testcontainers.mongodb.MongoDBContainer;
  * test thread, right after the flow under test has loaded the user. {@link
  * PasswordResetCodeService} is mocked to accept any code, so no Redis is needed; codes themselves
  * are covered by {@link PasswordResetFlowIntegrationTest}.
+ *
+ * <p>Every test has a real, active {@code ADMIN} in club-a to call the user-management endpoints
+ * with: they re-read their caller first (see {@link ActiveCallerCheck}). Hooks on those flows are
+ * armed for the target's id only, so the caller's load doesn't trigger them.
  */
 @SpringBootTest(
     properties = {
@@ -78,11 +87,20 @@ class UserConcurrentWriteIntegrationTest {
   @Autowired private JwtService jwtService;
   @Autowired private ClubContext clubContext;
   @Autowired private UserLoadHook hook;
+  @Autowired private UserActivationService activationService;
+  @Autowired private PasswordResetProperties resetProperties;
+  @Autowired private EmailSender emailSender;
   @MockitoBean private PasswordResetCodeService codeService;
 
+  /** The caller of every user-management request here. */
+  private User admin;
+
   @BeforeEach
-  void acceptAnyCode() {
+  void setUp() {
     when(codeService.verify(anyString(), anyString())).thenReturn(true);
+    admin = insertUser("club-a", "manager@example.com");
+    admin.setPermissionLevel(PermissionLevel.ADMIN);
+    admin = mongoTemplate.save(admin);
   }
 
   @AfterEach
@@ -103,7 +121,7 @@ class UserConcurrentWriteIntegrationTest {
                 "club-a",
                 () ->
                     permissionLevelService.changePermissionLevel(
-                        user.getId(), PermissionLevel.ADMIN, admin("club-a"))));
+                        user.getId(), PermissionLevel.ADMIN, adminCaller())));
 
     resetPassword(EMAIL).andExpect(status().isNoContent());
 
@@ -118,7 +136,8 @@ class UserConcurrentWriteIntegrationTest {
   @Test
   void aResetDuringAPermissionChangeIsKeptAndTheChangeStillSucceeds() throws Exception {
     User user = insertUser("club-a", EMAIL);
-    hook.onNextLoad(() -> passwordResetService.resetPassword(EMAIL, "123456", NEW_PASSWORD));
+    hook.onNextLoadOf(
+        user.getId(), () -> passwordResetService.resetPassword(EMAIL, "123456", NEW_PASSWORD));
 
     changePermissionLevel(user.getId(), PermissionLevel.ADMIN)
         .andExpect(status().isOk())
@@ -163,6 +182,114 @@ class UserConcurrentWriteIntegrationTest {
     assertThat(stored.getVersion()).isEqualTo(user.getVersion() + 1);
   }
 
+  /**
+   * The same race with the real deactivation (KAN-37): its {@code sessionsInvalidatedAt} survives
+   * too, so the reset's stale copy can't erase the end of the user's sessions either.
+   */
+  @Test
+  void aDeactivationThroughTheApiServiceDuringAResetIsNeverUndone() throws Exception {
+    User user = insertUser("club-a", EMAIL);
+    hook.onNextLoad(
+        () ->
+            clubContext.callAs(
+                "club-a", () -> activationService.deactivate(user.getId(), adminCaller())));
+
+    resetPassword(EMAIL)
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.message").value("Invalid or expired code"));
+
+    assertThat(hook.timesFired()).isEqualTo(1);
+    User stored = stored(user);
+    assertThat(stored.isActive()).isFalse();
+    assertThat(passwordEncoder.matches(OLD_PASSWORD, stored.getPasswordHash())).isTrue();
+    assertThat(stored.getSessionsInvalidatedAt()).isNotNull();
+    assertThat(stored.getVersion()).isEqualTo(user.getVersion() + 1);
+  }
+
+  // --- deactivation vs other writes (KAN-37) -----------------------------------------------------
+
+  @Test
+  void aPermissionChangeDuringADeactivationIsKeptAndBothSurvive() throws Exception {
+    User user = insertUser("club-a", EMAIL);
+    hook.onNextLoadOf(
+        user.getId(),
+        () ->
+            clubContext.callAs(
+                "club-a",
+                () ->
+                    permissionLevelService.changePermissionLevel(
+                        user.getId(), PermissionLevel.ADMIN, adminCaller())));
+
+    deactivate(user.getId())
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false))
+        .andExpect(jsonPath("$.permissionLevel").value("ADMIN"));
+
+    assertThat(hook.timesFired()).isEqualTo(1);
+    User stored = stored(user);
+    assertThat(stored.isActive()).isFalse();
+    assertThat(stored.getPermissionLevel()).isEqualTo(PermissionLevel.ADMIN);
+    assertThat(stored.getSessionsInvalidatedAt()).isNotNull();
+    assertThat(stored.getVersion()).isEqualTo(user.getVersion() + 2);
+  }
+
+  /**
+   * The reset's password survives, the deactivation still wins, and {@code sessionsInvalidatedAt}
+   * is the later of the two instants: the deactivation reads its clock after reloading.
+   */
+  @Test
+  void aResetDuringADeactivationIsKeptAndTheDeactivationWins() throws Exception {
+    User user = insertUser("club-a", EMAIL);
+    Instant[] resetInstant = new Instant[1];
+    hook.onNextLoadOf(
+        user.getId(),
+        () -> {
+          passwordResetService.resetPassword(EMAIL, "123456", NEW_PASSWORD);
+          resetInstant[0] = stored(user).getSessionsInvalidatedAt();
+        });
+
+    deactivate(user.getId())
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false));
+
+    assertThat(hook.timesFired()).isEqualTo(1);
+    User stored = stored(user);
+    assertThat(stored.isActive()).isFalse();
+    assertThat(passwordEncoder.matches(NEW_PASSWORD, stored.getPasswordHash())).isTrue();
+    assertThat(resetInstant[0]).isNotNull();
+    assertThat(stored.getSessionsInvalidatedAt()).isAfterOrEqualTo(resetInstant[0]);
+    assertThat(stored.getVersion()).isEqualTo(user.getVersion() + 2);
+  }
+
+  /**
+   * A reset whose clock is ahead of the deactivation's (another app instance, say) lands in the
+   * middle of it: the later, stored instant is kept — {@code sessionsInvalidatedAt} never moves
+   * backwards.
+   */
+  @Test
+  void aResetFromAClockAheadDuringADeactivationKeepsItsLaterInstant() throws Exception {
+    User user = insertUser("club-a", EMAIL);
+    Instant ahead = Instant.now().plus(Duration.ofHours(1)).truncatedTo(ChronoUnit.MILLIS);
+    PasswordResetService resetOnAClockAhead =
+        new PasswordResetService(
+            userRepository,
+            codeService,
+            resetProperties,
+            passwordEncoder,
+            emailSender,
+            clubContext,
+            Clock.fixed(ahead, ZoneOffset.UTC));
+    hook.onNextLoadOf(
+        user.getId(), () -> resetOnAClockAhead.resetPassword(EMAIL, "123456", NEW_PASSWORD));
+
+    deactivate(user.getId()).andExpect(status().isOk());
+
+    User stored = stored(user);
+    assertThat(stored.isActive()).isFalse();
+    assertThat(passwordEncoder.matches(NEW_PASSWORD, stored.getPasswordHash())).isTrue();
+    assertThat(stored.getSessionsInvalidatedAt()).isEqualTo(ahead);
+  }
+
   // --- retries exhausted -------------------------------------------------------------------------
 
   @Test
@@ -182,7 +309,7 @@ class UserConcurrentWriteIntegrationTest {
   @Test
   void aPermissionChangeThatConflictsOnEveryAttemptIs409AndChangesNothing() throws Exception {
     User user = insertUser("club-a", EMAIL);
-    hook.onEveryLoad(() -> bumpVersion(user));
+    hook.onEveryLoadOf(user.getId(), () -> bumpVersion(user));
 
     changePermissionLevel(user.getId(), PermissionLevel.ADMIN)
         .andExpect(status().isConflict())
@@ -191,12 +318,27 @@ class UserConcurrentWriteIntegrationTest {
     assertThat(stored(user).getPermissionLevel()).isEqualTo(PermissionLevel.EDIT_FULL);
   }
 
+  @Test
+  void aDeactivationThatConflictsOnEveryAttemptIs409AndChangesNothing() throws Exception {
+    User user = insertUser("club-a", EMAIL);
+    hook.onEveryLoadOf(user.getId(), () -> bumpVersion(user));
+
+    deactivate(user.getId())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(CONFLICT_MESSAGE));
+
+    User stored = stored(user);
+    assertThat(stored.isActive()).isTrue();
+    assertThat(stored.getSessionsInvalidatedAt()).isNull();
+  }
+
   // --- permission change vs deletion -------------------------------------------------------------
 
   @Test
   void aUserDeletedDuringAPermissionChangeIs404() throws Exception {
     User user = insertUser("club-a", EMAIL);
-    hook.onNextLoad(
+    hook.onNextLoadOf(
+        user.getId(),
         () ->
             clubContext.callAs(
                 "club-a",
@@ -209,7 +351,7 @@ class UserConcurrentWriteIntegrationTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.message").value("User not found"));
 
-    assertThat(mongoTemplate.count(new Query(), User.class)).isZero();
+    assertThat(mongoTemplate.findById(user.getId(), User.class)).isNull();
   }
 
   // --- legacy documents --------------------------------------------------------------------------
@@ -221,7 +363,7 @@ class UserConcurrentWriteIntegrationTest {
 
     resetPassword(EMAIL).andExpect(status().isNoContent());
 
-    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(1);
+    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(2); // with the admin
     User stored = mongoTemplate.findById(id.toHexString(), User.class);
     assertThat(passwordEncoder.matches(NEW_PASSWORD, stored.getPasswordHash())).isTrue();
     assertThat(stored.getVersion()).isEqualTo(1L);
@@ -234,7 +376,7 @@ class UserConcurrentWriteIntegrationTest {
 
     changePermissionLevel(id.toHexString(), PermissionLevel.VIEW_ONLY).andExpect(status().isOk());
 
-    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(1);
+    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(2); // with the admin
     User stored = mongoTemplate.findById(id.toHexString(), User.class);
     assertThat(stored.getPermissionLevel()).isEqualTo(PermissionLevel.VIEW_ONLY);
     assertThat(stored.getVersion()).isEqualTo(1L);
@@ -253,19 +395,21 @@ class UserConcurrentWriteIntegrationTest {
 
   private ResultActions changePermissionLevel(String userId, PermissionLevel level)
       throws Exception {
-    User caller = new User();
-    caller.setId("admin-1");
-    caller.setClubId("club-a");
-    caller.setPermissionLevel(PermissionLevel.ADMIN);
     return mockMvc.perform(
         patch("/auth/users/" + userId + "/permission-level")
-            .header("Authorization", "Bearer " + jwtService.issue(caller).value())
+            .header("Authorization", "Bearer " + jwtService.issue(admin).value())
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"permissionLevel\": \"%s\"}".formatted(level)));
   }
 
-  private static AuthenticatedUser admin(String clubId) {
-    return new AuthenticatedUser("admin-1", clubId, PermissionLevel.ADMIN);
+  private ResultActions deactivate(String userId) throws Exception {
+    return mockMvc.perform(
+        post("/auth/users/" + userId + "/deactivate")
+            .header("Authorization", "Bearer " + jwtService.issue(admin).value()));
+  }
+
+  private AuthenticatedUser adminCaller() {
+    return new AuthenticatedUser(admin.getId(), "club-a", PermissionLevel.ADMIN);
   }
 
   /** A write that changes nothing but still moves the version on, as any save does. */

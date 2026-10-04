@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -20,8 +21,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jayway.jsonpath.JsonPath;
 import com.squadpulse.common.NotFoundException;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
@@ -31,13 +34,15 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
  * The HTTP contract of {@link UserManagementController} behind the real security chain, with {@link
- * StaffListService}, {@link UserInvitationService} and {@link UserPermissionLevelService} mocked.
- * That they really stay within the caller's club is proven end to end in {@link
- * StaffListIntegrationTest} and {@link AuthFlowIntegrationTest}.
+ * StaffListService}, {@link UserInvitationService}, {@link UserPermissionLevelService} and {@link
+ * UserActivationService} mocked. That they really stay within the caller's club is proven end to
+ * end in {@link StaffListIntegrationTest}, {@link AuthFlowIntegrationTest} and {@link
+ * UserActivationIntegrationTest}.
  */
 @WebMvcTest(
     controllers = UserManagementController.class,
@@ -59,6 +64,7 @@ class UserManagementControllerTest {
   @MockitoBean private StaffListService staffListService;
   @MockitoBean private UserInvitationService userInvitationService;
   @MockitoBean private UserPermissionLevelService userPermissionLevelService;
+  @MockitoBean private UserActivationService userActivationService;
   @MockitoBean private StaffPhotoService staffPhotoService;
 
   // --- GET /auth/users ---------------------------------------------------------------------------
@@ -182,7 +188,7 @@ class UserManagementControllerTest {
     created.setTitle(Title.HEAD_COACH);
     created.setPermissionLevel(PermissionLevel.EDIT_FULL);
     created.setDateOfBirth(LocalDate.of(1985, 3, 1));
-    when(userInvitationService.invite(any())).thenReturn(created);
+    when(userInvitationService.invite(any(), any())).thenReturn(created);
 
     mockMvc
         .perform(invite(PermissionLevel.ADMIN, VALID_BODY))
@@ -211,7 +217,7 @@ class UserManagementControllerTest {
           .andExpect(status().isForbidden())
           .andExpect(jsonPath("$.message").value("Access denied"));
     }
-    verify(userInvitationService, never()).invite(any());
+    verify(userInvitationService, never()).invite(any(), any());
   }
 
   @Test
@@ -220,7 +226,7 @@ class UserManagementControllerTest {
         .perform(
             post("/auth/users/invite").contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
         .andExpect(status().isUnauthorized());
-    verify(userInvitationService, never()).invite(any());
+    verify(userInvitationService, never()).invite(any(), any());
   }
 
   @Test
@@ -240,12 +246,13 @@ class UserManagementControllerTest {
     for (String body : invalidBodies) {
       mockMvc.perform(invite(PermissionLevel.ADMIN, body)).andExpect(status().isBadRequest());
     }
-    verify(userInvitationService, never()).invite(any());
+    verify(userInvitationService, never()).invite(any(), any());
   }
 
   @Test
   void aTakenEmailIs409() throws Exception {
-    when(userInvitationService.invite(any())).thenThrow(new EmailAlreadyRegisteredException());
+    when(userInvitationService.invite(any(), any()))
+        .thenThrow(new EmailAlreadyRegisteredException());
 
     mockMvc
         .perform(invite(PermissionLevel.ADMIN, VALID_BODY))
@@ -386,6 +393,243 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(
             jsonPath("$.message").value("The resource was modified concurrently, please retry"));
+  }
+
+  /** The caller re-check (KAN-37): the generic 401, the same body as a request without a token. */
+  @Test
+  void aCallerWhoCanNoLongerActGetsTheGeneric401OnInviteAndPermissionLevel() throws Exception {
+    when(userInvitationService.invite(any(), any()))
+        .thenThrow(new CurrentUserUnavailableException());
+    when(userPermissionLevelService.changePermissionLevel(any(), any(), any()))
+        .thenThrow(new CurrentUserUnavailableException());
+
+    for (MockHttpServletRequestBuilder request :
+        List.of(
+            invite(PermissionLevel.ADMIN, VALID_BODY),
+            changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))) {
+      assertGeneric401(request);
+    }
+    verify(userInvitationService)
+        .invite(any(), eq(new AuthenticatedUser("user-1", "club-a", PermissionLevel.ADMIN)));
+  }
+
+  // --- POST /auth/users/{id}/deactivate and /reactivate ------------------------------------------
+
+  /** Both endpoints, as (path segment, service call) pairs, for the contract they share. */
+  private static final List<String> ACTIONS = List.of("deactivate", "reactivate");
+
+  private BiFunction<String, AuthenticatedUser, User> serviceCall(String action) {
+    return action.equals("deactivate")
+        ? userActivationService::deactivate
+        : userActivationService::reactivate;
+  }
+
+  @Test
+  void anAdminDeactivatesAUserAndGetsTheUserResponse() throws Exception {
+    User deactivated = target(false);
+    when(userActivationService.deactivate(any(), any())).thenReturn(deactivated);
+    when(staffPhotoService.hasPhoto(deactivated)).thenReturn(true);
+
+    String body =
+        mockMvc
+            .perform(activation(PermissionLevel.ADMIN, "deactivate", "user-2"))
+            .andExpect(status().isOk())
+            .andExpect(
+                content()
+                    .json(
+                        """
+                        {"id": "user-2", "email": "analyst@example.com", "fullName": "Noa Cohen",
+                         "title": "ANALYST", "permissionLevel": "ADMIN",
+                         "dateOfBirth": "1990-06-15", "active": false, "hasPhoto": true,
+                         "activated": true}
+                        """,
+                        true))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    assertThat(body).doesNotContain("password", "hash-that-must-not-leak", "sessionsInvalidatedAt");
+    verify(userActivationService)
+        .deactivate("user-2", new AuthenticatedUser("user-1", "club-a", PermissionLevel.ADMIN));
+    verifyNoMoreInteractions(userActivationService);
+  }
+
+  @Test
+  void anAdminReactivatesAUserAndGetsTheUserResponse() throws Exception {
+    User reactivated = target(true);
+    reactivated.setPasswordHash(null);
+    when(userActivationService.reactivate(any(), any())).thenReturn(reactivated);
+
+    mockMvc
+        .perform(activation(PermissionLevel.ADMIN, "reactivate", "user-2"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value("user-2"))
+        .andExpect(jsonPath("$.active").value(true))
+        .andExpect(jsonPath("$.hasPhoto").value(false))
+        .andExpect(jsonPath("$.activated").value(false));
+    verify(userActivationService)
+        .reactivate("user-2", new AuthenticatedUser("user-1", "club-a", PermissionLevel.ADMIN));
+    verifyNoMoreInteractions(userActivationService);
+    verify(staffPhotoService).hasPhoto(reactivated);
+  }
+
+  /** No body is needed, and any body sent is ignored rather than parsed. */
+  @Test
+  void aBodyIsIgnored() throws Exception {
+    when(userActivationService.deactivate(any(), any())).thenReturn(target(false));
+
+    mockMvc
+        .perform(
+            activation(PermissionLevel.ADMIN, "deactivate", "user-2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"active\": true, \"clubId\": \"club-b\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false));
+  }
+
+  @Test
+  void aNonAdminGets403AndNothingChanges() throws Exception {
+    for (String action : ACTIONS) {
+      for (PermissionLevel level :
+          new PermissionLevel[] {
+            PermissionLevel.EDIT_FULL, PermissionLevel.EDIT_PARTIAL, PermissionLevel.VIEW_ONLY
+          }) {
+        mockMvc
+            .perform(activation(level, action, "user-2"))
+            .andExpect(status().isForbidden())
+            .andExpect(errorBody(403, "Forbidden", "Access denied"));
+      }
+    }
+    verifyNoInteractions(userActivationService, staffPhotoService);
+  }
+
+  @Test
+  void withoutAnAccessTokenDeactivateAndReactivateAre401() throws Exception {
+    for (String action : ACTIONS) {
+      mockMvc
+          .perform(post("/auth/users/user-2/" + action))
+          .andExpect(status().isUnauthorized())
+          .andExpect(errorBody(401, "Unauthorized", "Authentication required"));
+    }
+    verifyNoInteractions(userActivationService, staffPhotoService);
+  }
+
+  @Test
+  void anUnknownUserIs404OnDeactivateAndReactivate() throws Exception {
+    when(userActivationService.deactivate(any(), any()))
+        .thenThrow(new NotFoundException("User not found"));
+    when(userActivationService.reactivate(any(), any()))
+        .thenThrow(new NotFoundException("User not found"));
+
+    for (String action : ACTIONS) {
+      mockMvc
+          .perform(activation(PermissionLevel.ADMIN, action, "no-such-user"))
+          .andExpect(status().isNotFound())
+          .andExpect(errorBody(404, "Not Found", "User not found"));
+    }
+    verifyNoInteractions(staffPhotoService);
+  }
+
+  @Test
+  void deactivatingOrReactivatingYourselfIs409() throws Exception {
+    when(userActivationService.deactivate(eq("user-1"), any()))
+        .thenThrow(new CannotChangeOwnActiveStatusException());
+    when(userActivationService.reactivate(eq("user-1"), any()))
+        .thenThrow(new CannotChangeOwnActiveStatusException());
+
+    for (String action : ACTIONS) {
+      mockMvc
+          .perform(activation(PermissionLevel.ADMIN, action, "user-1"))
+          .andExpect(status().isConflict())
+          .andExpect(
+              errorBody(
+                  409,
+                  "Conflict",
+                  "You can't deactivate or reactivate yourself; another ADMIN must do it"));
+    }
+  }
+
+  @Test
+  void aCallerWhoCanNoLongerActGetsTheGeneric401() throws Exception {
+    when(userActivationService.deactivate(any(), any()))
+        .thenThrow(new CurrentUserUnavailableException());
+    when(userActivationService.reactivate(any(), any()))
+        .thenThrow(new CurrentUserUnavailableException());
+
+    for (String action : ACTIONS) {
+      assertGeneric401(activation(PermissionLevel.ADMIN, action, "user-2"));
+    }
+    verifyNoInteractions(staffPhotoService);
+  }
+
+  /** Every retry lost a race (KAN-24): a generic 409, not a 500. */
+  @Test
+  void anActivationChangeWhoseRetriesAllConflictedIs409() throws Exception {
+    for (String action : ACTIONS) {
+      when(serviceCall(action).apply(anyString(), any()))
+          .thenThrow(new OptimisticLockingFailureException("Cannot save entity user-2"));
+
+      mockMvc
+          .perform(activation(PermissionLevel.ADMIN, action, "user-2"))
+          .andExpect(status().isConflict())
+          .andExpect(
+              errorBody(409, "Conflict", "The resource was modified concurrently, please retry"));
+    }
+  }
+
+  /** Only POST is mapped. */
+  @Test
+  void otherMethodsAre405() throws Exception {
+    for (String action : ACTIONS) {
+      mockMvc
+          .perform(
+              get("/auth/users/user-2/" + action)
+                  .header(
+                      "Authorization",
+                      "Bearer " + jwtService.issue(caller(PermissionLevel.ADMIN)).value()))
+          .andExpect(status().isMethodNotAllowed());
+    }
+    verifyNoInteractions(userActivationService);
+  }
+
+  private void assertGeneric401(MockHttpServletRequestBuilder request) throws Exception {
+    mockMvc
+        .perform(request)
+        .andExpect(status().isUnauthorized())
+        .andExpect(errorBody(401, "Unauthorized", "Authentication required"));
+  }
+
+  /** The whole error body, {@code timestamp} aside: exactly these fields, nothing more. */
+  private static ResultMatcher errorBody(int status, String error, String message) {
+    return result -> {
+      Map<String, Object> body =
+          new HashMap<>(
+              JsonPath.<Map<String, Object>>read(result.getResponse().getContentAsString(), "$"));
+      assertThat(body.remove("timestamp")).as("timestamp").isNotNull();
+      assertThat(body)
+          .isEqualTo(
+              Map.of("status", status, "error", error, "message", message, "details", List.of()));
+    };
+  }
+
+  private MockHttpServletRequestBuilder activation(
+      PermissionLevel callerLevel, String action, String targetId) {
+    return post("/auth/users/" + targetId + "/" + action)
+        .header("Authorization", "Bearer " + jwtService.issue(caller(callerLevel)).value());
+  }
+
+  private static User target(boolean active) {
+    User user = new User();
+    user.setId("user-2");
+    user.setClubId("club-a");
+    user.setEmail("analyst@example.com");
+    user.setFullName("Noa Cohen");
+    user.setTitle(Title.ANALYST);
+    user.setPermissionLevel(PermissionLevel.ADMIN);
+    user.setDateOfBirth(LocalDate.of(1990, 6, 15));
+    user.setPasswordHash("hash-that-must-not-leak");
+    user.setActive(active);
+    return user;
   }
 
   private MockHttpServletRequestBuilder list(PermissionLevel callerLevel) {
