@@ -12,8 +12,11 @@ import java.time.LocalDate;
  * database (see {@link CurrentUserService}).
  *
  * <p>{@link #active} is always {@code true} in a response (an inactive caller gets a 401 instead);
- * it's kept for parity with {@link UserResponse}. {@link #hasPhoto} says whether {@code GET
- * /users/me/photo} has an image, so the client can skip that request when it hasn't.
+ * it's kept for parity with {@link UserResponse}. So is {@link #activated}, always {@code true}
+ * too: a user who hasn't set a password can't log in, so can't hold an access token. It's still
+ * derived from the stored user, like in {@link UserResponse}, not hard-coded. {@link #hasPhoto}
+ * says whether {@code GET /users/me/photo} has an image, so the client can skip that request when
+ * it hasn't.
  */
 record CurrentUserResponse(
     String id,
@@ -24,6 +27,7 @@ record CurrentUserResponse(
     LocalDate dateOfBirth,
     boolean active,
     boolean hasPhoto,
+    boolean activated,
     ClubSummary club) {
 
   /**
@@ -43,6 +47,7 @@ record CurrentUserResponse(
         user.getDateOfBirth(),
         user.isActive(),
         hasPhoto,
+        user.getPasswordHash() != null,
         new ClubSummary(club.getId(), club.getName(), clubHasLogo));
   }
 }

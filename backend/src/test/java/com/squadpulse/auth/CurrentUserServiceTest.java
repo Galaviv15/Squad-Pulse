@@ -47,6 +47,7 @@ class CurrentUserServiceTest {
                 LocalDate.of(1985, 3, 1),
                 true,
                 false,
+                true,
                 new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example", false)));
   }
 
@@ -58,6 +59,20 @@ class CurrentUserServiceTest {
     when(staffPhotoService.hasPhoto(user)).thenReturn(true);
 
     assertThat(service.currentUser(CALLER).hasPhoto()).isTrue();
+  }
+
+  /**
+   * Derived from the stored user, not hard-coded. A caller without a password can't really get a
+   * token, so this only proves where the value comes from.
+   */
+  @Test
+  void activatedComesFromTheStoredPasswordHash() {
+    User user = user(true);
+    user.setPasswordHash(null);
+    when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+    when(clubRepository.findById("club-a")).thenReturn(Optional.of(club()));
+
+    assertThat(service.currentUser(CALLER).activated()).isFalse();
   }
 
   @Test
@@ -127,6 +142,7 @@ class CurrentUserServiceTest {
     user.setPermissionLevel(PermissionLevel.VIEW_ONLY);
     user.setDateOfBirth(LocalDate.of(1985, 3, 1));
     user.setActive(active);
+    user.setPasswordHash("hash-that-must-not-leak");
     return user;
   }
 

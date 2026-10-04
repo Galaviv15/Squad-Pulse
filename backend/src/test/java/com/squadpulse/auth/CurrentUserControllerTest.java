@@ -82,6 +82,7 @@ class CurrentUserControllerTest {
             .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
             .andExpect(jsonPath("$.active").value(true))
             .andExpect(jsonPath("$.hasPhoto").value(true))
+            .andExpect(jsonPath("$.activated").value(true))
             .andExpect(jsonPath("$.club.id").value("club-a"))
             .andExpect(jsonPath("$.club.name").value("Hapoel Example"))
             .andExpect(jsonPath("$.club.hasLogo").value(true))
@@ -98,6 +99,7 @@ class CurrentUserControllerTest {
             "dateOfBirth",
             "active",
             "hasPhoto",
+            "activated",
             "club");
     assertThat(JsonPath.<Map<String, Object>>read(body, "$.club").keySet())
         .containsExactly("id", "name", "hasLogo");

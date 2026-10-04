@@ -75,6 +75,7 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
         .andExpect(jsonPath("$.active").value(true))
         .andExpect(jsonPath("$.hasPhoto").value(false))
+        .andExpect(jsonPath("$.activated").value(false))
         .andExpect(content().string(not(containsString("password"))));
     // A new user can't have a photo yet: no storage query.
     verifyNoInteractions(staffPhotoService);
@@ -152,6 +153,7 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.title").value("ANALYST"))
         .andExpect(jsonPath("$.permissionLevel").value("EDIT_PARTIAL"))
         .andExpect(jsonPath("$.hasPhoto").value(false))
+        .andExpect(jsonPath("$.activated").value(true))
         .andExpect(content().string(not(containsString("password"))))
         .andExpect(content().string(not(containsString("hash-that-must-not-leak"))));
     verify(userPermissionLevelService)
@@ -174,6 +176,20 @@ class UserManagementControllerTest {
         .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.hasPhoto").value(true));
+  }
+
+  /** An admin may change the level of an invited user who hasn't set a password yet. */
+  @Test
+  void aPermissionLevelChangeOnANotYetActivatedUserReportsActivatedFalse() throws Exception {
+    User invited = new User();
+    invited.setId("user-2");
+    invited.setPermissionLevel(PermissionLevel.EDIT_PARTIAL);
+    when(userPermissionLevelService.changePermissionLevel(any(), any(), any())).thenReturn(invited);
+
+    mockMvc
+        .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.activated").value(false));
   }
 
   @Test
