@@ -85,7 +85,7 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 
 ## CI
 
-One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. Two independent jobs run in parallel:
+One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. Both jobs run on `ubuntu-24.04`, pinned on purpose instead of `ubuntu-latest`, so the runner OS (and its Docker, which Testcontainers uses) changes only in a PR that changes it; moving to `ubuntu-26.04` (Docker 29) is a deliberate future step. Two independent jobs run in parallel:
 
 - **`backend-ci`** — JDK 21 (Temurin): `./mvnw spotless:check`, then `./mvnw verify`.
 - **`frontend-ci`** — Node 22: `npm ci`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`.

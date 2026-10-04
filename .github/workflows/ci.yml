@@ -15,16 +15,19 @@ permissions:
   contents: read
 
 jobs:
+  # The runner image is pinned on purpose (not ubuntu-latest), so the OS only changes in
+  # a PR that changes it. Moving to ubuntu-26.04 (Docker 29, which Testcontainers uses)
+  # is a deliberate future change.
   backend-ci:
     name: backend-ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -41,14 +44,14 @@ jobs:
 
   frontend-ci:
     name: frontend-ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
