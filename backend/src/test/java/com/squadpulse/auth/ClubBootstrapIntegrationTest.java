@@ -1,6 +1,7 @@
 package com.squadpulse.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.squadpulse.common.ClubContext;
 import jakarta.validation.Validator;
@@ -66,11 +67,12 @@ class ClubBootstrapIntegrationTest {
   private final Deque<String> promptAnswers = new ArrayDeque<>();
   private final List<String> promptsShown = new ArrayList<>();
   private final List<Integer> exitCodes = new ArrayList<>();
+  private ClubBootstrapService service;
   private ClubBootstrapRunner runner;
 
   @BeforeEach
   void setUp() {
-    ClubBootstrapService service =
+    service =
         new ClubBootstrapService(
             clubRepository,
             userRepository,
@@ -190,6 +192,69 @@ class ClubBootstrapIntegrationTest {
         new DefaultApplicationArguments(
             "--club-name=Hapoel Example",
             "--manager-email=not-an-email",
+            "--manager-full-name=Dana Levi"));
+
+    assertThat(exitCodes).containsExactly(ClubBootstrapRunner.EXIT_FAILURE);
+    assertNothingWasCreated();
+  }
+
+  /**
+   * The same name rule as {@code PATCH /clubs/me} (KAN-38), from {@code @Size} on {@link Club}: a
+   * name the bootstrap accepts is never one the API would reject.
+   */
+  @Test
+  void aClubNameOverTheLimitCreatesNothing() throws Exception {
+    answerPrompts(OWNER_SECRET, PASSWORD, PASSWORD);
+
+    runner.run(
+        new DefaultApplicationArguments(
+            "--club-name=" + "a".repeat(Club.NAME_MAX_LENGTH + 1),
+            "--manager-email=manager@example.com",
+            "--manager-full-name=Dana Levi"));
+
+    assertThat(exitCodes).containsExactly(ClubBootstrapRunner.EXIT_FAILURE);
+    assertThatThrownBy(
+            () ->
+                service.bootstrap(
+                    OWNER_SECRET,
+                    new ClubBootstrapService.NewClub(
+                        "a".repeat(Club.NAME_MAX_LENGTH + 1),
+                        "manager@example.com",
+                        PASSWORD,
+                        "Dana Levi",
+                        null)))
+        .isInstanceOf(ClubBootstrapException.class)
+        .hasMessageContaining("club name size must be between 0 and 100");
+    assertNothingWasCreated();
+  }
+
+  /** Trimmed before validation, so padding neither counts toward the limit nor is stored. */
+  @Test
+  void aPaddedClubNameOfExactlyTheLimitIsStoredTrimmed() throws Exception {
+    String hundred = "א".repeat(Club.NAME_MAX_LENGTH);
+    answerPrompts(OWNER_SECRET, PASSWORD, PASSWORD);
+
+    runner.run(
+        new DefaultApplicationArguments(
+            "--club-name=  " + hundred + " \t",
+            "--manager-email=manager@example.com",
+            "--manager-full-name=Dana Levi"));
+
+    assertThat(exitCodes).containsExactly(ClubBootstrapRunner.EXIT_SUCCESS);
+    assertThat(mongoTemplate.findAll(Club.class))
+        .singleElement()
+        .extracting(Club::getName)
+        .isEqualTo(hundred);
+  }
+
+  @Test
+  void aWhitespaceOnlyClubNameCreatesNothing() throws Exception {
+    answerPrompts(OWNER_SECRET, PASSWORD, PASSWORD);
+
+    runner.run(
+        new DefaultApplicationArguments(
+            "--club-name=   ",
+            "--manager-email=manager@example.com",
             "--manager-full-name=Dana Levi"));
 
     assertThat(exitCodes).containsExactly(ClubBootstrapRunner.EXIT_FAILURE);

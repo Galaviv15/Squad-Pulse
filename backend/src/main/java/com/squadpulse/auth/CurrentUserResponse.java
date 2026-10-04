@@ -16,7 +16,7 @@ import java.time.LocalDate;
  * too: a user who hasn't set a password can't log in, so can't hold an access token. It's still
  * derived from the stored user, like in {@link UserResponse}, not hard-coded. {@link #hasPhoto}
  * says whether {@code GET /users/me/photo} has an image, so the client can skip that request when
- * it hasn't.
+ * it hasn't. {@link #club} is the same {@link ClubResponse} that {@code GET /clubs/me} returns.
  */
 record CurrentUserResponse(
     String id,
@@ -28,13 +28,7 @@ record CurrentUserResponse(
     boolean active,
     boolean hasPhoto,
     boolean activated,
-    ClubSummary club) {
-
-  /**
-   * The caller's club, as much of it as the app header needs. {@code hasLogo} says whether {@code
-   * GET /clubs/me/logo} has an image, so the client can skip that request when it hasn't.
-   */
-  record ClubSummary(String id, String name, boolean hasLogo) {}
+    ClubResponse club) {
 
   static CurrentUserResponse from(
       User user, PermissionLevel effectiveLevel, boolean hasPhoto, Club club, boolean clubHasLogo) {
@@ -48,6 +42,6 @@ record CurrentUserResponse(
         user.isActive(),
         hasPhoto,
         user.getPasswordHash() != null,
-        new ClubSummary(club.getId(), club.getName(), clubHasLogo));
+        ClubResponse.from(club, clubHasLogo));
   }
 }
