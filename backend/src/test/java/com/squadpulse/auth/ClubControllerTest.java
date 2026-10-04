@@ -27,6 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
@@ -230,11 +231,31 @@ class ClubControllerTest {
     verify(clubSettingsService, never()).update(any(), any());
   }
 
-  /** A name that isn't a string can't be bound: a malformed body, the value never echoed. */
-  @Test
-  void aNonStringNameIsAMalformedBody() throws Exception {
+  /**
+   * Pins the installed Jackson's behavior as Boot configures it (no custom deserializer): a JSON
+   * scalar where a string is expected is coerced to its text, so it's an ordinary name — accepted,
+   * and validated like any other string.
+   */
+  @ParameterizedTest(name = "{0}")
+  @CsvSource(
+      delimiter = '|',
+      value = {"{\"name\": 123}   | 123", "{\"name\": 1.5}   | 1.5", "{\"name\": true}  | true"})
+  void aScalarNameIsCoercedToItsText(String body, String coerced) throws Exception {
+    mockMvc.perform(asAdmin(patchBody(body))).andExpect(status().isOk());
+
+    verify(clubSettingsService).update(ADMIN, new UpdateClubRequest(coerced));
+  }
+
+  /**
+   * An array or object can't be bound to a string at all (single-element arrays aren't unwrapped):
+   * a malformed body, the value never echoed.
+   */
+  @ParameterizedTest(name = "{0}")
+  @ValueSource(
+      strings = {"{\"name\": [\"x\"]}", "{\"name\": {\"a\": 1}}", "{\"name\": {\"secret\": 1}}"})
+  void anArrayOrObjectNameIsAMalformedBody(String body) throws Exception {
     mockMvc
-        .perform(asAdmin(patchBody("{\"name\": {\"secret\": 1}}")))
+        .perform(asAdmin(patchBody(body)))
         .andExpect(status().isBadRequest())
         .andExpect(
             errorBody(400, "Bad Request", "Malformed request body", List.of("name: invalid value")))
