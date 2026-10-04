@@ -1,9 +1,11 @@
 package com.squadpulse.auth;
 
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,22 +14,44 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** User management within the caller's club — only a Club Manager ({@code ADMIN}) may use it. */
+/**
+ * User management within the caller's club — only a Club Manager ({@code ADMIN}) may use it: the
+ * staff list, invitations and permission-level changes. The caller's own profile, {@code GET
+ * /auth/users/me}, is {@link CurrentUserController}'s, open to every authenticated user.
+ */
 @RestController
 @RequestMapping("/auth/users")
 class UserManagementController {
 
+  private final StaffListService staffListService;
   private final UserInvitationService userInvitationService;
   private final UserPermissionLevelService userPermissionLevelService;
   private final StaffPhotoService staffPhotoService;
 
   UserManagementController(
+      StaffListService staffListService,
       UserInvitationService userInvitationService,
       UserPermissionLevelService userPermissionLevelService,
       StaffPhotoService staffPhotoService) {
+    this.staffListService = staffListService;
     this.userInvitationService = userInvitationService;
     this.userPermissionLevelService = userPermissionLevelService;
     this.staffPhotoService = staffPhotoService;
+  }
+
+  /**
+   * Every user of the caller's club — deactivated and not-yet-activated ones included — as a plain
+   * array, in {@link StaffListService#STAFF_ORDER}. Read-only (see {@link StaffListService}).
+   *
+   * <p>{@code ADMIN} only, deliberately: it exposes emails, dates of birth, permission levels and
+   * deactivated users, so it's a management screen, not a staff directory. If every user ever needs
+   * a directory, that gets its own slimmer response in a separate ticket rather than opening this
+   * one up.
+   */
+  @GetMapping
+  @PreAuthorize("hasAuthority('ADMIN')")
+  List<UserResponse> list() {
+    return staffListService.list();
   }
 
   /**

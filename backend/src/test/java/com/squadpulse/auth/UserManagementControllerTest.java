@@ -1,5 +1,6 @@
 package com.squadpulse.auth;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
@@ -9,14 +10,18 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.jayway.jsonpath.JsonPath;
 import com.squadpulse.common.NotFoundException;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
@@ -30,8 +35,9 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 /**
  * The HTTP contract of {@link UserManagementController} behind the real security chain, with {@link
- * UserInvitationService} and {@link UserPermissionLevelService} mocked. That both really stay
- * within the caller's club is proven end to end in {@link AuthFlowIntegrationTest}.
+ * StaffListService}, {@link UserInvitationService} and {@link UserPermissionLevelService} mocked.
+ * That they really stay within the caller's club is proven end to end in {@link
+ * StaffListIntegrationTest} and {@link AuthFlowIntegrationTest}.
  */
 @WebMvcTest(
     controllers = UserManagementController.class,
@@ -50,9 +56,122 @@ class UserManagementControllerTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtService jwtService;
+  @MockitoBean private StaffListService staffListService;
   @MockitoBean private UserInvitationService userInvitationService;
   @MockitoBean private UserPermissionLevelService userPermissionLevelService;
   @MockitoBean private StaffPhotoService staffPhotoService;
+
+  // --- GET /auth/users ---------------------------------------------------------------------------
+
+  /**
+   * Field names and order as Jackson 3 writes the {@link UserResponse} record: its component order,
+   * with {@code activated} last. Nothing internal to {@link User} leaks.
+   */
+  @Test
+  void anAdminGetsTheStaffListAsAPlainArrayWithEveryUserField() throws Exception {
+    User activated = new User();
+    activated.setId("user-1");
+    activated.setClubId("club-a");
+    activated.setEmail("manager@example.com");
+    activated.setFullName("Dana Levi");
+    activated.setTitle(Title.CLUB_MANAGER);
+    activated.setPermissionLevel(PermissionLevel.ADMIN);
+    activated.setDateOfBirth(LocalDate.of(1985, 3, 1));
+    activated.setPasswordHash("hash-that-must-not-leak");
+    User invited = new User();
+    invited.setId("user-2");
+    invited.setClubId("club-a");
+    invited.setEmail("analyst@example.com");
+    invited.setFullName("Noa Cohen");
+    invited.setTitle(Title.ANALYST);
+    invited.setPermissionLevel(PermissionLevel.VIEW_ONLY);
+    invited.setActive(false);
+    when(staffListService.list())
+        .thenReturn(List.of(UserResponse.from(activated, true), UserResponse.from(invited, false)));
+
+    String body =
+        mockMvc
+            .perform(list(PermissionLevel.ADMIN))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].id").value("user-1"))
+            .andExpect(jsonPath("$[0].email").value("manager@example.com"))
+            .andExpect(jsonPath("$[0].fullName").value("Dana Levi"))
+            .andExpect(jsonPath("$[0].title").value("CLUB_MANAGER"))
+            .andExpect(jsonPath("$[0].permissionLevel").value("ADMIN"))
+            .andExpect(jsonPath("$[0].dateOfBirth").value("1985-03-01"))
+            .andExpect(jsonPath("$[0].active").value(true))
+            .andExpect(jsonPath("$[0].hasPhoto").value(true))
+            .andExpect(jsonPath("$[0].activated").value(true))
+            .andExpect(jsonPath("$[1].id").value("user-2"))
+            .andExpect(jsonPath("$[1].dateOfBirth").isEmpty())
+            .andExpect(jsonPath("$[1].active").value(false))
+            .andExpect(jsonPath("$[1].hasPhoto").value(false))
+            .andExpect(jsonPath("$[1].activated").value(false))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    for (String user : List.of("$[0]", "$[1]")) {
+      assertThat(JsonPath.<Map<String, Object>>read(body, user).keySet())
+          .containsExactly(
+              "id",
+              "email",
+              "fullName",
+              "title",
+              "permissionLevel",
+              "dateOfBirth",
+              "active",
+              "hasPhoto",
+              "activated");
+    }
+    assertThat(body)
+        .doesNotContain(
+            "password",
+            "hash-that-must-not-leak",
+            "version",
+            "clubId",
+            "club-a",
+            "sessionsInvalidatedAt",
+            "createdAt",
+            "updatedAt");
+  }
+
+  @Test
+  void anEmptyClubListIsAnEmptyArray() throws Exception {
+    when(staffListService.list()).thenReturn(List.of());
+
+    mockMvc
+        .perform(list(PermissionLevel.ADMIN))
+        .andExpect(status().isOk())
+        .andExpect(content().json("[]", true));
+  }
+
+  @Test
+  void aNonAdminGets403ForTheStaffList() throws Exception {
+    for (PermissionLevel level :
+        new PermissionLevel[] {
+          PermissionLevel.EDIT_FULL, PermissionLevel.EDIT_PARTIAL, PermissionLevel.VIEW_ONLY
+        }) {
+      mockMvc
+          .perform(list(level))
+          .andExpect(status().isForbidden())
+          .andExpect(jsonPath("$.message").value("Access denied"));
+    }
+    verifyNoInteractions(staffListService);
+  }
+
+  @Test
+  void theStaffListWithoutAnAccessTokenIs401() throws Exception {
+    mockMvc
+        .perform(get("/auth/users"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.message").value("Authentication required"));
+    verifyNoInteractions(staffListService);
+  }
+
+  // --- POST /auth/users/invite
+  // --------------------------------------------------------------------
 
   @Test
   void anAdminInvitesAUserAndGets201WithoutAnyPasswordField() throws Exception {
@@ -75,6 +194,7 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
         .andExpect(jsonPath("$.active").value(true))
         .andExpect(jsonPath("$.hasPhoto").value(false))
+        .andExpect(jsonPath("$.activated").value(false))
         .andExpect(content().string(not(containsString("password"))));
     // A new user can't have a photo yet: no storage query.
     verifyNoInteractions(staffPhotoService);
@@ -152,6 +272,7 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.title").value("ANALYST"))
         .andExpect(jsonPath("$.permissionLevel").value("EDIT_PARTIAL"))
         .andExpect(jsonPath("$.hasPhoto").value(false))
+        .andExpect(jsonPath("$.activated").value(true))
         .andExpect(content().string(not(containsString("password"))))
         .andExpect(content().string(not(containsString("hash-that-must-not-leak"))));
     verify(userPermissionLevelService)
@@ -174,6 +295,20 @@ class UserManagementControllerTest {
         .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.hasPhoto").value(true));
+  }
+
+  /** An admin may change the level of an invited user who hasn't set a password yet. */
+  @Test
+  void aPermissionLevelChangeOnANotYetActivatedUserReportsActivatedFalse() throws Exception {
+    User invited = new User();
+    invited.setId("user-2");
+    invited.setPermissionLevel(PermissionLevel.EDIT_PARTIAL);
+    when(userPermissionLevelService.changePermissionLevel(any(), any(), any())).thenReturn(invited);
+
+    mockMvc
+        .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.activated").value(false));
   }
 
   @Test
@@ -251,6 +386,11 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(
             jsonPath("$.message").value("The resource was modified concurrently, please retry"));
+  }
+
+  private MockHttpServletRequestBuilder list(PermissionLevel callerLevel) {
+    return get("/auth/users")
+        .header("Authorization", "Bearer " + jwtService.issue(caller(callerLevel)).value());
   }
 
   private MockHttpServletRequestBuilder invite(PermissionLevel callerLevel, String body) {

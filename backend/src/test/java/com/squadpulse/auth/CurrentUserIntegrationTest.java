@@ -114,6 +114,7 @@ class CurrentUserIntegrationTest {
         .andExpect(jsonPath("$.dateOfBirth").value("1985-03-01"))
         .andExpect(jsonPath("$.active").value(true))
         .andExpect(jsonPath("$.hasPhoto").value(false))
+        .andExpect(jsonPath("$.activated").value(true))
         .andExpect(jsonPath("$.club.id").value(club.getId()))
         .andExpect(jsonPath("$.club.name").value("Hapoel Example"))
         .andExpect(jsonPath("$.club.hasLogo").value(false));
@@ -141,6 +142,7 @@ class CurrentUserIntegrationTest {
             "dateOfBirth",
             "active",
             "hasPhoto",
+            "activated",
             "club")
         .doesNotContain("passwordHash", "version", "sessionsInvalidatedAt", "clubId");
     assertThat(body).doesNotContain("password", "$argon2", "version", "sessionsInvalidatedAt");
