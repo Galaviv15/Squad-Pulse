@@ -182,7 +182,7 @@ class UserManagementControllerTest {
     created.setTitle(Title.HEAD_COACH);
     created.setPermissionLevel(PermissionLevel.EDIT_FULL);
     created.setDateOfBirth(LocalDate.of(1985, 3, 1));
-    when(userInvitationService.invite(any())).thenReturn(created);
+    when(userInvitationService.invite(any(), any())).thenReturn(created);
 
     mockMvc
         .perform(invite(PermissionLevel.ADMIN, VALID_BODY))
@@ -211,7 +211,7 @@ class UserManagementControllerTest {
           .andExpect(status().isForbidden())
           .andExpect(jsonPath("$.message").value("Access denied"));
     }
-    verify(userInvitationService, never()).invite(any());
+    verify(userInvitationService, never()).invite(any(), any());
   }
 
   @Test
@@ -220,7 +220,7 @@ class UserManagementControllerTest {
         .perform(
             post("/auth/users/invite").contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
         .andExpect(status().isUnauthorized());
-    verify(userInvitationService, never()).invite(any());
+    verify(userInvitationService, never()).invite(any(), any());
   }
 
   @Test
@@ -240,12 +240,13 @@ class UserManagementControllerTest {
     for (String body : invalidBodies) {
       mockMvc.perform(invite(PermissionLevel.ADMIN, body)).andExpect(status().isBadRequest());
     }
-    verify(userInvitationService, never()).invite(any());
+    verify(userInvitationService, never()).invite(any(), any());
   }
 
   @Test
   void aTakenEmailIs409() throws Exception {
-    when(userInvitationService.invite(any())).thenThrow(new EmailAlreadyRegisteredException());
+    when(userInvitationService.invite(any(), any()))
+        .thenThrow(new EmailAlreadyRegisteredException());
 
     mockMvc
         .perform(invite(PermissionLevel.ADMIN, VALID_BODY))
@@ -386,6 +387,27 @@ class UserManagementControllerTest {
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(
             jsonPath("$.message").value("The resource was modified concurrently, please retry"));
+  }
+
+  /** The caller re-check (KAN-37): the generic 401, the same body as a request without a token. */
+  @Test
+  void aCallerWhoCanNoLongerActGetsTheGeneric401OnInviteAndPermissionLevel() throws Exception {
+    when(userInvitationService.invite(any(), any()))
+        .thenThrow(new CurrentUserUnavailableException());
+    when(userPermissionLevelService.changePermissionLevel(any(), any(), any()))
+        .thenThrow(new CurrentUserUnavailableException());
+
+    for (MockHttpServletRequestBuilder request :
+        List.of(
+            invite(PermissionLevel.ADMIN, VALID_BODY),
+            changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))) {
+      mockMvc
+          .perform(request)
+          .andExpect(status().isUnauthorized())
+          .andExpect(jsonPath("$.message").value("Authentication required"));
+    }
+    verify(userInvitationService)
+        .invite(any(), eq(new AuthenticatedUser("user-1", "club-a", PermissionLevel.ADMIN)));
   }
 
   private MockHttpServletRequestBuilder list(PermissionLevel callerLevel) {

@@ -23,7 +23,9 @@ class UserPermissionLevelServiceTest {
       new AuthenticatedUser("admin-1", "club-a", PermissionLevel.ADMIN);
 
   private final UserRepository userRepository = mock(UserRepository.class);
-  private final UserPermissionLevelService service = new UserPermissionLevelService(userRepository);
+  private final ActiveCallerCheck activeCallerCheck = mock(ActiveCallerCheck.class);
+  private final UserPermissionLevelService service =
+      new UserPermissionLevelService(userRepository, activeCallerCheck);
 
   @Test
   void setsTheNewLevelAndSavesThroughTheScopedRepositoryLeavingTheTitleAlone() {
@@ -75,6 +77,37 @@ class UserPermissionLevelServiceTest {
             () -> service.changePermissionLevel("admin-1", PermissionLevel.VIEW_ONLY, CALLER))
         .isInstanceOf(CannotChangeOwnPermissionLevelException.class);
     verifyNoInteractions(userRepository);
+  }
+
+  // --- caller re-check (KAN-37) ------------------------------------------------------------------
+
+  /** 401 before the self-change 409 and the target's 404: nothing else is even looked at. */
+  @Test
+  void aCallerWhoCanNoLongerActIsRejectedBeforeAnythingElse() {
+    when(activeCallerCheck.requireActive(CALLER)).thenThrow(new CurrentUserUnavailableException());
+
+    for (String target : new String[] {"user-2", "admin-1", "no-such-user"}) {
+      assertThatThrownBy(
+              () -> service.changePermissionLevel(target, PermissionLevel.VIEW_ONLY, CALLER))
+          .isInstanceOf(CurrentUserUnavailableException.class);
+    }
+    verifyNoInteractions(userRepository);
+  }
+
+  @Test
+  void theCallerIsCheckedOnceBeforeTheRetryLoop() {
+    when(userRepository.findById("user-2"))
+        .thenAnswer(invocation -> Optional.of(user("user-2", PermissionLevel.VIEW_ONLY)));
+    when(userRepository.save(any(User.class)))
+        .thenThrow(new OptimisticLockingFailureException("conflict"))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.changePermissionLevel("user-2", PermissionLevel.EDIT_FULL, CALLER);
+
+    InOrder order = inOrder(activeCallerCheck, userRepository);
+    order.verify(activeCallerCheck).requireActive(CALLER);
+    order.verify(userRepository, times(2)).findById("user-2");
+    verify(activeCallerCheck, times(1)).requireActive(any());
   }
 
   /** The club-scoped findById returns empty for another club's id too — same outcome. */

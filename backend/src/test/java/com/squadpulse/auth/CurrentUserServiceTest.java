@@ -27,7 +27,11 @@ class CurrentUserServiceTest {
   private final ClubLogoService clubLogoService = mock(ClubLogoService.class);
   private final StaffPhotoService staffPhotoService = mock(StaffPhotoService.class);
   private final CurrentUserService service =
-      new CurrentUserService(userRepository, clubRepository, clubLogoService, staffPhotoService);
+      new CurrentUserService(
+          new ActiveCallerCheck(userRepository),
+          clubRepository,
+          clubLogoService,
+          staffPhotoService);
 
   @Test
   void theLevelComesFromTheTokenAndEverythingElseFromTheDatabase() {

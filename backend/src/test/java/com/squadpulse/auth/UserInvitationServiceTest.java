@@ -14,10 +14,14 @@ import org.springframework.dao.DuplicateKeyException;
 
 class UserInvitationServiceTest {
 
+  private static final AuthenticatedUser CALLER =
+      new AuthenticatedUser("admin-1", "club-a", PermissionLevel.ADMIN);
+
   private final UserRepository userRepository = mock(UserRepository.class);
   private final PasswordResetService passwordResetService = mock(PasswordResetService.class);
+  private final ActiveCallerCheck activeCallerCheck = mock(ActiveCallerCheck.class);
   private final UserInvitationService service =
-      new UserInvitationService(userRepository, passwordResetService);
+      new UserInvitationService(userRepository, passwordResetService, activeCallerCheck);
 
   @Test
   void createsAnActiveUserWithNoPasswordAndLeavesTheClubToTheScopedRepository() {
@@ -31,7 +35,8 @@ class UserInvitationServiceTest {
                 "Dana Levi",
                 Title.HEAD_COACH,
                 PermissionLevel.EDIT_FULL,
-                LocalDate.of(1985, 3, 1)));
+                LocalDate.of(1985, 3, 1)),
+            CALLER);
 
     assertThat(invited.getEmail()).isEqualTo("coach@example.com");
     assertThat(invited.getFullName()).isEqualTo("Dana Levi");
@@ -56,7 +61,8 @@ class UserInvitationServiceTest {
                 "Dana Levi",
                 Title.HEAD_COACH,
                 PermissionLevel.EDIT_FULL,
-                null));
+                null),
+            CALLER);
 
     assertThat(invited).isSameAs(stored);
     verify(passwordResetService).sendActivationCode(stored);
@@ -74,9 +80,30 @@ class UserInvitationServiceTest {
                         "Dana Levi",
                         Title.HEAD_COACH,
                         PermissionLevel.EDIT_FULL,
-                        null)))
+                        null),
+                    CALLER))
         .isInstanceOf(EmailAlreadyRegisteredException.class);
 
     verifyNoInteractions(passwordResetService);
+  }
+
+  /** A deactivated or deleted caller is refused before anything is created or sent (KAN-37). */
+  @Test
+  void aCallerWhoCanNoLongerActCreatesNobody() {
+    when(activeCallerCheck.requireActive(CALLER)).thenThrow(new CurrentUserUnavailableException());
+
+    assertThatThrownBy(
+            () ->
+                service.invite(
+                    new InviteUserRequest(
+                        "coach@example.com",
+                        "Dana Levi",
+                        Title.HEAD_COACH,
+                        PermissionLevel.EDIT_FULL,
+                        null),
+                    CALLER))
+        .isInstanceOf(CurrentUserUnavailableException.class);
+
+    verifyNoInteractions(userRepository, passwordResetService);
   }
 }

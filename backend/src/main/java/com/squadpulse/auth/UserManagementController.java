@@ -18,6 +18,10 @@ import org.springframework.web.bind.annotation.RestController;
  * User management within the caller's club — only a Club Manager ({@code ADMIN}) may use it: the
  * staff list, invitations and permission-level changes. The caller's own profile, {@code GET
  * /auth/users/me}, is {@link CurrentUserController}'s, open to every authenticated user.
+ *
+ * <p>Every write here re-reads the caller first and answers the generic 401 if they've been
+ * deactivated or no longer exist, even while their access token is still valid (see {@link
+ * ActiveCallerCheck}). The read-only staff list doesn't.
  */
 @RestController
 @RequestMapping("/auth/users")
@@ -61,9 +65,11 @@ class UserManagementController {
   @PostMapping("/invite")
   @PreAuthorize("hasAuthority('ADMIN')")
   @ResponseStatus(HttpStatus.CREATED)
-  UserResponse invite(@Valid @RequestBody InviteUserRequest request) {
+  UserResponse invite(
+      @Valid @RequestBody InviteUserRequest request,
+      @AuthenticationPrincipal AuthenticatedUser caller) {
     // A new user can't have a photo yet: no storage query needed.
-    return UserResponse.from(userInvitationService.invite(request), false);
+    return UserResponse.from(userInvitationService.invite(request, caller), false);
   }
 
   /**

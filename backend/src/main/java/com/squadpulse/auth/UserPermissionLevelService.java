@@ -14,6 +14,11 @@ import org.springframework.stereotype.Service;
  * as an id that doesn't exist, so this can't be used to probe other clubs' user ids. The save goes
  * through the club-scoped repository too, which re-checks the stored document's real clubId.
  *
+ * <p><b>Caller re-check.</b> Before anything else, the caller is re-read (see {@link
+ * ActiveCallerCheck}): a deactivated or deleted {@code ADMIN} gets the generic 401 even while their
+ * access token is still valid, so they can't use that window to demote the club's remaining admins.
+ * Done once, before the retry loop. Order: caller (401), self-change (409), target (404).
+ *
  * <p><b>No self-change.</b> A caller can never change their own level, so a club's only {@code
  * ADMIN} can't demote themselves and leave the club with no one able to manage users. This was
  * chosen over a "don't demote the last ADMIN of the club" count: that would be a read-then-write
@@ -29,7 +34,9 @@ import org.springframework.stereotype.Service;
  * keeps its old {@code permissionLevel} claim until it expires (at most one access-token lifetime,
  * see {@link TokenProperties#accessTtl()}); {@link AuthService#refresh} re-reads the user, so the
  * next one carries the new level. The same accepted trade-off as for logout and deactivation (see
- * docs/spec.md section 10): no token revocation, no per-request lookup.
+ * docs/spec.md section 10): no token revocation, and no per-request lookup of the target. (The
+ * caller is re-read, see above, but only on user-management writes, and only to refuse a
+ * deactivated one — never to pick up a changed level.)
  *
  * <p><b>Concurrent writes: reload and retry, not 409</b> (KAN-24). If the user is saved by someone
  * else between the load and the save (e.g. their own password reset), the save fails on the version
@@ -44,15 +51,19 @@ import org.springframework.stereotype.Service;
 class UserPermissionLevelService {
 
   private final UserRepository userRepository;
+  private final ActiveCallerCheck activeCallerCheck;
 
-  UserPermissionLevelService(UserRepository userRepository) {
+  UserPermissionLevelService(UserRepository userRepository, ActiveCallerCheck activeCallerCheck) {
     this.userRepository = userRepository;
+    this.activeCallerCheck = activeCallerCheck;
   }
 
   /**
    * Setting the level the user already has is a successful no-op — checked against the reloaded
    * user on every attempt, so a concurrent change to the same level isn't saved again.
    *
+   * @throws CurrentUserUnavailableException if the caller no longer exists in their club or has
+   *     been deactivated
    * @throws CannotChangeOwnPermissionLevelException if {@code userId} is the caller's own
    * @throws NotFoundException if there's no such user in the caller's club — including one deleted
    *     between attempts
@@ -61,6 +72,7 @@ class UserPermissionLevelService {
    */
   User changePermissionLevel(
       String userId, PermissionLevel permissionLevel, AuthenticatedUser caller) {
+    activeCallerCheck.requireActive(caller);
     if (userId.equals(caller.userId())) {
       throw new CannotChangeOwnPermissionLevelException();
     }

@@ -42,6 +42,10 @@ import org.testcontainers.mongodb.MongoDBContainer;
  * test thread, right after the flow under test has loaded the user. {@link
  * PasswordResetCodeService} is mocked to accept any code, so no Redis is needed; codes themselves
  * are covered by {@link PasswordResetFlowIntegrationTest}.
+ *
+ * <p>Every test has a real, active {@code ADMIN} in club-a to call the user-management endpoints
+ * with: they re-read their caller first (see {@link ActiveCallerCheck}). Hooks on those flows are
+ * armed for the target's id only, so the caller's load doesn't trigger them.
  */
 @SpringBootTest(
     properties = {
@@ -80,9 +84,15 @@ class UserConcurrentWriteIntegrationTest {
   @Autowired private UserLoadHook hook;
   @MockitoBean private PasswordResetCodeService codeService;
 
+  /** The caller of every user-management request here. */
+  private User admin;
+
   @BeforeEach
-  void acceptAnyCode() {
+  void setUp() {
     when(codeService.verify(anyString(), anyString())).thenReturn(true);
+    admin = insertUser("club-a", "manager@example.com");
+    admin.setPermissionLevel(PermissionLevel.ADMIN);
+    admin = mongoTemplate.save(admin);
   }
 
   @AfterEach
@@ -103,7 +113,7 @@ class UserConcurrentWriteIntegrationTest {
                 "club-a",
                 () ->
                     permissionLevelService.changePermissionLevel(
-                        user.getId(), PermissionLevel.ADMIN, admin("club-a"))));
+                        user.getId(), PermissionLevel.ADMIN, adminCaller())));
 
     resetPassword(EMAIL).andExpect(status().isNoContent());
 
@@ -118,7 +128,8 @@ class UserConcurrentWriteIntegrationTest {
   @Test
   void aResetDuringAPermissionChangeIsKeptAndTheChangeStillSucceeds() throws Exception {
     User user = insertUser("club-a", EMAIL);
-    hook.onNextLoad(() -> passwordResetService.resetPassword(EMAIL, "123456", NEW_PASSWORD));
+    hook.onNextLoadOf(
+        user.getId(), () -> passwordResetService.resetPassword(EMAIL, "123456", NEW_PASSWORD));
 
     changePermissionLevel(user.getId(), PermissionLevel.ADMIN)
         .andExpect(status().isOk())
@@ -182,7 +193,7 @@ class UserConcurrentWriteIntegrationTest {
   @Test
   void aPermissionChangeThatConflictsOnEveryAttemptIs409AndChangesNothing() throws Exception {
     User user = insertUser("club-a", EMAIL);
-    hook.onEveryLoad(() -> bumpVersion(user));
+    hook.onEveryLoadOf(user.getId(), () -> bumpVersion(user));
 
     changePermissionLevel(user.getId(), PermissionLevel.ADMIN)
         .andExpect(status().isConflict())
@@ -196,7 +207,8 @@ class UserConcurrentWriteIntegrationTest {
   @Test
   void aUserDeletedDuringAPermissionChangeIs404() throws Exception {
     User user = insertUser("club-a", EMAIL);
-    hook.onNextLoad(
+    hook.onNextLoadOf(
+        user.getId(),
         () ->
             clubContext.callAs(
                 "club-a",
@@ -209,7 +221,7 @@ class UserConcurrentWriteIntegrationTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.message").value("User not found"));
 
-    assertThat(mongoTemplate.count(new Query(), User.class)).isZero();
+    assertThat(mongoTemplate.findById(user.getId(), User.class)).isNull();
   }
 
   // --- legacy documents --------------------------------------------------------------------------
@@ -221,7 +233,7 @@ class UserConcurrentWriteIntegrationTest {
 
     resetPassword(EMAIL).andExpect(status().isNoContent());
 
-    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(1);
+    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(2); // with the admin
     User stored = mongoTemplate.findById(id.toHexString(), User.class);
     assertThat(passwordEncoder.matches(NEW_PASSWORD, stored.getPasswordHash())).isTrue();
     assertThat(stored.getVersion()).isEqualTo(1L);
@@ -234,7 +246,7 @@ class UserConcurrentWriteIntegrationTest {
 
     changePermissionLevel(id.toHexString(), PermissionLevel.VIEW_ONLY).andExpect(status().isOk());
 
-    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(1);
+    assertThat(mongoTemplate.count(new Query(), User.class)).isEqualTo(2); // with the admin
     User stored = mongoTemplate.findById(id.toHexString(), User.class);
     assertThat(stored.getPermissionLevel()).isEqualTo(PermissionLevel.VIEW_ONLY);
     assertThat(stored.getVersion()).isEqualTo(1L);
@@ -253,19 +265,15 @@ class UserConcurrentWriteIntegrationTest {
 
   private ResultActions changePermissionLevel(String userId, PermissionLevel level)
       throws Exception {
-    User caller = new User();
-    caller.setId("admin-1");
-    caller.setClubId("club-a");
-    caller.setPermissionLevel(PermissionLevel.ADMIN);
     return mockMvc.perform(
         patch("/auth/users/" + userId + "/permission-level")
-            .header("Authorization", "Bearer " + jwtService.issue(caller).value())
+            .header("Authorization", "Bearer " + jwtService.issue(admin).value())
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"permissionLevel\": \"%s\"}".formatted(level)));
   }
 
-  private static AuthenticatedUser admin(String clubId) {
-    return new AuthenticatedUser("admin-1", clubId, PermissionLevel.ADMIN);
+  private AuthenticatedUser adminCaller() {
+    return new AuthenticatedUser(admin.getId(), "club-a", PermissionLevel.ADMIN);
   }
 
   /** A write that changes nothing but still moves the version on, as any save does. */
