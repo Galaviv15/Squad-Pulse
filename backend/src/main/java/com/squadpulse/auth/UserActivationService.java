@@ -50,11 +50,15 @@ import org.springframework.stereotype.Service;
  * checked before the no-op, so it can't confirm the id either. The save goes through the
  * club-scoped repository, which re-checks the stored document's real clubId.
  *
- * <p><b>Concurrent writes: reload and retry</b> (KAN-24). Each is an absolute change to a field no
- * other writer sets, so a lost optimistic-locking race is retried through {@link UserWriteRetry}:
- * every attempt reloads the target, re-checks the no-op, and re-applies the change — so a
- * concurrent permission-level change or password reset survives alongside it. Only if every attempt
- * conflicts does it become a 409.
+ * <p><b>Concurrent writes: reload and retry</b> (KAN-24). Each is an absolute change, so a lost
+ * optimistic-locking race is retried through {@link UserWriteRetry}: every attempt reloads the
+ * target, re-checks the no-op, and re-applies the change — so a concurrent permission-level change
+ * survives alongside it. The only other writer of these fields is a password reset, which also sets
+ * {@code sessionsInvalidatedAt} (and re-checks {@code active}). Both re-apply on a fresh reload,
+ * and {@link #notBefore} keeps the later timestamp, so either order of the race leaves the result
+ * correct: if the reset saves first, the deactivation still wins and the later instant is kept; if
+ * the deactivation saves first, the reset's re-check refuses it. Only if every attempt conflicts
+ * does it become a 409.
  */
 @Service
 class UserActivationService {
