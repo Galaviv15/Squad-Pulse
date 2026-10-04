@@ -16,10 +16,12 @@ import org.springframework.stereotype.Service;
  * for the existing club documents first, as {@link UserVersionBackfill} did for users (KAN-24) —
  * and to client-sent versions, like {@code squad.Player}.
  *
- * <p><b>Caller re-check on the write.</b> {@link #update} re-reads its caller first ({@link
- * ActiveCallerCheck}), like the user-management writes, so a deactivated {@code ADMIN}'s
- * still-valid access token can't rename the club. {@link #club} doesn't: like every other read, it
- * keeps working until the token expires.
+ * <p><b>Caller re-check on the write.</b> {@link #update} ({@code PATCH /clubs/me}) re-reads its
+ * caller first ({@link ActiveCallerCheck}), like the user-management writes, so a deactivated
+ * {@code ADMIN}'s still-valid access token can't rename the club. A future write to the club's
+ * settings must do the same. {@link #club} doesn't: like every other read, it keeps working until
+ * the token expires. Neither do the logo writes ({@link ClubLogoService}), deliberately: cosmetic,
+ * reversible, and a deactivated user's token lives at most 15 minutes.
  *
  * <p>A missing club is an {@link IllegalStateException} (a generic 500), as on {@code /me}: a
  * token's club must exist.

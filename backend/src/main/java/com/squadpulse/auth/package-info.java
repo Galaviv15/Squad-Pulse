@@ -7,6 +7,10 @@
  * /users/me/photo}, {@code /users/{id}/photo}) — all deliberately outside {@code /auth}, see {@link
  * com.squadpulse.auth.ClubLogoController}.
  *
+ * <p>Exactly the user-management writes and {@code PATCH /clubs/me} re-check their caller ({@link
+ * com.squadpulse.auth.ActiveCallerCheck}), and so must any new endpoint of those two kinds; the
+ * club-logo and staff-photo writes deliberately don't.
+ *
  * <p>See docs/spec.md sections 04 (Roles &amp; permissions) and 10 (Security). Tracked in Jira
  * under KAN-10 (Auth &amp; Roles) and KAN-33 (Club &amp; Staff Administration).
  */

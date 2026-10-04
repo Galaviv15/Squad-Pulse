@@ -5,9 +5,10 @@ import org.springframework.stereotype.Component;
 /**
  * Whether the caller named by an access token can still act: they exist in the token's club and are
  * active. The one definition of that, shared by {@code GET /auth/users/me} (see {@link
- * CurrentUserService}), every user-management write (invite, permission level, deactivate,
- * re-activate — see {@link UserManagementController}) and the club-settings write ({@code PATCH
- * /clubs/me}, see {@link ClubSettingsService}).
+ * CurrentUserService}) and exactly these writes: every user-management write (invite,
+ * permission-level, deactivate, re-activate — see {@link UserManagementController}) and {@code
+ * PATCH /clubs/me} (see {@link ClubSettingsService}). Any new endpoint of those two kinds — a
+ * user-management write, or a write to the club document's settings — must call it too.
  *
  * <p><b>Why the writes re-check at all</b> (KAN-37). {@link JwtAuthenticationFilter} doesn't look
  * the user up, so an access token keeps working for up to one access-token lifetime after its user
@@ -16,7 +17,10 @@ import org.springframework.stereotype.Component;
  * remaining {@code ADMIN}, leaving nobody able to manage users — recoverable only by hand in the
  * database; or rename the club. Re-reading the caller closes that for the endpoints where it
  * matters, at the cost of one extra club-scoped read per such write. Nowhere else does a
- * per-request lookup: the read-only staff list, for instance, doesn't call this.
+ * per-request lookup: the read-only staff list, for instance, doesn't call this. The club-logo
+ * writes ({@link ClubLogoController}) and staff-photo writes ({@link StaffPhotoController})
+ * deliberately don't either: they're cosmetic and reversible, and a deactivated user's access token
+ * lives at most 15 minutes — accepted, not a gap to fill.
  *
  * <p><b>Club isolation.</b> The caller is loaded through the club-scoped {@link
  * UserRepository#findById}, i.e. with the clubId {@link JwtAuthenticationFilter} took from the same

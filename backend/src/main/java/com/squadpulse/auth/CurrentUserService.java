@@ -25,9 +25,9 @@ import org.springframework.stereotype.Service;
  * keeps working after deactivation until it expires" (docs/spec.md section 10): the frontend calls
  * this on every app load, so it gets a 401, its {@code /auth/refresh} fails too (deactivation also
  * ended every refresh session, see {@link UserActivationService}), and the user lands on the login
- * screen. The only other exceptions are the user-management and club-settings writes, which
- * re-check their caller the same way (see {@link ActiveCallerCheck}). The message is the generic
- * one a request without a token gets, so it doesn't reveal which case applied. {@code
+ * screen. The only other exceptions are the user-management writes and {@code PATCH /clubs/me},
+ * which re-check their caller the same way (see {@link ActiveCallerCheck}). The message is the
+ * generic one a request without a token gets, so it doesn't reveal which case applied. {@code
  * sessionsInvalidatedAt} and {@code passwordHash} are deliberately not checked: access tokens stay
  * valid after a password reset (docs/spec.md section 10), and {@link AuthenticatedUser} doesn't
  * carry the token's issue time to compare against.
