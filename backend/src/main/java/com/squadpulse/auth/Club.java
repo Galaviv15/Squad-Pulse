@@ -25,8 +25,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 public class Club {
 
   /**
-   * The longest club name, after trimming. On {@link #name}, so the owner bootstrap, which validates
-   * this entity, enforces it.
+   * The longest club name, after trimming — shared by {@link #name} (so the owner bootstrap, which
+   * validates this entity, enforces it) and {@link UpdateClubRequest}, so a name one accepts is
+   * never one the other rejects.
    */
   public static final int NAME_MAX_LENGTH = 100;
 

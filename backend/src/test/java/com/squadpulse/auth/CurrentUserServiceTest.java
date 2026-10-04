@@ -52,7 +52,7 @@ class CurrentUserServiceTest {
                 true,
                 false,
                 true,
-                new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example", false)));
+                new ClubResponse("club-a", "Hapoel Example", false)));
   }
 
   @Test
@@ -86,7 +86,7 @@ class CurrentUserServiceTest {
     when(clubLogoService.hasLogo()).thenReturn(true);
 
     assertThat(service.currentUser(CALLER).club())
-        .isEqualTo(new CurrentUserResponse.ClubSummary("club-a", "Hapoel Example", true));
+        .isEqualTo(new ClubResponse("club-a", "Hapoel Example", true));
   }
 
   @Test

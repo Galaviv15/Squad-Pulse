@@ -5,17 +5,18 @@ import org.springframework.stereotype.Component;
 /**
  * Whether the caller named by an access token can still act: they exist in the token's club and are
  * active. The one definition of that, shared by {@code GET /auth/users/me} (see {@link
- * CurrentUserService}) and every user-management write (invite, permission level, deactivate,
- * re-activate — see {@link UserManagementController}).
+ * CurrentUserService}), every user-management write (invite, permission level, deactivate,
+ * re-activate — see {@link UserManagementController}) and the club-settings write ({@code PATCH
+ * /clubs/me}, see {@link ClubSettingsService}).
  *
  * <p><b>Why the writes re-check at all</b> (KAN-37). {@link JwtAuthenticationFilter} doesn't look
  * the user up, so an access token keeps working for up to one access-token lifetime after its user
  * is deactivated (an accepted trade-off, docs/spec.md section 10). For most endpoints that window
  * is harmless, but a deactivated {@code ADMIN} could use it to deactivate or demote the club's last
  * remaining {@code ADMIN}, leaving nobody able to manage users — recoverable only by hand in the
- * database. Re-reading the caller closes that for the endpoints where it matters, at the cost of
- * one extra club-scoped read per user-management write. Nowhere else does a per-request lookup: the
- * read-only staff list, for instance, doesn't call this.
+ * database; or rename the club. Re-reading the caller closes that for the endpoints where it
+ * matters, at the cost of one extra club-scoped read per such write. Nowhere else does a
+ * per-request lookup: the read-only staff list, for instance, doesn't call this.
  *
  * <p><b>Club isolation.</b> The caller is loaded through the club-scoped {@link
  * UserRepository#findById}, i.e. with the clubId {@link JwtAuthenticationFilter} took from the same
