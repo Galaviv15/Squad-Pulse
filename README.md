@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), the club's staff list (`GET /auth/users`), deactivating and re-activating users, and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's settings (viewing and renaming it) and its optional logo — see [Club API](#club-api). An optional photo per staff user — see [Staff photo API](#staff-photo-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet; the frontend and scraper are still skeletons.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), the club's staff list (`GET /auth/users`), deactivating and re-activating users, and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's settings (viewing and renaming it) and its optional logo — see [Club API](#club-api). An optional photo per staff user — see [Staff photo API](#staff-photo-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet. The frontend has its infrastructure (routing, theme, components, API proxy, test setup) but no screens yet; the scraper is still a skeleton.
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -31,6 +31,7 @@ squadpulse/
 │       └── common/                   # Shared: clubId enforcement, error handling, etc.
 ├── frontend/                         # React 19 + TypeScript + Vite + Tailwind
 ├── scraper/                          # Node.js worker (Playwright/Cheerio)
+├── docs/design/ui-conventions.md     # Approved UI design: theme tokens, type scale, layout rules
 ├── docker-compose.yml                # MongoDB + Redis, local dev only
 └── README.md
 ```
@@ -39,7 +40,7 @@ squadpulse/
 
 | Layer | Choice |
 |---|---|
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Konva.js (tactical board), Recharts |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui (Base UI, RTL mode), React Router 8 (data router), TanStack Query, Zustand, Konva.js (tactical board), Recharts |
 | Backend | Java, Spring Boot (single modular monolith) |
 | Database | MongoDB (primary data), Redis (refresh-token families, failed-login counts, and activation / reset codes today; cache planned) |
 | Scraper | Node.js, Playwright/Cheerio |
@@ -106,12 +107,16 @@ No Docker build or CD yet. Integration tests start their own MongoDB and Redis t
 
 ## Local development
 
-Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
+Prerequisites: **JDK 21**, Node 22.22+ (or 24+; React Router 8 needs 22.22), Docker.
 
 1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET`, `PASSWORD_PEPPER` and `OWNER_BOOTSTRAP_SECRET` (at least 32 characters each, all different — the backend refuses to start otherwise; `OWNER_BOOTSTRAP_SECRET` is only required by the bootstrap task below).
 2. `docker compose up -d` — MongoDB + Redis. MongoDB runs as a single-node replica set (`rs0`), since MongoDB only supports multi-document transactions on a replica set; the healthcheck initiates it on first start. Keep `directConnection=true` in `MONGODB_URI`.
 3. Backend: `cd backend && ./mvnw spring-boot:run` (it reads `../.env` automatically). It needs both containers: MongoDB for data, Redis (`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`) for login sessions, failed-login counts and activation / reset codes — the Redis connection is only opened on first use, so a missing Redis shows up as failing logins, not a failed startup. Checks: `./mvnw verify` (tests + formatting; fix formatting with `./mvnw spotless:apply`).
-4. Frontend: `cd frontend && npm install && npm run dev`. Checks: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
+4. Frontend: `cd frontend && npm install && npm run dev`, then open http://localhost:5173/. Checks: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
+   - The app's own pages all live under `/app` (`/` redirects there), never under a backend path, so a browser reload always gets the app.
+   - The dev server proxies the backend's paths (`/auth`, `/squad`, `/clubs`, `/users`, whole path segments only) to the backend, so the app calls the API on its own origin: no CORS, and the refresh cookie (`Path=/auth`) works unchanged. The backend must therefore be running, on port 8080 by default. Without it, API calls through the proxy fail with `502`.
+   - Tests (Vitest + Testing Library) never call the real backend: they mock it with [MSW](https://mswjs.io/), and a request no mock covers fails the test.
+   - Optional settings, in `frontend/.env.local` (git-ignored; see `frontend/.env.example`): `SQUADPULSE_BACKEND_URL`, where the dev proxy sends those paths (default `http://localhost:8080`; used only by `vite.config.ts`, never sent to the browser); `VITE_API_BASE_URL`, the backend's base URL as the app calls it, baked in at build time (empty by default = the app's own origin: the dev proxy, or a reverse proxy in production).
 
 ### Auth API
 

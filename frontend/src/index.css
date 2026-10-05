@@ -1,3 +1,123 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/heebo";
+
+/*
+ * Theme tokens: the approved KAN-44 design (docs/design/ui-conventions.md), as hex values.
+ * Light mode only. Every color goes through a CSS variable, so dark mode later is a second
+ * set of values for the same variables.
+ */
+
+/*
+ * Generated shadcn/ui components carry dark: variants. Tailwind 4's default dark: follows
+ * prefers-color-scheme; this ties it to a .dark class instead, which nothing sets yet, so the
+ * app stays light whatever the OS setting.
+ */
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans:
+    "Heebo Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+  --color-danger: var(--danger);
+  --color-danger-muted: var(--danger-muted);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+
+  /* sm and md as KAN-44 specifies them (4px / 6px); the larger steps are shadcn's own scale. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: #f6f4ee;
+  --foreground: #1c2420;
+  --card: #fffefb;
+  --card-foreground: #1c2420;
+  --popover: #fffefb;
+  --popover-foreground: #1c2420;
+  --primary: #2f5d4a;
+  --primary-foreground: #faf8f2;
+  --secondary: #e6ede8;
+  --secondary-foreground: #23463a;
+  --accent: #e6ede8;
+  --accent-foreground: #23463a;
+  --muted: #eeebe3;
+  --muted-foreground: #5e655e;
+  --border: #e2ddd1;
+  --input: #d6d0c2;
+  --ring: #2f5d4a;
+  --destructive: #b4462f;
+  --destructive-foreground: #ffffff;
+
+  /* Custom: medical status "fit" and "injured" / error text. */
+  --success: #2f6b45;
+  --success-muted: #e3efe5;
+  --danger: #9a3f27;
+  --danger-muted: #f6e3dc;
+
+  /* The app shell's dark green sidebar; the accent is the active item's cream pill. */
+  --sidebar: #1e3a2f;
+  --sidebar-foreground: #e8e4d8;
+  --sidebar-muted-foreground: #a9b5ad;
+  --sidebar-accent: #f2eee3;
+  --sidebar-accent-foreground: #1e3a2f;
+
+  /* Lines: GK, DEF, MID, ATT. A chart must always carry a legend (see the conventions). */
+  --chart-1: #c2841a;
+  --chart-2: #0e7f5c;
+  --chart-3: #8fb83f;
+  --chart-4: #3a6db8;
+
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
