@@ -40,6 +40,7 @@ squadpulse/
 ├── docker-compose.yml                # MongoDB (single-node replica set) + Redis, local dev only
 ├── docs/spec.md                      # Full technical & product spec
 ├── docs/agent-prompts/               # Per-ticket implementation prompts (KAN-xx-prompt.md)
+├── docs/design/ui-conventions.md     # Approved UI design (KAN-44): tokens, type scale, layout rules
 └── CLAUDE.md                         # This file
 ```
 
@@ -57,7 +58,7 @@ Images (player photos, and the club logo — `ImageKind.CLUB_LOGO`, owner id = t
 
 Email goes through `common.EmailSender`. Its only implementation, `common.LoggingEmailSender`, logs activation / reset codes in plaintext — local development only; it must be replaced by a real, asynchronous provider before any deployment (Phase 6+).
 
-Frontend (KAN-45): colors only through the theme tokens in `frontend/src/index.css` (CSS variables on `:root`, mapped to Tailwind colors in `@theme inline`; `bg-primary`, `text-danger`, `bg-sidebar`, `fill-chart-2`, ...) — never raw Tailwind palette colors (`emerald-*`, `neutral-*`, ...) or hard-coded hex. Light mode only: no `.dark` values yet, and the `@custom-variant dark` line stays so the generated components' `dark:` classes never follow the OS setting. Layout uses logical properties only (`ms-*`/`me-*`/`ps-*`/`pe-*`/`start-*`/`end-*`/`text-start`), with LTR islands (`dir="ltr"`) for position codes, formations and `#9`-style numbers. shadcn/ui components live in `src/components/ui`, are added with the CLI pinned in `devDependencies` (`npx shadcn add <name>`; `components.json` has `rtl: true`, so it writes logical classes), get Prettier-formatted, and each new one is checked under RTL (grep it for physical-direction classes and look at it in the app) — `src/components/ui/**` is the only place `react-refresh/only-export-components` is off (`eslint.config.js`, flat config). Font: Heebo, self-hosted (`@fontsource-variable/heebo`), never a Google Fonts request.
+Frontend (KAN-45): colors only through the theme tokens in `frontend/src/index.css` (CSS variables on `:root`, mapped to Tailwind colors in `@theme inline`; `bg-primary`, `text-danger`, `bg-sidebar`, `fill-chart-2`, ...) — never raw Tailwind palette colors (`emerald-*`, `neutral-*`, ...) or hard-coded hex. Light mode only: no `.dark` values yet, and the `@custom-variant dark` line stays so the generated components' `dark:` classes never follow the OS setting. Layout uses logical properties only (`ms-*`/`me-*`/`ps-*`/`pe-*`/`start-*`/`end-*`/`text-start`), with LTR islands (`dir="ltr"`) for position codes, formations and `#9`-style numbers. shadcn/ui components live in `src/components/ui`, are added with the CLI pinned in `devDependencies` (`npx shadcn add <name>`; `components.json` has `rtl: true`, so it writes logical classes), get Prettier-formatted, and each new one is checked under RTL (grep it for physical-direction classes and look at it in the app) — `src/components/ui/**` is the only place `react-refresh/only-export-components` is off (`eslint.config.js`, flat config). Font: Heebo, self-hosted (`@fontsource-variable/heebo`), never a Google Fonts request. The design rules (tokens, type scale, density, badges, shell) are in `docs/design/ui-conventions.md`, with implementation notes at its end — follow it for every screen.
 
 ## Git & Jira conventions
 

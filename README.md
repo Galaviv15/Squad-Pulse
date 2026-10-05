@@ -31,6 +31,7 @@ squadpulse/
 │       └── common/                   # Shared: clubId enforcement, error handling, etc.
 ├── frontend/                         # React 19 + TypeScript + Vite + Tailwind
 ├── scraper/                          # Node.js worker (Playwright/Cheerio)
+├── docs/design/ui-conventions.md     # Approved UI design: theme tokens, type scale, layout rules
 ├── docker-compose.yml                # MongoDB + Redis, local dev only
 └── README.md
 ```
