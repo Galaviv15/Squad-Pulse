@@ -6,7 +6,6 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.ThrowableProxyUtil;
-import ch.qos.logback.core.read.ListAppender;
 import com.squadpulse.auth.PermissionLevel;
 import com.squadpulse.auth.TestAccessTokens;
 import jakarta.servlet.FilterChain;
@@ -67,8 +66,8 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>Failures are triggered by {@link FailingFilter}, a test-only filter registered (by {@link
  * FailingFilterConfig}, in this context only) right after Spring Security's chain — where a real
  * filter failure would happen — so its requests carry a valid access token. Logs are captured on
- * the root logger, which also receives Tomcat's own (bridged from JUL), so "exactly one ERROR"
- * covers the container's logger too.
+ * the root logger (by {@link CapturedLogs}), which also receives Tomcat's own (bridged from JUL),
+ * so "exactly one ERROR" covers the container's logger too.
  */
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -99,22 +98,20 @@ class ErrorRenderingIntegrationTest {
 
   private final HttpClient client =
       HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
-  private final Logger rootLogger = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
   private final Logger filterLogger =
       (Logger) LoggerFactory.getLogger(UnhandledExceptionFilter.class);
-  private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+  private final CapturedLogs logs = new CapturedLogs();
   private Level filterLoggerLevel;
 
   @BeforeEach
   void captureLogs() {
-    appender.start();
-    rootLogger.addAppender(appender);
+    logs.start();
     filterLoggerLevel = filterLogger.getLevel();
   }
 
   @AfterEach
   void stopCapturing() {
-    rootLogger.detachAppender(appender);
+    logs.stop();
     filterLogger.setLevel(filterLoggerLevel);
   }
 
@@ -132,7 +129,7 @@ class ErrorRenderingIntegrationTest {
         response, 500, "Internal Server Error", GlobalExceptionHandler.UNEXPECTED_ERROR_MESSAGE);
     assertThat(response.body()).doesNotContain(SECRET).doesNotContain("test-only");
 
-    ILoggingEvent error = theOnlyError();
+    ILoggingEvent error = logs.theOnlyError();
     assertThat(error.getLoggerName()).isEqualTo(UnhandledExceptionFilter.class.getName());
     assertThat(error.getFormattedMessage())
         .isEqualTo("Unexpected error handling GET " + FAILING_PATH + "throw");
@@ -162,7 +159,7 @@ class ErrorRenderingIntegrationTest {
     assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json");
     assertApiError(response, 400, "Bad Request", GlobalExceptionHandler.CLIENT_ERROR_MESSAGE);
     assertThat(response.body()).doesNotContain("squad").doesNotContain("jsessionid");
-    assertThat(errors()).isEmpty();
+    logs.assertNoErrors();
   }
 
   @Test
@@ -174,7 +171,7 @@ class ErrorRenderingIntegrationTest {
     assertApiError(
         response, 503, "Service Unavailable", GlobalExceptionHandler.UNEXPECTED_ERROR_MESSAGE);
 
-    ILoggingEvent error = theOnlyError();
+    ILoggingEvent error = logs.theOnlyError();
     assertThat(error.getLoggerName()).isEqualTo(ApiErrorController.class.getName());
     assertThat(error.getFormattedMessage())
         .isEqualTo("Answered GET " + FAILING_PATH + "send-503 with 503");
@@ -188,7 +185,7 @@ class ErrorRenderingIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(401);
     assertApiError(response, 401, "Unauthorized", "Authentication required");
-    assertThat(errors()).isEmpty();
+    logs.assertNoErrors();
   }
 
   /** ... and with one, it's a 404 like any unknown path, never a made-up 500. */
@@ -198,7 +195,7 @@ class ErrorRenderingIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(404);
     assertApiError(response, 404, "Not Found", "No endpoint GET /error");
-    assertThat(errors()).isEmpty();
+    logs.assertNoErrors();
   }
 
   /** A failure halfway through a response: logged once, but nothing appended to what was sent. */
@@ -209,7 +206,7 @@ class ErrorRenderingIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).isEqualTo("partial");
-    ILoggingEvent error = theOnlyError();
+    ILoggingEvent error = logs.theOnlyError();
     assertThat(error.getLoggerName()).isEqualTo(UnhandledExceptionFilter.class.getName());
     assertThat(error.getFormattedMessage())
         .isEqualTo("Unexpected error handling GET " + FAILING_PATH + "committed");
@@ -221,10 +218,8 @@ class ErrorRenderingIntegrationTest {
 
     get(FAILING_PATH + "disconnect", "application/json", true);
 
-    assertThat(appender.list)
-        .filteredOn(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
-        .isEmpty();
-    assertThat(appender.list)
+    logs.assertNoWarningsOrAbove();
+    assertThat(logs.events())
         .filteredOn(event -> event.getLoggerName().equals(UnhandledExceptionFilter.class.getName()))
         .singleElement()
         .satisfies(
@@ -288,18 +283,6 @@ class ErrorRenderingIntegrationTest {
     assertThat(body.get("message").asString()).isEqualTo(message);
     assertThat(body.get("details").isArray()).isTrue();
     assertThat(body.get("details").isEmpty()).isTrue();
-  }
-
-  /** ERROR events from every logger, Tomcat's included. */
-  private List<ILoggingEvent> errors() {
-    return List.copyOf(appender.list).stream()
-        .filter(event -> event.getLevel() == Level.ERROR)
-        .toList();
-  }
-
-  private ILoggingEvent theOnlyError() {
-    assertThat(errors()).hasSize(1);
-    return errors().get(0);
   }
 
   /** Test-only: acts on {@link #FAILING_PATH} alone, passes everything else through. */
