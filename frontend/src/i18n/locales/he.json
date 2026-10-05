@@ -2,6 +2,14 @@
   "app": {
     "name": "SquadPulse",
     "welcome": "ברוך הבא ל-SquadPulse",
-    "phaseNote": "שלב 0 — שלד הפרויקט. התוכנית המלאה נמצאת ב-docs/spec.md."
+    "phaseNote": "שלב 3 — תשתית הממשק. המסכים הראשונים בדרך."
+  },
+  "placeholder": {
+    "comingSoon": "בקרוב"
+  },
+  "notFound": {
+    "title": "הדף לא נמצא",
+    "description": "הכתובת שביקשת לא קיימת.",
+    "backToApp": "חזרה לדף הבית"
   }
 }
