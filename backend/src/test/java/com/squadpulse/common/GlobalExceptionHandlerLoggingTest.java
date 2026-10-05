@@ -9,17 +9,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.ThrowableProxyUtil;
-import ch.qos.logback.core.read.ListAppender;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.concurrent.RejectedExecutionException;
 import org.apache.catalina.connector.ClientAbortException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,18 +70,16 @@ class GlobalExceptionHandlerLoggingTest {
                   })
           .build();
 
-  private final Logger rootLogger = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-  private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+  private final CapturedLogs logs = new CapturedLogs();
 
   @BeforeEach
   void captureLogs() {
-    appender.start();
-    rootLogger.addAppender(appender);
+    logs.start();
   }
 
   @AfterEach
   void stopCapturing() {
-    rootLogger.detachAppender(appender);
+    logs.stop();
   }
 
   @Test
@@ -96,7 +92,7 @@ class GlobalExceptionHandlerLoggingTest {
         .andExpect(jsonPath("$.message").value("An unexpected error occurred"))
         .andExpect(jsonPath("$.details").isEmpty());
 
-    ILoggingEvent error = theOnlyError();
+    ILoggingEvent error = logs.theOnlyError();
     assertThat(error.getLoggerName()).isEqualTo(GlobalExceptionHandler.class.getName());
     assertThat(error.getFormattedMessage()).isEqualTo("Unexpected error handling GET /probe/bug");
     assertThat(ThrowableProxyUtil.asString(error.getThrowableProxy()))
@@ -115,9 +111,9 @@ class GlobalExceptionHandlerLoggingTest {
                 .content("{\"name\": \"" + BODY_MARKER + "\"}"))
         .andExpect(status().isInternalServerError());
 
-    assertThat(theOnlyError().getFormattedMessage())
+    assertThat(logs.theOnlyError().getFormattedMessage())
         .isEqualTo("Unexpected error handling POST /probe/bug-with-body");
-    assertThat(everythingLogged())
+    assertThat(logs.everythingLogged())
         .doesNotContain(QUERY_MARKER)
         .doesNotContain(BODY_MARKER)
         .doesNotContain(TOKEN_MARKER);
@@ -132,9 +128,9 @@ class GlobalExceptionHandlerLoggingTest {
         .andExpect(jsonPath("$.error").value("Internal Server Error"))
         .andExpect(jsonPath("$.message").value(new MissingClubContextException().getMessage()));
 
-    assertThat(theOnlyError().getFormattedMessage())
+    assertThat(logs.theOnlyError().getFormattedMessage())
         .isEqualTo("Unexpected error handling GET /probe/no-club");
-    assertThat(theOnlyError().getThrowableProxy().getClassName())
+    assertThat(logs.theOnlyError().getThrowableProxy().getClassName())
         .isEqualTo(MissingClubContextException.class.getName());
   }
 
@@ -168,7 +164,7 @@ class GlobalExceptionHandlerLoggingTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
     assertThat(response.getBody().message()).isEqualTo("An unexpected error occurred");
-    assertThat(theOnlyError().getFormattedMessage())
+    assertThat(logs.theOnlyError().getFormattedMessage())
         .isEqualTo("Unexpected error handling GET /probe/bug");
   }
 
@@ -192,7 +188,32 @@ class GlobalExceptionHandlerLoggingTest {
         .andExpect(jsonPath("$.message").value("The request could not be processed"))
         .andExpect(content().string(not(containsString("marker"))));
 
-    assertThat(errors()).isEmpty();
+    logs.assertNoErrors();
+  }
+
+  /**
+   * KAN-55: the test above failed in CI because another test class's cached context logged this
+   * Netty ERROR, from a Lettuce event-loop thread, while it was capturing. Here it's logged exactly
+   * so, before and after the request.
+   */
+  @Test
+  void aBackgroundDriverErrorDoesNotCountAsAnError() throws Exception {
+    logBackgroundDriverError();
+    mockMvc.perform(get("/probe/gone-resource")).andExpect(status().isGone());
+    logBackgroundDriverError();
+
+    logs.assertNoErrors();
+  }
+
+  /** As above, for an exactly-one-ERROR assertion. */
+  @Test
+  void aBackgroundDriverErrorDoesNotCountAgainstTheOnlyError() throws Exception {
+    logBackgroundDriverError();
+    mockMvc.perform(get("/probe/bug")).andExpect(status().isInternalServerError());
+    logBackgroundDriverError();
+
+    assertThat(logs.theOnlyError().getLoggerName())
+        .isEqualTo(GlobalExceptionHandler.class.getName());
   }
 
   @Test
@@ -203,9 +224,9 @@ class GlobalExceptionHandlerLoggingTest {
         .andExpect(jsonPath("$.error").value("Service Unavailable"))
         .andExpect(jsonPath("$.message").value("An unexpected error occurred"));
 
-    assertThat(theOnlyError().getFormattedMessage())
+    assertThat(logs.theOnlyError().getFormattedMessage())
         .isEqualTo("Unexpected error handling GET /probe/unavailable");
-    assertThat(theOnlyError().getThrowableProxy()).isNotNull();
+    assertThat(logs.theOnlyError().getThrowableProxy()).isNotNull();
   }
 
   @Test
@@ -225,7 +246,7 @@ class GlobalExceptionHandlerLoggingTest {
         .perform(get("/probe/record").accept(MediaType.APPLICATION_XML))
         .andExpect(status().isNotAcceptable());
 
-    assertThat(errors()).isEmpty();
+    logs.assertNoErrors();
   }
 
   /**
@@ -239,7 +260,7 @@ class GlobalExceptionHandlerLoggingTest {
         .andExpect(status().isInternalServerError())
         .andExpect(jsonPath("$.message").value("An unexpected error occurred"));
 
-    assertThat(theOnlyError().getFormattedMessage())
+    assertThat(logs.theOnlyError().getFormattedMessage())
         .isEqualTo("Unexpected error handling GET /probe/bug-for-xml");
   }
 
@@ -251,9 +272,7 @@ class GlobalExceptionHandlerLoggingTest {
   void aClientThatWentAwayIsNeitherLoggedNorAnswered() throws Exception {
     mockMvc.perform(get("/probe/gone")).andExpect(status().isOk()).andExpect(content().string(""));
 
-    assertThat(appender.list)
-        .filteredOn(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
-        .isEmpty();
+    logs.assertNoWarningsOrAbove();
   }
 
   /** A failure halfway through a download: logged, but no JSON appended to what was sent. */
@@ -264,29 +283,22 @@ class GlobalExceptionHandlerLoggingTest {
         .andExpect(status().isOk())
         .andExpect(content().string("partial"));
 
-    assertThat(theOnlyError().getFormattedMessage())
+    assertThat(logs.theOnlyError().getFormattedMessage())
         .isEqualTo("Unexpected error handling GET /probe/half-sent");
   }
 
-  private List<ILoggingEvent> errors() {
-    return appender.list.stream().filter(event -> event.getLevel() == Level.ERROR).toList();
-  }
-
-  private ILoggingEvent theOnlyError() {
-    assertThat(errors()).hasSize(1);
-    return errors().get(0);
-  }
-
-  /** Every captured message with its stack trace, as a log file would hold them. */
-  private String everythingLogged() {
-    StringBuilder all = new StringBuilder();
-    for (ILoggingEvent event : appender.list) {
-      all.append(event.getFormattedMessage()).append('\n');
-      if (event.getThrowableProxy() != null) {
-        all.append(ThrowableProxyUtil.asString(event.getThrowableProxy())).append('\n');
-      }
-    }
-    return all.toString();
+  /** The event from CI run 37290423038: same logger, message and exception, from another thread. */
+  private static void logBackgroundDriverError() throws InterruptedException {
+    Thread eventLoop =
+        new Thread(
+            () ->
+                LoggerFactory.getLogger("io.netty.util.concurrent.DefaultPromise.rejectedExecution")
+                    .error(
+                        "Failed to submit a listener notification task. Event loop shut down?",
+                        new RejectedExecutionException("event executor terminated")),
+            "lettuce-eventExecutorLoop-6-4");
+    eventLoop.start();
+    eventLoop.join();
   }
 
   record NamedBody(@NotBlank String name) {}
