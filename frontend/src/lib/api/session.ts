@@ -26,7 +26,8 @@ export interface AuthSession {
   /**
    * Renews the access token: single-flight in this tab and serialized across tabs. Resolves to the
    * new token. A 4xx answer ends the session and rejects with that ApiError; a 5xx or a network
-   * failure rejects but keeps the session, since it says nothing about the refresh token.
+   * failure rejects but keeps the session, since it says nothing about the refresh token. If the
+   * session is ended (clear) while a refresh runs, its token is dropped and it rejects with a 401.
    */
   refresh(): Promise<string>;
   /** POST /auth/logout, then ends the session whatever that call returned, even a network failure. */
@@ -66,12 +67,18 @@ interface SessionState {
 export function createBrowserSession(): AuthSession {
   const store = createStore<SessionState>()(() => ({ accessToken: null, status: "unknown" }));
   let inFlightRefresh: Promise<string> | null = null;
+  // Bumped whenever the session ends, so a refresh that started before can tell.
+  let generation = 0;
 
   const authenticate = (accessToken: string) =>
     store.setState({ accessToken, status: "authenticated" });
-  const clear = () => store.setState({ accessToken: null, status: "unauthenticated" });
+  const clear = () => {
+    generation++;
+    store.setState({ accessToken: null, status: "unauthenticated" });
+  };
 
   async function refreshOnce(): Promise<string> {
+    const startedIn = generation;
     let token: string;
     try {
       token = await withRefreshLock(() => postForToken("/auth/refresh"));
@@ -84,6 +91,11 @@ export function createBrowserSession(): AuthSession {
         clear();
       }
       throw error;
+    }
+    // The session ended while this refresh was running (e.g. another request's retry got 401):
+    // a late token must not bring it back. Its callers get the 401 that ended it instead.
+    if (generation !== startedIn) {
+      throw new ApiError(401, null);
     }
     authenticate(token);
     return token;

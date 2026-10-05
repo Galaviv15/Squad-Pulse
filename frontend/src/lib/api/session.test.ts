@@ -1,8 +1,14 @@
+import { act, renderHook } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { accessToken, apiError, loginReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { createBrowserSession, REFRESH_LOCK_NAME, type SessionStatus } from "./session";
+import {
+  createBrowserSession,
+  REFRESH_LOCK_NAME,
+  useSessionStatus,
+  type SessionStatus,
+} from "./session";
 
 /** POST /auth/refresh answering with successive tokens ("r1", "r2", ...). Counts the calls. */
 function refreshRotating(onCall: () => void = () => {}) {
@@ -15,6 +21,21 @@ function refreshRotating(onCall: () => void = () => {}) {
     }),
   );
   return calls;
+}
+
+/** POST /auth/refresh answering "late" once `release` is called. Counts the calls. */
+function refreshWaiting() {
+  const calls = { count: 0 };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  server.use(
+    http.post("/auth/refresh", async () => {
+      calls.count++;
+      await gate;
+      return accessToken("late");
+    }),
+  );
+  return { calls, release };
 }
 
 afterEach(() => {
@@ -138,6 +159,85 @@ describe("createBrowserSession", () => {
       expect(session.getStatus()).toBe("unauthenticated");
       expect(session.getAccessToken()).toBeNull();
     });
+  });
+
+  describe("a refresh still running when the session ends", () => {
+    it("doesn't bring back a session cleared in the meantime", async () => {
+      server.use(loginReturns("t1"));
+      const refresh = refreshWaiting();
+      const session = createBrowserSession();
+      await session.login("coach@example.com", "pw");
+
+      const refreshed = session.refresh().catch((e: unknown) => e);
+      await vi.waitFor(() => expect(refresh.calls.count).toBe(1));
+      session.clear();
+      refresh.release();
+
+      expect(await refreshed).toHaveProperty("status", 401);
+      expect(session.getStatus()).toBe("unauthenticated");
+      expect(session.getAccessToken()).toBeNull();
+    });
+
+    it("lets logout wait for it, then ends the session", async () => {
+      server.use(loginReturns("t1"));
+      server.use(http.post("/auth/logout", () => new HttpResponse(null, { status: 204 })));
+      const refresh = refreshWaiting();
+      const session = createBrowserSession();
+      await session.login("coach@example.com", "pw");
+
+      const refreshed = session.refresh();
+      await vi.waitFor(() => expect(refresh.calls.count).toBe(1));
+      const loggedOut = session.logout();
+      refresh.release();
+      await loggedOut;
+
+      expect(await refreshed).toBe("late");
+      expect(session.getStatus()).toBe("unauthenticated");
+      expect(session.getAccessToken()).toBeNull();
+    });
+  });
+
+  describe("subscribe", () => {
+    it("reports status changes only, not a token renewed by a refresh", async () => {
+      server.use(loginReturns("t1"));
+      refreshRotating();
+      const session = createBrowserSession();
+      const statuses: SessionStatus[] = [];
+      session.subscribe((status) => statuses.push(status));
+
+      await session.login("coach@example.com", "pw");
+      await session.refresh();
+      expect(session.getAccessToken()).toBe("r1");
+      session.clear();
+
+      expect(statuses).toEqual(["authenticated", "unauthenticated"]);
+    });
+
+    it("stops reporting once unsubscribed", async () => {
+      server.use(loginReturns("t1"));
+      const session = createBrowserSession();
+      const statuses: SessionStatus[] = [];
+      const unsubscribe = session.subscribe((status) => statuses.push(status));
+
+      await session.login("coach@example.com", "pw");
+      unsubscribe();
+      session.clear();
+
+      expect(statuses).toEqual(["authenticated"]);
+    });
+  });
+
+  it("useSessionStatus re-renders on a status change", async () => {
+    server.use(loginReturns("t1"));
+    const session = createBrowserSession();
+    const { result } = renderHook(() => useSessionStatus(session));
+    expect(result.current).toBe("unknown");
+
+    await act(() => session.login("coach@example.com", "pw"));
+    expect(result.current).toBe("authenticated");
+
+    act(() => session.clear());
+    expect(result.current).toBe("unauthenticated");
   });
 
   it("clear() ends the session", async () => {
