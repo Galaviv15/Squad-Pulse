@@ -3,6 +3,7 @@ import { render } from "@testing-library/react";
 import { createMemoryRouter, type RouteObject } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { routes as appRoutes } from "@/app/router";
+import { DirectionProvider } from "@/components/ui/direction";
 import "@/i18n/i18n";
 
 interface RenderOptions {
@@ -13,9 +14,10 @@ interface RenderOptions {
 }
 
 /**
- * Renders a route tree the way the app does: inside a fresh QueryClient (nothing cached between
- * tests) and a memory router. Every component test goes through this. Query retries are off here,
- * and only here, so a failing request fails the test at once instead of after the retry delays.
+ * Renders a route tree the way the app does: in RTL for Base UI, inside a fresh QueryClient
+ * (nothing cached between tests) and a memory router. Every component test goes through this.
+ * Query retries are off here, and only here, so a failing request fails the test at once instead
+ * of after the retry delays.
  */
 export function renderWithProviders({
   initialEntries = ["/"],
@@ -30,9 +32,11 @@ export function renderWithProviders({
     router,
     queryClient,
     ...render(
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
+      <DirectionProvider direction="rtl">
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </DirectionProvider>,
     ),
   };
 }
