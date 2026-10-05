@@ -19,9 +19,7 @@ export function PlaceholderPage() {
         <CardContent className="flex flex-col items-start gap-4">
           <p className="text-muted-foreground">{t("app.phaseNote")}</p>
           {/* Position codes stay in English, as an LTR island (docs/design/ui-conventions.md). */}
-          <Badge variant="secondary" dir="ltr">
-            CB
-          </Badge>
+          <Badge dir="ltr">CB</Badge>
           <Button>{t("placeholder.comingSoon")}</Button>
         </CardContent>
       </Card>
