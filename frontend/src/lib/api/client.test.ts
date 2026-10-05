@@ -155,6 +155,82 @@ describe("apiFetch", () => {
     expect(session.getAccessToken()).toBeNull();
   });
 
+  describe("when another caller renewed the token while the request was in flight", () => {
+    /**
+     * GET /squad/players: a request with "Bearer A" waits for `gate`, then gets 401; one with
+     * "Bearer B" gets `answerForB`. Counts each attempt by its Authorization header.
+     */
+    function playersWithSlowOldToken(gate: Promise<void>, answerForB: () => Response) {
+      const attempts: (string | null)[] = [];
+      server.use(
+        http.get("/squad/players", async ({ request }) => {
+          const authorization = request.headers.get("Authorization");
+          attempts.push(authorization);
+          if (authorization === "Bearer B") {
+            return answerForB();
+          }
+          await gate;
+          return authenticationRequired();
+        }),
+      );
+      return attempts;
+    }
+
+    it("retries once with the new token, without a second refresh", async () => {
+      const session = await sessionWith("A");
+      const gate = deferred();
+      const attempts = playersWithSlowOldToken(gate.promise, () =>
+        HttpResponse.json([{ id: "p1" }]),
+      );
+      const refresh = refreshAnswering(() => accessToken("B"));
+
+      const request = apiJson("/squad/players", {}, session);
+      await vi.waitFor(() => expect(attempts).toEqual(["Bearer A"]));
+      expect(await session.refresh()).toBe("B");
+      gate.resolve();
+
+      expect(await request).toEqual([{ id: "p1" }]);
+      expect(attempts).toEqual(["Bearer A", "Bearer B"]);
+      expect(refresh.count).toBe(1);
+    });
+
+    it("counts that retry as the one retry: a 401 to it ends the session, with no refresh", async () => {
+      const session = await sessionWith("A");
+      const gate = deferred();
+      const attempts = playersWithSlowOldToken(gate.promise, authenticationRequired);
+      const refresh = refreshAnswering(() => accessToken("B"));
+
+      const request = apiFetch("/squad/players", {}, session).catch((e: unknown) => e);
+      await vi.waitFor(() => expect(attempts).toEqual(["Bearer A"]));
+      await session.refresh();
+      gate.resolve();
+
+      expect(((await request) as ApiError).status).toBe(401);
+      expect(attempts).toEqual(["Bearer A", "Bearer B"]);
+      expect(refresh.count).toBe(1);
+      expect(session.getStatus()).toBe("unauthenticated");
+      expect(session.getAccessToken()).toBeNull();
+    });
+  });
+
+  it("rejects a request waiting on a refresh that the session ended during", async () => {
+    const session = await sessionWith("old");
+    const attempts = playersAcceptingOnly("new");
+    const gate = deferred();
+    const refresh = refreshAnswering(() => accessToken("new"), gate.promise);
+
+    const request = apiFetch("/squad/players", {}, session).catch((e: unknown) => e);
+    await vi.waitFor(() => expect(refresh.count).toBe(1));
+    session.clear();
+    gate.resolve();
+
+    expect(((await request) as ApiError).status).toBe(401);
+    // Never resent with the late token.
+    expect(attempts).toEqual(["Bearer old"]);
+    expect(session.getStatus()).toBe("unauthenticated");
+    expect(session.getAccessToken()).toBeNull();
+  });
+
   it("ends the session and rejects every waiting request when the refresh is refused", async () => {
     const session = await sessionWith("old");
     playersAcceptingOnly("new");
