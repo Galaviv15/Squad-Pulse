@@ -32,6 +32,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * it ({@code @GetMapping}, {@code @PatchMapping}, ...). All three annotations are matched directly
  * <i>or</i> as meta-annotations, so a composed annotation like a custom {@code @AdminOnly} carrying
  * {@code @PreAuthorize} counts too.
+ *
+ * <p>Exactly one class is exempt: {@link ApiErrorController}, see {@link #isExempt}.
  */
 final class EndpointAuthorizationRules {
 
@@ -39,7 +41,8 @@ final class EndpointAuthorizationRules {
       methods()
           .that(
               DescribedPredicate.describe(
-                  "handle requests in a controller", EndpointAuthorizationRules::isRequestHandler))
+                  "handle requests in a controller (other than ApiErrorController)",
+                  EndpointAuthorizationRules::isRequestHandler))
           .should(
               new ArchCondition<JavaMethod>(
                   "be annotated with @PreAuthorize (on the method or its class) or"
@@ -83,7 +86,20 @@ final class EndpointAuthorizationRules {
 
   private static boolean isRequestHandler(JavaMethod method) {
     return hasAnnotation(method.getOwner(), Controller.class)
-        && hasAnnotation(method, RequestMapping.class);
+        && hasAnnotation(method, RequestMapping.class)
+        && !isExempt(method);
+  }
+
+  /**
+   * {@link ApiErrorController} renders the servlet container's {@code /error} dispatch (KAN-35),
+   * which has no authenticated caller — so {@code @PreAuthorize} would deny it — and isn't a public
+   * endpoint either ({@code @PublicEndpoint} means a POST listed in {@code
+   * SecurityConfig.PUBLIC_ENDPOINTS}). It only renders an error that already happened, exposing
+   * nothing. Exempted by exact class, not as "any {@code ErrorController}", so no other controller
+   * escapes the rule just by implementing that interface.
+   */
+  private static boolean isExempt(JavaMethod method) {
+    return method.getOwner().isEquivalentTo(ApiErrorController.class);
   }
 
   private static boolean hasAnnotation(
