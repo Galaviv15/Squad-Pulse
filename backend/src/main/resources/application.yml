@@ -34,6 +34,14 @@ spring:
   web:
     resources:
       add-mappings: false
+    # Every error dispatch to /error (the default path, kept) is rendered as JSON by
+    # common.ApiErrorController, which replaces Boot's BasicErrorController (KAN-35). Switching off
+    # Boot's Whitelabel HTML error page as well is a second safeguard, so no error is ever answered
+    # with an HTML page. Boot 4 property: the old server.error.whitelabel.enabled is deprecated at
+    # error level.
+    error:
+      whitelabel:
+        enabled: false
   # The servlet container's limits on multipart uploads (player photos, KAN-29) — the outer guard:
   # an oversize file is refused while the body is parsed, before any handler runs (413 via
   # common.GlobalExceptionHandler). Boot's default max-file-size is 1MB, which would refuse valid

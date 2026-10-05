@@ -37,7 +37,6 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
-import org.springframework.web.util.DisconnectedClientHelper;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DatabindException;
 
@@ -353,8 +352,8 @@ public class GlobalExceptionHandler {
    *
    * <ul>
    *   <li>A client that went away mid-response (Tomcat's {@code ClientAbortException}, a broken
-   *       pipe — as Spring's {@link DisconnectedClientHelper} recognises them): logged at DEBUG
-   *       only, and nothing is written, as there's no one to read it.
+   *       pipe — see {@link ErrorLogging#isClientDisconnected}): logged at DEBUG only, and nothing
+   *       is written, as there's no one to read it.
    *   <li>A response already committed (e.g. a photo whose stream failed halfway): logged, but its
    *       status can't change, and a JSON body would be appended to what was sent.
    *   <li>A Spring framework exception that knows its status — an {@link ErrorResponse}, e.g. a
@@ -363,13 +362,16 @@ public class GlobalExceptionHandler {
    *       can quote the request. Logged at ERROR only if it's a 5xx.
    *   <li>Anything else: a bug, logged at ERROR, answered with a generic 500.
    * </ul>
+   *
+   * <p>Returning {@code null} (disconnected, or committed) still counts as resolved: Spring marks
+   * the request handled for a {@code null} {@code ResponseEntity}, so the exception never leaves
+   * the {@code DispatcherServlet} and {@link UnhandledExceptionFilter} doesn't log it again.
    */
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ApiErrorResponse> handleUnexpected(
       Exception ex, HttpServletRequest request, HttpServletResponse response) {
-    if (DisconnectedClientHelper.isClientDisconnectedException(ex)) {
-      log.debug(
-          "Client disconnected during {} {}: {}", request.getMethod(), request.getRequestURI(), ex);
+    if (ErrorLogging.isClientDisconnected(ex)) {
+      ErrorLogging.logClientDisconnected(log, ex, request.getMethod(), request.getRequestURI());
       return null;
     }
     HttpStatusCode status =
@@ -400,7 +402,7 @@ public class GlobalExceptionHandler {
   }
 
   private static void logServerError(Exception ex, HttpServletRequest request) {
-    log.error("Unexpected error handling {} {}", request.getMethod(), request.getRequestURI(), ex);
+    ErrorLogging.logServerError(log, ex, request);
   }
 
   private static ResponseEntity<ApiErrorResponse> serverError() {
@@ -413,9 +415,10 @@ public class GlobalExceptionHandler {
    * Spring writes the JSON without negotiating it against the request's {@code Accept} header.
    * Otherwise, for a client accepting only, say, XML, that negotiation would fail while the error
    * was being written: a framework error then lost its body, and any other exception went
-   * unresolved — a 500 from the servlet container, whatever its real status.
+   * unresolved — a 500 from the servlet container, whatever its real status. {@link
+   * ApiErrorController} builds its responses here too.
    */
-  private static ResponseEntity<ApiErrorResponse> respond(
+  static ResponseEntity<ApiErrorResponse> respond(
       HttpStatusCode status,
       HttpHeaders headers,
       String error,
@@ -433,7 +436,7 @@ public class GlobalExceptionHandler {
   }
 
   /** {@link #respond} under {@code status}'s standard reason phrase. */
-  private static ResponseEntity<ApiErrorResponse> withReasonPhrase(
+  static ResponseEntity<ApiErrorResponse> withReasonPhrase(
       HttpStatusCode status, HttpHeaders headers, String message, List<String> details) {
     return respond(status, headers, reasonPhrase(status), message, details);
   }
