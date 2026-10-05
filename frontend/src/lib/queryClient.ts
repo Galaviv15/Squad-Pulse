@@ -4,9 +4,9 @@ import { QueryClient } from "@tanstack/react-query";
 const MAX_QUERY_RETRIES = 2;
 
 /**
- * The HTTP status an error carries, if any. The API client (KAN-46) defines the error type; until
- * then this is duck-typed: any object with a numeric `status`. KAN-46 must keep that contract
- * (or update this function).
+ * The HTTP status an error carries, if any: duck-typed, any object with a numeric `status`. The
+ * API client's errors (src/lib/api/errors.ts) keep that contract: an ApiError always has one, a
+ * NetworkError (no response) never does.
  */
 function httpStatusOf(error: unknown): number | undefined {
   if (typeof error === "object" && error !== null && "status" in error) {
