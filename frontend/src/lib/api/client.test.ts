@@ -109,6 +109,54 @@ describe("apiFetch", () => {
     expect(seen).toEqual([null]);
   });
 
+  describe("public endpoints", () => {
+    it("never sends the token to /auth/reset-password, so its 401 neither refreshes nor resends the code", async () => {
+      const session = await sessionWith("t1");
+      const received: { authorization: string | null; body: unknown }[] = [];
+      server.use(
+        http.post("/auth/reset-password", async ({ request }) => {
+          received.push({
+            authorization: request.headers.get("Authorization"),
+            body: await request.json(),
+          });
+          return apiError(401, "Unauthorized", "Invalid or expired code");
+        }),
+      );
+      const refresh = refreshAnswering(() => accessToken("t2"));
+      const reset = { email: "coach@example.com", code: "123456", newPassword: "correct horse" };
+
+      const error = await apiFetch(
+        "/auth/reset-password",
+        { method: "POST", json: reset },
+        session,
+      ).catch((e: unknown) => e);
+
+      expect((error as ApiError).status).toBe(401);
+      expect(received).toEqual([{ authorization: null, body: reset }]);
+      expect(refresh.count).toBe(0);
+      expect(session.getStatus()).toBe("authenticated");
+      expect(session.getAccessToken()).toBe("t1");
+    });
+
+    it.each(["/auth/forgot-password", "/auth/forgot-password?lang=he"])(
+      "never sends the token to %s",
+      async (path) => {
+        const session = await sessionWith("t1");
+        const seen: (string | null)[] = [];
+        server.use(
+          http.post("/auth/forgot-password", ({ request }) => {
+            seen.push(request.headers.get("Authorization"));
+            return new HttpResponse(null, { status: 202 });
+          }),
+        );
+
+        await apiFetch(path, { method: "POST", json: { email: "a@b.c" } }, session);
+
+        expect(seen).toEqual([null]);
+      },
+    );
+  });
+
   it("builds every URL with apiUrl (VITE_API_BASE_URL)", async () => {
     vi.resetModules();
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com/");
@@ -227,6 +275,32 @@ describe("apiFetch", () => {
     expect(((await request) as ApiError).status).toBe(401);
     // Never resent with the late token.
     expect(attempts).toEqual(["Bearer old"]);
+    expect(session.getStatus()).toBe("unauthenticated");
+    expect(session.getAccessToken()).toBeNull();
+  });
+
+  it("doesn't revive a session ended while the request was in flight", async () => {
+    const session = await sessionWith("A");
+    const gate = deferred();
+    const attempts: (string | null)[] = [];
+    server.use(
+      http.get("/squad/players", async ({ request }) => {
+        attempts.push(request.headers.get("Authorization"));
+        await gate.promise;
+        return authenticationRequired();
+      }),
+    );
+    // A refresh would still succeed (the cookie is valid), so it must not be sent at all.
+    const refresh = refreshAnswering(() => accessToken("B"));
+
+    const request = apiFetch("/squad/players", {}, session).catch((e: unknown) => e);
+    await vi.waitFor(() => expect(attempts).toEqual(["Bearer A"]));
+    session.clear();
+    gate.resolve();
+
+    expect(((await request) as ApiError).status).toBe(401);
+    expect(attempts).toEqual(["Bearer A"]);
+    expect(refresh.count).toBe(0);
     expect(session.getStatus()).toBe("unauthenticated");
     expect(session.getAccessToken()).toBeNull();
   });
