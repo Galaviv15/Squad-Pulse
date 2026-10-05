@@ -25,4 +25,12 @@ export default defineConfig([
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
+  {
+    // shadcn/ui components are generated: some export their variants (e.g. buttonVariants)
+    // next to the component. Scoped to src/components/ui only; keep the rule everywhere else.
+    files: ["src/components/ui/**/*.{ts,tsx}"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
 ]);

@@ -39,7 +39,7 @@ squadpulse/
 
 | Layer | Choice |
 |---|---|
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Konva.js (tactical board), Recharts |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui (Base UI, RTL mode), TanStack Query, Zustand, Konva.js (tactical board), Recharts |
 | Backend | Java, Spring Boot (single modular monolith) |
 | Database | MongoDB (primary data), Redis (refresh-token families, failed-login counts, and activation / reset codes today; cache planned) |
 | Scraper | Node.js, Playwright/Cheerio |
@@ -106,7 +106,7 @@ No Docker build or CD yet. Integration tests start their own MongoDB and Redis t
 
 ## Local development
 
-Prerequisites: **JDK 21**, Node 22.12+ (or 24+), Docker.
+Prerequisites: **JDK 21**, Node 22.13+ (or 24+), Docker.
 
 1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET`, `PASSWORD_PEPPER` and `OWNER_BOOTSTRAP_SECRET` (at least 32 characters each, all different — the backend refuses to start otherwise; `OWNER_BOOTSTRAP_SECRET` is only required by the bootstrap task below).
 2. `docker compose up -d` — MongoDB + Redis. MongoDB runs as a single-node replica set (`rs0`), since MongoDB only supports multi-document transactions on a replica set; the healthcheck initiates it on first start. Keep `directConnection=true` in `MONGODB_URI`.
