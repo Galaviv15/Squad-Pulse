@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { accessToken, apiError, loginReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
+import { ApiError } from "./errors";
 import {
   createBrowserSession,
   REFRESH_LOCK_NAME,
@@ -194,6 +195,58 @@ describe("createBrowserSession", () => {
       expect(await refreshed).toBe("late");
       expect(session.getStatus()).toBe("unauthenticated");
       expect(session.getAccessToken()).toBeNull();
+    });
+  });
+
+  describe("a login while a refresh is running", () => {
+    /** POST /auth/login answering "A", then "B", ...; records whether `refreshSettled()` held. */
+    function loginsRecording(refreshSettled: () => boolean) {
+      const sentAfterRefreshSettled: boolean[] = [];
+      server.use(
+        http.post("/auth/login", () => {
+          sentAfterRefreshSettled.push(refreshSettled());
+          return accessToken(["A", "B"][sentAfterRefreshSettled.length - 1]);
+        }),
+      );
+      return sentAfterRefreshSettled;
+    }
+
+    it("sends the login only after the refresh has settled", async () => {
+      let settled = false;
+      const logins = loginsRecording(() => settled);
+      const refresh = refreshWaiting();
+      const session = createBrowserSession();
+      await session.login("a@example.com", "pw");
+
+      const refreshed = session.refresh().catch((e: unknown) => e);
+      void refreshed.then(() => (settled = true));
+      await vi.waitFor(() => expect(refresh.calls.count).toBe(1));
+      const loggedIn = session.login("b@example.com", "pw");
+      refresh.release();
+      await loggedIn;
+
+      expect(logins).toEqual([false, true]);
+    });
+
+    it("keeps the login's token and rejects the refresh's callers with a 401", async () => {
+      loginsRecording(() => true);
+      const refresh = refreshWaiting();
+      const session = createBrowserSession();
+      await session.login("a@example.com", "pw");
+
+      const callers = [session.refresh(), session.refresh()].map((p) => p.catch((e: unknown) => e));
+      await vi.waitFor(() => expect(refresh.calls.count).toBe(1));
+      const loggedIn = session.login("b@example.com", "pw");
+      refresh.release();
+      await loggedIn;
+
+      for (const outcome of await Promise.all(callers)) {
+        expect(outcome).toBeInstanceOf(ApiError);
+        expect(outcome).toHaveProperty("status", 401);
+      }
+      expect(refresh.calls.count).toBe(1);
+      expect(session.getAccessToken()).toBe("B");
+      expect(session.getStatus()).toBe("authenticated");
     });
   });
 

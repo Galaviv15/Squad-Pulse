@@ -21,7 +21,12 @@ export interface AuthSession {
   getStatus(): SessionStatus;
   /** Calls `listener` after every status change; returns the function that unsubscribes. */
   subscribe(listener: (status: SessionStatus) => void): () => void;
-  /** POST /auth/login. Stores the token; a failure rejects with ApiError / NetworkError. */
+  /**
+   * POST /auth/login. Stores the token; a failure rejects with ApiError / NetworkError. A refresh
+   * running in this tab is first made stale (its callers get a 401 and its token is never stored)
+   * and waited for, so neither its token nor its cookie can land after the login's: it may be
+   * another user's session.
+   */
   login(email: string, password: string): Promise<void>;
   /**
    * Renews the access token: single-flight in this tab and serialized across tabs. Resolves to the
@@ -67,7 +72,7 @@ interface SessionState {
 export function createBrowserSession(): AuthSession {
   const store = createStore<SessionState>()(() => ({ accessToken: null, status: "unknown" }));
   let inFlightRefresh: Promise<string> | null = null;
-  // Bumped whenever the session ends, so a refresh that started before can tell.
+  // Bumped whenever the session ends or a login starts, so a refresh that started before can tell.
   let generation = 0;
 
   const authenticate = (accessToken: string) =>
@@ -92,8 +97,9 @@ export function createBrowserSession(): AuthSession {
       }
       throw error;
     }
-    // The session ended while this refresh was running (e.g. another request's retry got 401):
-    // a late token must not bring it back. Its callers get the 401 that ended it instead.
+    // The session ended (e.g. another request's retry got 401) or a login started while this
+    // refresh was running: a late token must not bring the old session back. Its callers get a
+    // 401 instead.
     if (generation !== startedIn) {
       throw new ApiError(401, null);
     }
@@ -112,6 +118,11 @@ export function createBrowserSession(): AuthSession {
       }),
 
     async login(email, password) {
+      // Bump first: once the refresh has settled it would already have stored its token. Waiting
+      // also lets its Set-Cookie land before the login's. Only this tab's refresh is covered: a
+      // refresh in another tab racing this login isn't (no cross-tab lock here), accepted.
+      generation++;
+      await inFlightRefresh?.catch(() => undefined);
       authenticate(
         await postForToken("/auth/login", {
           headers: { "Content-Type": "application/json" },
