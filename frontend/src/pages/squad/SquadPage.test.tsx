@@ -346,7 +346,7 @@ describe("the age fields", () => {
 });
 
 describe("the table", () => {
-  it("has the eight columns, in order", async () => {
+  it("has the eight columns, in order, then the row actions", async () => {
     await renderSquad();
 
     const headers = screen.getAllByRole("columnheader");
@@ -359,7 +359,10 @@ describe("the table", () => {
       he.squad.columns.weight,
       he.squad.columns.foot,
       he.squad.columns.medicalStatus,
+      he.squad.actions.column,
     ]);
+    // The actions column's header is for screen readers only.
+    expect(headers[8].querySelector(".sr-only")).toHaveTextContent(he.squad.actions.column);
     for (const header of headers) {
       expect(header).toHaveAttribute("scope", "col");
     }
@@ -409,6 +412,7 @@ describe("the table", () => {
       "76",
       he.squad.foot.BOTH,
       he.squad.medical.FIT,
+      "",
     ]);
     expect(within(cells[0]).getByText("7")).toHaveAttribute("dir", "ltr");
     expect(within(cells[1]).getByRole("link", { name: "דני לוי" })).toHaveAttribute(
