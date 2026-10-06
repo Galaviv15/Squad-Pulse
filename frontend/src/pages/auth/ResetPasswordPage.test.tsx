@@ -61,7 +61,9 @@ describe("ResetPasswordPage", () => {
     fillIn({ email: " new@example.com " });
     fireEvent.click(submitButton());
 
-    expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: he.nav.dashboard }),
+    ).toBeInTheDocument();
     // Exactly these fields: the confirmation never leaves the browser.
     expect(resets).toEqual([
       { email: "new@example.com", code: "123456", newPassword: "correct horse" },
@@ -79,7 +81,7 @@ describe("ResetPasswordPage", () => {
     fillIn();
     fireEvent.click(submitButton());
 
-    await screen.findByRole("heading", { name: he.app.name });
+    await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
     expect(router.state.location.pathname).toBe("/app");
   });
 

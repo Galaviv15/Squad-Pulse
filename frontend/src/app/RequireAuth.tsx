@@ -8,7 +8,7 @@ import { LogoutContext, type LogoutControl } from "@/lib/auth/logout";
 import { LOGIN_PATH, withNext } from "@/lib/auth/paths";
 
 /**
- * The parent of every protected route (the app shell becomes its layout in KAN-48). Without a
+ * The parent of every protected route; its child is the app shell (AppShell). Without a
  * session it redirects to login: with `next` = the current location when the session ended by
  * itself (a refused refresh, a logout in another tab), without it after an explicit logout from
  * this tab (useLogout), which this component tells apart because it owns that logout.

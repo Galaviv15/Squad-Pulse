@@ -60,3 +60,12 @@ export const meReturns = (overrides: Partial<CurrentUser> = {}) =>
 
 /** An app load with a valid refresh cookie: the refresh succeeds and /me answers. */
 export const loggedIn = () => [refreshReturns("t1"), meReturns()];
+
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+/** GET `path` (a photo or logo endpoint) answering with a PNG, after `gate` if given. */
+export const imageReturns = (path: string, gate?: Promise<void>) =>
+  http.get(path, async () => {
+    await gate;
+    return new HttpResponse(PNG_BYTES, { headers: { "Content-Type": "image/png" } });
+  });

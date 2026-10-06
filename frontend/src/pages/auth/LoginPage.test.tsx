@@ -45,7 +45,9 @@ describe("LoginPage", () => {
     fillIn("  coach@example.com ", "correct horse");
     fireEvent.click(submitButton());
 
-    expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: he.nav.dashboard }),
+    ).toBeInTheDocument();
     expect(router.state.location.pathname + router.state.location.search).toBe("/app?view=all");
     expect(router.state.historyAction).toBe("REPLACE");
     // The email is sent trimmed; the password exactly as typed.
@@ -64,7 +66,7 @@ describe("LoginPage", () => {
     fillIn("coach@example.com", "pw");
     fireEvent.click(submitButton());
 
-    await screen.findByRole("heading", { name: he.app.name });
+    await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
     expect(router.state.location.pathname).toBe("/app");
   });
 
