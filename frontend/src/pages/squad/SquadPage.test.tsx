@@ -305,7 +305,7 @@ describe("the age fields", () => {
 
   it("show the range message as 'between 18 and 99'", () => {
     expect(he.squad.filters.ageOutOfRange.replace("{{min}}", "18").replace("{{max}}", "99")).toBe(
-      "גיל בין 18 ל-99",
+      "גיל בין 18 ל־99",
     );
   });
 

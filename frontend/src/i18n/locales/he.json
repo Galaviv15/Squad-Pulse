@@ -44,7 +44,7 @@
       "preferredFoot": "רגל",
       "any": "הכל",
       "clear": "ניקוי סינון",
-      "ageOutOfRange": "גיל בין {{min}} ל-{{max}}",
+      "ageOutOfRange": "גיל בין {{min}} ל־{{max}}",
       "ageOrder": "הגיל ההתחלתי גדול מהגיל הסופי"
     },
     "medical": {
