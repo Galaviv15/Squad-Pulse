@@ -30,23 +30,31 @@ interface FormSource {
 }
 
 /**
- * The form is filled once, from the first load (`source`), and never from later data: a
- * background refetch (window focus, the invalidation after a write elsewhere) updates the query,
- * not `source`, so it can't overwrite what the user typed. The `version` sent is source's, the
- * one the shown values came from, never the newest in the cache. Only "טעינת הגרסה העדכנית"
- * after a stale-version 409 refills it: a refetch, a new source, and a remount (the revision is
- * the form's key) that drops the user's edits, as its hint says.
+ * The form is filled once (`source`), from the first load that succeeds **after this page
+ * mounted**, never from a copy already in the cache: coming from the card, the cached player may
+ * be older than the server's, and a form built on it would fail with a stale version on save.
+ * Until then (`isFetchedAfterMount`, with a fetch forced on mount by refetchOnMount "always") the
+ * page shows its loading state. If that load fails, the page shows the load error with a retry,
+ * even when a cached copy exists: data that couldn't be confirmed would lead straight to a 409.
+ *
+ * After that, nothing refills it: a background refetch (window focus, the invalidation after a
+ * write elsewhere) updates the query, not `source`, so it can't overwrite what the user typed.
+ * The `version` sent is source's, the one the shown values came from, never the newest in the
+ * cache. Only "טעינת הגרסה העדכנית" after a stale-version 409 refills it: a refetch, a new
+ * source, and a remount (the revision is the form's key) that drops the user's edits, as its hint
+ * says.
  */
 function EditPlayer({ playerId }: { playerId: string }) {
   const { t } = useTranslation();
-  const player = usePlayer(playerId);
+  const player = usePlayer(playerId, { refetchOnMount: "always" });
   const update = useUpdatePlayer(playerId);
   const navigate = useNavigate();
   const [source, setSource] = useState<FormSource | null>(null);
 
-  // The first data to arrive fills the form. Set while rendering: React's pattern for state
-  // derived once from a value that arrives later.
-  if (source === null && player.data !== undefined) {
+  // The first successful load since mount fills the form. Set while rendering: React's pattern
+  // for state derived once from a value that arrives later. (status is "error" when the latest
+  // fetch failed, even with cached data.)
+  if (source === null && player.isFetchedAfterMount && player.status === "success") {
     setSource({ player: player.data, revision: 0 });
   }
 

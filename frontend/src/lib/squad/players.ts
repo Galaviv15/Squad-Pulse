@@ -68,8 +68,11 @@ export function playerQuery(playerId: string) {
   });
 }
 
-export function usePlayer(playerId: string) {
-  return useQuery(playerQuery(playerId));
+export function usePlayer(
+  playerId: string,
+  { refetchOnMount }: { refetchOnMount?: "always" } = {},
+) {
+  return useQuery({ ...playerQuery(playerId), refetchOnMount });
 }
 
 /**

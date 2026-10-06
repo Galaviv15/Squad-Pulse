@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser, PermissionLevel } from "@/lib/auth/currentUser";
@@ -142,6 +143,60 @@ describe("the edit form", () => {
     // Back skips the form: it was replaced.
     await act(() => router.navigate(-1));
     expect(router.state.location.pathname).not.toBe("/app/squad/p1/edit");
+  });
+
+  it("waits for a fresh load instead of filling the form from an older cached copy", async () => {
+    // The card's copy in the cache is version 1 / name A; the server has moved on to 2 / B.
+    const fresh = deferred();
+    const update = updatePlayerReturns("p1");
+    server.use(
+      refreshReturns("t1"),
+      meReturns(),
+      playerReturns(playerBody({ fullName: "Name B", version: 2 }), { gate: fresh.promise }),
+      update.handler,
+    );
+    const { router, queryClient } = renderWithProviders({ initialEntries: ["/app"] });
+    await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
+    queryClient.setQueryData(playerQueryKey("p1"), playerBody({ fullName: "Name A", version: 1 }));
+
+    await act(() => router.navigate("/app/squad/p1/edit"));
+    await screen.findByRole("heading", { level: 1, name: he.squad.editPlayer });
+
+    // No form while the fresh copy is on its way: the cached one may be out of date.
+    expect(screen.queryByRole("textbox", { name: fields.fullName })).toBeNull();
+    expect(screen.getByText(he.squad.player.loading)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: he.squad.form.submitEdit })).toBeNull();
+    fresh.resolve();
+    await ready();
+    expect(input(fields.fullName)).toHaveValue("Name B");
+    submit();
+    await waitFor(() => expect(update.bodies).toHaveLength(1));
+    expect(update.bodies[0]).toMatchObject({ fullName: "Name B", version: 2 });
+  });
+
+  it("shows the load error, not the cached copy, when the fresh load fails; a retry fills it", async () => {
+    let fail = true;
+    server.use(
+      refreshReturns("t1"),
+      meReturns(),
+      http.get("/squad/players/:id", () =>
+        fail
+          ? apiError(500, "Internal Server Error", "An unexpected error occurred")
+          : HttpResponse.json(playerBody({ fullName: "Name B", version: 2 })),
+      ),
+    );
+    const { router, queryClient } = renderWithProviders({ initialEntries: ["/app"] });
+    await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
+    queryClient.setQueryData(playerQueryKey("p1"), playerBody({ fullName: "Name A", version: 1 }));
+
+    await act(() => router.navigate("/app/squad/p1/edit"));
+
+    expect(await screen.findByText(he.squad.player.loadError)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: fields.fullName })).toBeNull();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: he.squad.retry }));
+    await ready();
+    expect(input(fields.fullName)).toHaveValue("Name B");
   });
 
   it("doesn't overwrite what the user typed when the player is refetched, and keeps its version", async () => {
