@@ -223,6 +223,33 @@ describe("the card's photo controls", () => {
     expect(photoButton(he.squad.photo.upload)).toBeEnabled();
   });
 
+  it("clear the picker after every pick, so the same file can be picked again after a failure", async () => {
+    const store = await renderCard(playerBody());
+    let failNext = true;
+    const upload = photoUploadReturns("p1", () => {
+      if (failNext) {
+        failNext = false;
+        return apiError(500, "Internal Server Error", "Unexpected");
+      }
+      store.player = { ...store.player, hasPhoto: true };
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(upload.handler);
+    const valueSet = vi.spyOn(fileInput(), "value", "set");
+    const file = pickedFile("me.jpg", "image/jpeg", 1234);
+
+    pick(file);
+    expect(await screen.findByRole("alert")).toHaveTextContent(he.squad.dialog.failed);
+    expect(valueSet).toHaveBeenLastCalledWith("");
+    pick(file);
+
+    await waitFor(() => expect(photo()).toHaveAttribute("src", "blob:test/1"));
+    expect(upload.uploads).toHaveLength(2);
+    expect(upload.uploads[1]).toEqual(upload.uploads[0]);
+    expect(valueSet).toHaveBeenCalledTimes(2);
+    expect(valueSet).toHaveBeenLastCalledWith("");
+  });
+
   it("say the player was released meanwhile, and refresh the card (no more controls)", async () => {
     const store = await renderCard(playerBody());
     server.use(
