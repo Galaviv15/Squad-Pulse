@@ -88,6 +88,10 @@
     "FITNESS_COACH": "מאמן כושר",
     "ANALYST": "אנליסט"
   },
+  "routeError": {
+    "message": "לא הצלחנו לטעון את הדף.",
+    "reload": "רענון הדף"
+  },
   "notFound": {
     "title": "הדף לא נמצא",
     "description": "הכתובת שביקשת לא קיימת.",
