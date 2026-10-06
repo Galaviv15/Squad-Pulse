@@ -11,8 +11,9 @@ export type AuthorizedImage =
   | { status: "error"; error: unknown };
 
 interface Result {
-  /** The path the image was fetched for. */
+  /** The path and refresh key the image was fetched for. */
   path: string;
+  refreshKey: number;
   image: AuthorizedImage;
 }
 
@@ -29,8 +30,13 @@ const LOADING: AuthorizedImage = { status: "loading" };
  * query, whose cache would keep URLs alive past unmount. The URL is revoked on unmount and when
  * the path changes; an in-flight fetch for an old path is aborted, and a late answer never sets
  * state or creates a URL.
+ *
+ * `refreshKey` fetches the same path again when it changes, e.g. after the image was replaced
+ * (same endpoint, new content). It's treated like a path change: the old URL is revoked, an
+ * in-flight fetch aborted, and "loading" shown until the new image arrives. Omitted, it never
+ * changes, so the image is fetched once per path.
  */
-export function useAuthorizedImage(path: string | null): AuthorizedImage {
+export function useAuthorizedImage(path: string | null, refreshKey = 0): AuthorizedImage {
   const [result, setResult] = useState<Result | null>(null);
 
   useEffect(() => {
@@ -45,13 +51,17 @@ export function useAuthorizedImage(path: string | null): AuthorizedImage {
       .then((blob) => {
         if (!controller.signal.aborted) {
           objectUrl = URL.createObjectURL(blob);
-          setResult({ path, image: { status: "loaded", url: objectUrl } });
+          setResult({ path, refreshKey, image: { status: "loaded", url: objectUrl } });
         }
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           const missing = error instanceof ApiError && error.status === 404;
-          setResult({ path, image: missing ? { status: "missing" } : { status: "error", error } });
+          setResult({
+            path,
+            refreshKey,
+            image: missing ? { status: "missing" } : { status: "error", error },
+          });
         }
       });
 
@@ -63,10 +73,12 @@ export function useAuthorizedImage(path: string | null): AuthorizedImage {
       // Forget the result (and the revoked URL), so coming back to this path shows "loading".
       setResult(null);
     };
-  }, [path]);
+  }, [path, refreshKey]);
 
   if (path === null) {
     return NONE;
   }
-  return result !== null && result.path === path ? result.image : LOADING;
+  return result !== null && result.path === path && result.refreshKey === refreshKey
+    ? result.image
+    : LOADING;
 }

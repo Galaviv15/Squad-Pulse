@@ -120,3 +120,75 @@ describe("useAuthorizedImage", () => {
     releaseP2();
   });
 });
+
+describe("useAuthorizedImage's refresh key", () => {
+  /** GET `path` counting its requests; the n-th answer (from 0) waits for gates[n], if any. */
+  function countedImageAt(path: string, gates: Promise<void>[] = []) {
+    const requests = { count: 0 };
+    server.use(
+      http.get(path, async () => {
+        const gate = gates[requests.count];
+        requests.count += 1;
+        await gate;
+        return new HttpResponse(PNG, { headers: { "Content-Type": "image/png" } });
+      }),
+    );
+    return requests;
+  }
+
+  const PATH = "/squad/players/p1/photo";
+
+  it("fetches once per path while the key stays the same, as without one", async () => {
+    const requests = countedImageAt(PATH);
+    const { result, rerender } = renderHook(({ key }) => useAuthorizedImage(PATH, key), {
+      initialProps: { key: 0 },
+    });
+    await waitFor(() => expect(result.current).toEqual({ status: "loaded", url: "blob:test/1" }));
+
+    rerender({ key: 0 });
+
+    expect(result.current).toEqual({ status: "loaded", url: "blob:test/1" });
+    expect(requests.count).toBe(1);
+  });
+
+  it("fetches the same path again for a new key, revoking the old URL", async () => {
+    const requests = countedImageAt(PATH);
+    const { result, rerender } = renderHook(({ key }) => useAuthorizedImage(PATH, key), {
+      initialProps: { key: 0 },
+    });
+    await waitFor(() => expect(result.current).toEqual({ status: "loaded", url: "blob:test/1" }));
+
+    rerender({ key: 1 });
+
+    expect(revoked).toEqual(["blob:test/1"]);
+    expect(result.current).toEqual({ status: "loading" });
+    await waitFor(() => expect(result.current).toEqual({ status: "loaded", url: "blob:test/2" }));
+    expect(requests.count).toBe(2);
+  });
+
+  it("ignores a late answer for an earlier key, without creating its URL", async () => {
+    let releaseFirst!: () => void;
+    countedImageAt(PATH, [new Promise((resolve) => (releaseFirst = resolve))]);
+    const { result, rerender } = renderHook(({ key }) => useAuthorizedImage(PATH, key), {
+      initialProps: { key: 0 },
+    });
+
+    rerender({ key: 1 });
+    await waitFor(() => expect(result.current).toEqual({ status: "loaded", url: "blob:test/1" }));
+    await act(async () => releaseFirst());
+
+    expect(result.current).toEqual({ status: "loaded", url: "blob:test/1" });
+    expect(created).toEqual(["blob:test/1"]);
+  });
+
+  it("still fetches nothing for null, whatever the key", () => {
+    const { result, rerender } = renderHook(({ key }) => useAuthorizedImage(null, key), {
+      initialProps: { key: 0 },
+    });
+
+    rerender({ key: 1 });
+
+    expect(result.current).toEqual({ status: "none" });
+    expect(created).toEqual([]);
+  });
+});
