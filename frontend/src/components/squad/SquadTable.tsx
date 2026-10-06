@@ -3,7 +3,9 @@ import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router";
 import { ImageOrInitials } from "@/components/ImageOrInitials";
-import { Badge } from "@/components/ui/badge";
+import { MedicalStatusBadge, None, PositionChips, ReleasedBadge } from "./PlayerBadges";
+import { PlayerActionsMenu } from "./PlayerActionsMenu";
+import { playerActions } from "./playerActions";
 import {
   Table,
   TableBody,
@@ -13,7 +15,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ageOn } from "@/lib/squad/age";
-import { MEDICAL_STATUS_KEYS, PREFERRED_FOOT_KEYS } from "@/lib/squad/labels";
+import { useCurrentUser } from "@/lib/auth/currentUser";
+import { PREFERRED_FOOT_KEYS } from "@/lib/squad/labels";
 import { playerPath, playerPhotoPath } from "@/lib/squad/paths";
 import type { Player } from "@/lib/squad/types";
 
@@ -28,25 +31,29 @@ const COLUMN_KEYS = [
   "medicalStatus",
 ] as const;
 
-/** A missing value. */
-function None() {
-  return <span className="text-muted-foreground">—</span>;
-}
-
 /**
  * The squad table: one row per player, in the order given (the server's squad order: never
  * re-sorted here). The name is a link to the player's card, the keyboard path; a click anywhere
  * else on the row opens it too, as a mouse convenience. A released player's row is dimmed and
- * carries a "משוחרר" pill, so it isn't marked by color alone.
+ * carries a "משוחרר" pill, so it isn't marked by color alone. The last column is the row's actions
+ * menu (playerActions: data, so KAN-59's items slot in), never dimmed.
  */
 export function SquadTable({ players }: { players: Player[] }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { permissionLevel } = useCurrentUser();
   const today = new Date();
 
   function openFromRow(event: MouseEvent<HTMLTableRowElement>, player: Player) {
-    // The link navigates by itself, and a click that ends a text selection isn't a "open" click.
-    if (event.target instanceof Element && event.target.closest("a")) {
+    const { target } = event;
+    // React bubbles a click inside a portal (the actions menu's popup) up the component tree to
+    // this row, though the popup isn't inside the row in the DOM: only a click in the row counts.
+    if (!(target instanceof Element) || !event.currentTarget.contains(target)) {
+      return;
+    }
+    // A link or button (the name, the menu's trigger) acts by itself, and a click that ends a
+    // text selection isn't an "open" click.
+    if (target.closest("a, button")) {
       return;
     }
     if ((window.getSelection()?.toString() ?? "") !== "") {
@@ -68,7 +75,9 @@ export function SquadTable({ players }: { players: Player[] }) {
               {t(`squad.columns.${key}`)}
             </TableHead>
           ))}
-          {/* KAN-50 adds the row-actions column (edit, release, delete) here. */}
+          <TableHead scope="col" className="h-11 w-14 px-4 text-end">
+            <span className="sr-only">{t("squad.actions.column")}</span>
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -78,7 +87,7 @@ export function SquadTable({ players }: { players: Player[] }) {
             <TableRow
               key={player.id}
               data-released={!player.active || undefined}
-              className="h-[52px] cursor-pointer data-released:[&>td]:opacity-60"
+              className="h-[52px] cursor-pointer data-released:[&>td:not([data-actions])]:opacity-60"
               onClick={(event) => openFromRow(event, player)}
             >
               <TableCell className="px-4 font-semibold tabular-nums">
@@ -103,24 +112,14 @@ export function SquadTable({ players }: { players: Player[] }) {
                   >
                     {player.fullName}
                   </Link>
-                  {!player.active && <Badge variant="muted">{t("squad.released")}</Badge>}
+                  {!player.active && <ReleasedBadge />}
                 </div>
               </TableCell>
               <TableCell className="px-4">
-                {player.primaryPosition === null && player.secondaryPosition === null ? (
-                  <None />
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    {player.primaryPosition !== null && (
-                      <Badge dir="ltr">{player.primaryPosition}</Badge>
-                    )}
-                    {player.secondaryPosition !== null && (
-                      <Badge variant="outline" dir="ltr">
-                        {player.secondaryPosition}
-                      </Badge>
-                    )}
-                  </div>
-                )}
+                <PositionChips
+                  primary={player.primaryPosition}
+                  secondary={player.secondaryPosition}
+                />
               </TableCell>
               <TableCell className="px-4 tabular-nums">{age === null ? <None /> : age}</TableCell>
               <TableCell className="px-4 tabular-nums">
@@ -137,9 +136,13 @@ export function SquadTable({ players }: { players: Player[] }) {
                 )}
               </TableCell>
               <TableCell className="px-4">
-                <Badge variant={player.medicalStatus === "INJURED" ? "danger" : "success"}>
-                  {t(MEDICAL_STATUS_KEYS[player.medicalStatus])}
-                </Badge>
+                <MedicalStatusBadge status={player.medicalStatus} />
+              </TableCell>
+              <TableCell data-actions="" className="px-4 text-end">
+                <PlayerActionsMenu
+                  player={player}
+                  actions={playerActions(player, permissionLevel)}
+                />
               </TableCell>
             </TableRow>
           );

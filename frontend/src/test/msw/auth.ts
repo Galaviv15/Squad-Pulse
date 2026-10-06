@@ -7,10 +7,16 @@ import type { CurrentUser } from "@/lib/auth/currentUser";
  * unhandled request), not silently get a token.
  */
 
-/** An error in the backend's ApiErrorResponse shape. */
-export function apiError(status: number, error: string, message: string, details: string[] = []) {
+/** An error in the backend's ApiErrorResponse shape; `code` is null unless given, as the server sends it. */
+export function apiError(
+  status: number,
+  error: string,
+  message: string,
+  details: string[] = [],
+  code: string | null = null,
+) {
   return HttpResponse.json(
-    { timestamp: "2026-01-01T00:00:00Z", status, error, message, details },
+    { timestamp: "2026-01-01T00:00:00Z", status, error, code, message, details },
     { status },
   );
 }

@@ -316,6 +316,7 @@ class StaffPhotoControllerTest {
     mockMvc
         .perform(asAdmin(photoUpload(OTHER, TestImages.png())))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("USER_DEACTIVATED"))
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(
             jsonPath("$.message")

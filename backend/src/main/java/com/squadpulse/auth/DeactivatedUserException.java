@@ -8,7 +8,9 @@ import com.squadpulse.common.ConflictException;
  */
 class DeactivatedUserException extends ConflictException {
 
+  static final String CODE = "USER_DEACTIVATED";
+
   DeactivatedUserException() {
-    super("This user has been deactivated; their profile can't be changed");
+    super(CODE, "This user has been deactivated; their profile can't be changed");
   }
 }

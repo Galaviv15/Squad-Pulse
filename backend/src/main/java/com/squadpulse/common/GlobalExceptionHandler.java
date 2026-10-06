@@ -67,6 +67,9 @@ public class GlobalExceptionHandler {
   static final String CONCURRENT_MODIFICATION_MESSAGE =
       "The resource was modified concurrently, please retry";
 
+  /** The {@code code} of the generic optimistic-lock 409; stable, like every conflict code. */
+  static final String CONCURRENT_MODIFICATION_CODE = "CONCURRENT_MODIFICATION";
+
   static final String UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred";
 
   static final String CLIENT_ERROR_MESSAGE = "The request could not be processed";
@@ -99,7 +102,7 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(ConflictException.class)
   public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException ex) {
-    return respond(HttpStatus.CONFLICT, "Conflict", ex.getMessage());
+    return respond(HttpStatus.CONFLICT, "Conflict", ex.getCode(), ex.getMessage());
   }
 
   /**
@@ -116,7 +119,11 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorResponse> handleOptimisticLockingFailure(
       OptimisticLockingFailureException ex) {
     log.warn("Concurrent modification not resolved by retry, answering 409: {}", ex.getMessage());
-    return respond(HttpStatus.CONFLICT, "Conflict", CONCURRENT_MODIFICATION_MESSAGE);
+    return respond(
+        HttpStatus.CONFLICT,
+        "Conflict",
+        CONCURRENT_MODIFICATION_CODE,
+        CONCURRENT_MODIFICATION_MESSAGE);
   }
 
   /** {@code Retry-After} in whole seconds, rounded up so a client never retries too early. */
@@ -424,15 +431,30 @@ public class GlobalExceptionHandler {
       String error,
       String message,
       List<String> details) {
+    return respond(status, headers, error, null, message, details);
+  }
+
+  private static ResponseEntity<ApiErrorResponse> respond(
+      HttpStatusCode status,
+      HttpHeaders headers,
+      String error,
+      String code,
+      String message,
+      List<String> details) {
     return ResponseEntity.status(status)
         .headers(headers)
         .contentType(MediaType.APPLICATION_JSON)
-        .body(ApiErrorResponse.of(status.value(), error, message, details));
+        .body(ApiErrorResponse.of(status.value(), error, code, message, details));
   }
 
   private static ResponseEntity<ApiErrorResponse> respond(
       HttpStatusCode status, String error, String message) {
-    return respond(status, HttpHeaders.EMPTY, error, message, List.of());
+    return respond(status, error, null, message);
+  }
+
+  private static ResponseEntity<ApiErrorResponse> respond(
+      HttpStatusCode status, String error, String code, String message) {
+    return respond(status, HttpHeaders.EMPTY, error, code, message, List.of());
   }
 
   /** {@link #respond} under {@code status}'s standard reason phrase. */

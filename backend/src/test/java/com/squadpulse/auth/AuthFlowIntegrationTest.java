@@ -160,7 +160,9 @@ class AuthFlowIntegrationTest {
     insertUser("club-b", "taken@example.com", PermissionLevel.VIEW_ONLY, true);
     String accessToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
 
-    perform(invite(accessToken, "taken@example.com")).andExpect(status().isConflict());
+    perform(invite(accessToken, "taken@example.com"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("EMAIL_ALREADY_REGISTERED"));
   }
 
   @Test
@@ -359,7 +361,8 @@ class AuthFlowIntegrationTest {
     perform(
             changePermissionLevel(
                 accessToken, manager.getId(), "{\"permissionLevel\": \"VIEW_ONLY\"}"))
-        .andExpect(status().isConflict());
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CANNOT_CHANGE_OWN_PERMISSION_LEVEL"));
 
     assertThat(mongoTemplate.findById(manager.getId(), User.class).getPermissionLevel())
         .isEqualTo(PermissionLevel.ADMIN);

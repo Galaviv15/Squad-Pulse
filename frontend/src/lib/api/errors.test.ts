@@ -86,6 +86,41 @@ describe("ApiError", () => {
     expect(error.details).toEqual([]);
   });
 
+  it("keeps the body's code", async () => {
+    const error = (await errorFor(() =>
+      apiError(409, "Conflict", "Stale", [], "STALE_VERSION"),
+    )) as ApiError;
+
+    expect(error.code).toBe("STALE_VERSION");
+    expect(error.message).toBe("Stale");
+  });
+
+  it.each([
+    ["null", { code: null }],
+    ["missing (an older backend)", {}],
+    ["a number", { code: 409 }],
+    ["an object", { code: { name: "STALE_VERSION" } }],
+    ["an array", { code: ["STALE_VERSION"] }],
+  ])("reads a code that is %s as null, keeping the rest of the body", async (_name, code) => {
+    const error = (await errorFor(() =>
+      HttpResponse.json(
+        { status: 409, error: "Conflict", message: "Taken", details: ["jerseyNumber: x"], ...code },
+        { status: 409 },
+      ),
+    )) as ApiError;
+
+    expect(error.code).toBeNull();
+    expect(error.error).toBe("Conflict");
+    expect(error.message).toBe("Taken");
+    expect({ ...error.fieldErrors }).toEqual({ jerseyNumber: ["x"] });
+  });
+
+  it("has a null code when the body isn't an ApiErrorBody", async () => {
+    const error = (await errorFor(() => new HttpResponse(null, { status: 502 }))) as ApiError;
+
+    expect(error.code).toBeNull();
+  });
+
   it("is a NetworkError, without a status, when there is no response", async () => {
     const error = await errorFor(() => HttpResponse.error());
 

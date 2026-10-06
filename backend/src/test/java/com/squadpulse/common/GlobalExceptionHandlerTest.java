@@ -67,6 +67,7 @@ class GlobalExceptionHandlerTest {
     ApiErrorResponse body = response.getBody();
     assertThat(body.status()).isEqualTo(409);
     assertThat(body.error()).isEqualTo("Conflict");
+    assertThat(body.code()).isEqualTo("CONCURRENT_MODIFICATION");
     assertThat(body.message()).isEqualTo("The resource was modified concurrently, please retry");
     assertThat(body.details()).isEmpty();
     assertThat(body.timestamp()).isNotNull();

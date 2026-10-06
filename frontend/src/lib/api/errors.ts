@@ -7,6 +7,12 @@ export interface ApiErrorBody {
   timestamp: string;
   status: number;
   error: string;
+  /**
+   * A machine-readable reason (e.g. "JERSEY_NUMBER_TAKEN"), or null. Today only 409s carry one.
+   * Screens compare against it, never against `message`. Optional here: a body without it (an
+   * older backend) reads as null.
+   */
+  code?: string | null;
   message: string;
   details: string[];
 }
@@ -24,6 +30,8 @@ export class ApiError extends Error {
   readonly status: number;
   /** The body's reason phrase ("Unauthorized"), or null when the body wasn't an ApiErrorBody. */
   readonly error: string | null;
+  /** The body's `code`; null when it has none, or isn't a string, or the body wasn't an ApiErrorBody. */
+  readonly code: string | null;
   readonly details: readonly string[];
   /** The named `details` entries, by name exactly as sent ("players[2].position"). */
   readonly fieldErrors: Readonly<Record<string, readonly string[]>>;
@@ -34,6 +42,7 @@ export class ApiError extends Error {
     super(body?.message ?? `Request failed with status ${status}`);
     this.status = status;
     this.error = body?.error ?? null;
+    this.code = typeof body?.code === "string" ? body.code : null;
     this.details = body?.details ?? [];
 
     const fieldErrors: Record<string, string[]> = Object.create(null);
@@ -81,6 +90,7 @@ function splitDetail(entry: string): { name: string; message: string } | null {
   return /\s/.test(name) ? null : { name, message: entry.slice(separator + 2) };
 }
 
+/** `code` isn't checked: a missing or non-string one just reads as null (see ApiError.code). */
 function isApiErrorBody(value: unknown): value is ApiErrorBody {
   if (typeof value !== "object" || value === null) {
     return false;

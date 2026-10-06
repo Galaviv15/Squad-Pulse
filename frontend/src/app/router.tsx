@@ -70,19 +70,27 @@ export const routes: RouteObject[] = [
                     handle: { titleKey: "nav.squad" } satisfies RouteHandle,
                   },
                   // A static segment ranks above a dynamic one, so "new" is never a :playerId.
+                  // Each page is its own lazy chunk (shared code goes to a common one).
                   {
                     path: "squad/new",
                     lazy: async () => ({
-                      Component: (await import("@/pages/squad/PlayerStubPages")).NewPlayerPage,
+                      Component: (await import("@/pages/squad/NewPlayerPage")).NewPlayerPage,
                     }),
                     handle: { titleKey: "squad.addPlayer" } satisfies RouteHandle,
                   },
                   {
                     path: "squad/:playerId",
                     lazy: async () => ({
-                      Component: (await import("@/pages/squad/PlayerStubPages")).PlayerCardPage,
+                      Component: (await import("@/pages/squad/PlayerCardPage")).PlayerCardPage,
                     }),
                     handle: { titleKey: "squad.playerCard" } satisfies RouteHandle,
+                  },
+                  {
+                    path: "squad/:playerId/edit",
+                    lazy: async () => ({
+                      Component: (await import("@/pages/squad/EditPlayerPage")).EditPlayerPage,
+                    }),
+                    handle: { titleKey: "squad.editPlayer" } satisfies RouteHandle,
                   },
                   {
                     path: "*",

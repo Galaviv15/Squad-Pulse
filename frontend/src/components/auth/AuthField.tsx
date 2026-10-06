@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useTranslation } from "react-i18next";
+import { FIELD_INVALID_CLASSES } from "@/components/form/fieldClasses";
+import { FormField } from "@/components/form/FormField";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 interface AuthFieldProps extends Omit<ComponentProps<typeof Input>, "id"> {
@@ -15,10 +15,7 @@ interface AuthFieldProps extends Omit<ComponentProps<typeof Input>, "id"> {
   error?: string;
 }
 
-/**
- * A labeled auth-form input. The hint or error under it is linked with aria-describedby, and an
- * error marks the input aria-invalid with a --danger border.
- */
+/** A labeled auth-form input: a FormField around a 40px Input. */
 export function AuthField({
   id,
   label,
@@ -28,36 +25,11 @@ export function AuthField({
   className,
   ...inputProps
 }: AuthFieldProps) {
-  const { t } = useTranslation();
-  const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
-
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <Label htmlFor={id}>{label}</Label>
-        {labelAction}
-      </div>
-      <Input
-        id={id}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy}
-        className={cn(
-          "aria-invalid:border-danger aria-invalid:ring-danger/20 focus-visible:aria-invalid:border-danger",
-          className,
-        )}
-        {...inputProps}
-      />
-      {error ? (
-        <p id={`${id}-error`} className="text-[0.8125rem] text-danger">
-          {t(error)}
-        </p>
-      ) : (
-        hint && (
-          <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-            {hint}
-          </p>
-        )
+    <FormField id={id} label={label} labelAction={labelAction} hint={hint} error={error}>
+      {(control) => (
+        <Input {...control} className={cn(FIELD_INVALID_CLASSES, className)} {...inputProps} />
       )}
-    </div>
+    </FormField>
   );
 }

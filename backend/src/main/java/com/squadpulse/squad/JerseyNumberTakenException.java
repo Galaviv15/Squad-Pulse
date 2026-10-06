@@ -9,7 +9,9 @@ import com.squadpulse.common.ConflictException;
  */
 class JerseyNumberTakenException extends ConflictException {
 
+  static final String CODE = "JERSEY_NUMBER_TAKEN";
+
   JerseyNumberTakenException(int jerseyNumber) {
-    super("Jersey number " + jerseyNumber + " is already taken by another active player");
+    super(CODE, "Jersey number " + jerseyNumber + " is already taken by another active player");
   }
 }

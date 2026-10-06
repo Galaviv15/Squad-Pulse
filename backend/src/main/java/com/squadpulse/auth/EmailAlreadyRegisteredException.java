@@ -8,7 +8,9 @@ import com.squadpulse.common.ConflictException;
  */
 class EmailAlreadyRegisteredException extends ConflictException {
 
+  static final String CODE = "EMAIL_ALREADY_REGISTERED";
+
   EmailAlreadyRegisteredException() {
-    super("A user with this email already exists");
+    super(CODE, "A user with this email already exists");
   }
 }

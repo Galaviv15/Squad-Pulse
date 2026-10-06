@@ -214,9 +214,11 @@ class PlayerPhotoIntegrationTest {
 
     upload(CLUB_A, id, TestImages.jpeg())
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_RELEASED"))
         .andExpect(jsonPath("$.message").value(RELEASED_MESSAGE));
     deletePhoto(CLUB_A, id)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_RELEASED"))
         .andExpect(jsonPath("$.message").value(RELEASED_MESSAGE));
     getPhoto(CLUB_A, id).andExpect(status().isOk()).andExpect(content().bytes(TestImages.png()));
 

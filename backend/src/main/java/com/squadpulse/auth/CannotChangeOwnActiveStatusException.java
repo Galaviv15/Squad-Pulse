@@ -9,7 +9,9 @@ import com.squadpulse.common.ConflictException;
  */
 class CannotChangeOwnActiveStatusException extends ConflictException {
 
+  static final String CODE = "CANNOT_CHANGE_OWN_ACTIVE_STATUS";
+
   CannotChangeOwnActiveStatusException() {
-    super("You can't deactivate or reactivate yourself; another ADMIN must do it");
+    super(CODE, "You can't deactivate or reactivate yourself; another ADMIN must do it");
   }
 }

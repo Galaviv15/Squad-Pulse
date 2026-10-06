@@ -257,6 +257,7 @@ class UserManagementControllerTest {
     mockMvc
         .perform(invite(PermissionLevel.ADMIN, VALID_BODY))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("EMAIL_ALREADY_REGISTERED"))
         .andExpect(jsonPath("$.message").value("A user with this email already exists"));
   }
 
@@ -364,6 +365,7 @@ class UserManagementControllerTest {
     mockMvc
         .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-1", LEVEL_BODY))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CANNOT_CHANGE_OWN_PERMISSION_LEVEL"))
         .andExpect(
             jsonPath("$.message")
                 .value("You can't change your own permission level; another ADMIN must do it"));
@@ -390,6 +392,7 @@ class UserManagementControllerTest {
     mockMvc
         .perform(changePermissionLevel(PermissionLevel.ADMIN, "user-2", LEVEL_BODY))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(
             jsonPath("$.message").value("The resource was modified concurrently, please retry"));
@@ -545,6 +548,7 @@ class UserManagementControllerTest {
               errorBody(
                   409,
                   "Conflict",
+                  "CANNOT_CHANGE_OWN_ACTIVE_STATUS",
                   "You can't deactivate or reactivate yourself; another ADMIN must do it"));
     }
   }
@@ -573,7 +577,11 @@ class UserManagementControllerTest {
           .perform(activation(PermissionLevel.ADMIN, action, "user-2"))
           .andExpect(status().isConflict())
           .andExpect(
-              errorBody(409, "Conflict", "The resource was modified concurrently, please retry"));
+              errorBody(
+                  409,
+                  "Conflict",
+                  "CONCURRENT_MODIFICATION",
+                  "The resource was modified concurrently, please retry"));
     }
   }
 
@@ -601,14 +609,23 @@ class UserManagementControllerTest {
 
   /** The whole error body, {@code timestamp} aside: exactly these fields, nothing more. */
   private static ResultMatcher errorBody(int status, String error, String message) {
+    return errorBody(status, error, null, message);
+  }
+
+  /** The whole error body, {@code timestamp} aside; {@code code} is present even when null. */
+  private static ResultMatcher errorBody(int status, String error, String code, String message) {
     return result -> {
       Map<String, Object> body =
           new HashMap<>(
               JsonPath.<Map<String, Object>>read(result.getResponse().getContentAsString(), "$"));
       assertThat(body.remove("timestamp")).as("timestamp").isNotNull();
-      assertThat(body)
-          .isEqualTo(
-              Map.of("status", status, "error", error, "message", message, "details", List.of()));
+      Map<String, Object> expected = new HashMap<>();
+      expected.put("status", status);
+      expected.put("error", error);
+      expected.put("code", code);
+      expected.put("message", message);
+      expected.put("details", List.of());
+      assertThat(body).isEqualTo(expected);
     };
   }
 

@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
-import { playersReturn } from "@/test/msw/squad";
+import { playerBody, playerReturns, playersReturn } from "@/test/msw/squad";
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
 
@@ -20,18 +20,52 @@ describe("routes", () => {
     expect(router.state.location.pathname).toBe("/app");
   });
 
-  it.each([
-    ["/app", he.nav.dashboard, he.dashboard.stub],
-    ["/app/squad/new", he.squad.addPlayer, he.squad.newPlayerStub],
-    ["/app/squad/p1", he.squad.playerCard, he.squad.playerCardStub],
-  ])("renders %s inside the shell", async (path, title, stub) => {
-    renderWithProviders({ initialEntries: [path] });
+  it("renders /app inside the shell", async () => {
+    renderWithProviders({ initialEntries: ["/app"] });
 
-    expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: he.nav.dashboard }),
+    ).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("navigation", { name: he.shell.navLabel })).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByText(stub)).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByText(he.dashboard.stub)).toBeInTheDocument();
   });
+
+  // React Router ranks a static segment above a dynamic one, so "new" is never a :playerId,
+  // and /edit is its own, deeper route.
+  it.each([
+    ["/app/squad/new", "squad/new", {}, he.squad.addPlayer, he.squad.form.submitCreate],
+    ["/app/squad/p1", "squad/:playerId", { playerId: "p1" }, he.squad.playerCard, null],
+    [
+      "/app/squad/p1/edit",
+      "squad/:playerId/edit",
+      { playerId: "p1" },
+      he.squad.editPlayer,
+      he.squad.form.submitEdit,
+    ],
+    ["/app/squad/x/edit", "squad/:playerId/edit", { playerId: "x" }, he.squad.editPlayer, null],
+  ])(
+    "matches %s to the route %s, inside the shell with סגל active",
+    async (path, routePath, params, title, submit) => {
+      server.use(playerReturns(playerBody()));
+      const { router } = renderWithProviders({ initialEntries: [path] });
+
+      expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
+      expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+      const deepest = router.state.matches[router.state.matches.length - 1];
+      expect(deepest.route.path).toBe(routePath);
+      expect(deepest.params).toEqual(params);
+      const nav = screen.getByRole("navigation", { name: he.shell.navLabel });
+      expect(within(nav).getByRole("link", { name: he.nav.squad })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(document.title).toBe(`${title} · SquadPulse`);
+      if (submit !== null) {
+        expect(await screen.findByRole("button", { name: submit })).toBeInTheDocument();
+      }
+    },
+  );
 
   it.each(["/nope", "/authors"])(
     "renders the full-page not-found, without the shell, at %s",

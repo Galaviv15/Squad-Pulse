@@ -402,7 +402,9 @@ class PasswordResetFlowIntegrationTest {
     insertUser("club-b", "taken@example.com", true);
     String adminToken = accessToken(login("manager@example.com", PASSWORD).andReturn());
 
-    perform(invite(adminToken, "taken@example.com")).andExpect(status().isConflict());
+    perform(invite(adminToken, "taken@example.com"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("EMAIL_ALREADY_REGISTERED"));
 
     verify(emailSender, never()).send(anyString(), anyString(), anyString());
   }

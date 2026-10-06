@@ -308,7 +308,10 @@ class ClubControllerTest {
     return request.header("Authorization", tokens.bearer("club-a", PermissionLevel.ADMIN));
   }
 
-  /** The whole error body, {@code timestamp} aside: exactly these fields, nothing more. */
+  /**
+   * The whole error body, {@code timestamp} aside: exactly these fields, nothing more ({@code code}
+   * present and null).
+   */
   private static ResultMatcher errorBody(
       int status, String error, String message, List<String> details) {
     return result -> {
@@ -316,9 +319,13 @@ class ClubControllerTest {
           new HashMap<>(
               JsonPath.<Map<String, Object>>read(result.getResponse().getContentAsString(), "$"));
       assertThat(body.remove("timestamp")).as("timestamp").isNotNull();
-      assertThat(body)
-          .isEqualTo(
-              Map.of("status", status, "error", error, "message", message, "details", details));
+      Map<String, Object> expected = new HashMap<>();
+      expected.put("status", status);
+      expected.put("error", error);
+      expected.put("code", null);
+      expected.put("message", message);
+      expected.put("details", details);
+      assertThat(body).isEqualTo(expected);
     };
   }
 }

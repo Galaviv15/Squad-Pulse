@@ -9,7 +9,9 @@ import com.squadpulse.common.ConflictException;
  */
 class PlayerAlreadyReleasedException extends ConflictException {
 
+  static final String CODE = "PLAYER_ALREADY_RELEASED";
+
   PlayerAlreadyReleasedException() {
-    super("This player has already been released");
+    super(CODE, "This player has already been released");
   }
 }

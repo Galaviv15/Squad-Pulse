@@ -261,19 +261,24 @@ class StaffPhotoIntegrationTest {
         .andExpect(content().bytes(TestImages.png()));
     upload(adminA, urlOf(viewerA), TestImages.jpeg())
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("USER_DEACTIVATED"))
         .andExpect(
             jsonPath("$.message")
                 .value("This user has been deactivated; their profile can't be changed"));
-    remove(adminA, urlOf(viewerA)).andExpect(status().isConflict());
+    remove(adminA, urlOf(viewerA))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("USER_DEACTIVATED"));
     mockMvc
         .perform(
             multipart(HttpMethod.PUT, ME)
                 .file(new MockMultipartFile("file", "photo", "image/jpeg", TestImages.jpeg()))
                 .header(HttpHeaders.AUTHORIZATION, viewerToken))
-        .andExpect(status().isConflict());
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("USER_DEACTIVATED"));
     mockMvc
         .perform(delete(ME).header(HttpHeaders.AUTHORIZATION, viewerToken))
-        .andExpect(status().isConflict());
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("USER_DEACTIVATED"));
 
     assertThat(photoFiles(viewerA)).containsExactly(before);
     getPhoto(adminA, urlOf(viewerA)).andExpect(content().bytes(TestImages.png()));

@@ -10,8 +10,11 @@ import com.squadpulse.common.ConflictException;
  */
 class StalePlayerVersionException extends ConflictException {
 
+  static final String CODE = "STALE_VERSION";
+
   StalePlayerVersionException() {
     super(
+        CODE,
         "This player was changed by someone else since you loaded it; reload it and apply your"
             + " changes again");
   }

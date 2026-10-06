@@ -27,8 +27,9 @@
   "squad": {
     "addPlayer": "הוספת שחקן",
     "playerCard": "כרטיס שחקן",
-    "newPlayerStub": "טופס הוספת שחקן יופיע כאן בקרוב.",
-    "playerCardStub": "כרטיס השחקן יופיע כאן בקרוב.",
+    "editPlayer": "עריכת שחקן",
+    "edit": "עריכה",
+    "noPermission": "אין לך הרשאה לפעולה הזו.",
     "backToSquad": "חזרה לסגל",
     "statusLabel": "סטטוס שחקנים",
     "status": {
@@ -78,6 +79,57 @@
       "released": "אין שחקנים משוחררים.",
       "all": "אין עדיין שחקנים במועדון.",
       "filtered": "אין שחקנים שמתאימים לסינון."
+    },
+    "player": {
+      "loading": "טוען שחקן…",
+      "notFound": "השחקן לא נמצא.",
+      "loadError": "לא הצלחנו לטעון את השחקן.",
+      "age": "(גיל {{age}})"
+    },
+    "fields": {
+      "fullName": "שם מלא",
+      "primaryPosition": "עמדה ראשית",
+      "secondaryPosition": "עמדה משנית",
+      "jerseyNumber": "מספר חולצה",
+      "dateOfBirth": "תאריך לידה",
+      "heightCm": "גובה (ס״מ)",
+      "weightKg": "משקל (ק״ג)",
+      "preferredFoot": "רגל",
+      "medicalStatus": "מצב רפואי",
+      "age": "גיל"
+    },
+    "form": {
+      "none": "ללא",
+      "submitCreate": "הוספת שחקן",
+      "submitEdit": "שמירת שינויים",
+      "saving": "שומר…",
+      "cancel": "ביטול",
+      "errors": {
+        "required": "שדה חובה",
+        "nameTooLong": "עד 100 תווים",
+        "jerseyNumberRange": "מספר בין 1 ל־99",
+        "heightRange": "גובה בין 140 ל־220",
+        "weightRange": "משקל בין 40 ל־150",
+        "ageRange": "גיל בין 18 ל־99",
+        "invalidDate": "תאריך לא תקין",
+        "secondaryEqualsPrimary": "העמדה המשנית חייבת להיות שונה מהראשית",
+        "invalidValue": "ערך לא תקין",
+        "jerseyNumberTaken": "המספר תפוס על ידי שחקן פעיל אחר."
+      },
+      "stale": {
+        "message": "השחקן עודכן על ידי מישהו אחר מאז שפתחת את הטופס.",
+        "hint": "השינויים שלך לא יישמרו.",
+        "reload": "טעינת הגרסה העדכנית"
+      },
+      "released": "השחקן שוחרר ולא ניתן לערוך אותו.",
+      "toCard": "לכרטיס השחקן",
+      "saveInvalid": "לא הצלחנו לשמור. בדקו את הפרטים ונסו שוב.",
+      "saveFailed": "לא הצלחנו לשמור. נסו שוב."
+    },
+    "actions": {
+      "column": "פעולות",
+      "menu": "פעולות עבור {{name}}",
+      "open": "פתיחת כרטיס"
     }
   },
   "titles": {
