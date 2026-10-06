@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { playerBody } from "@/test/msw/squad";
 import {
+  onPlayerDeleted,
   onPlayerWritten,
   playerQueryKey,
   SQUAD_PLAYERS_QUERY_KEY,
@@ -64,5 +65,30 @@ describe("onPlayerWritten", () => {
     onPlayerWritten(queryClient, playerBody({ id: "new" }));
 
     expect(queryClient.getQueryData(playerQueryKey("new"))).toMatchObject({ id: "new" });
+  });
+});
+
+describe("onPlayerDeleted", () => {
+  it("drops the deleted player's card and invalidates every other squad query", () => {
+    const queryClient = seeded();
+
+    onPlayerDeleted(queryClient, "p1");
+
+    expect(queryClient.getQueryCache().find({ queryKey: playerQueryKey("p1") })).toBeUndefined();
+    expect(invalidated(queryClient)).toEqual([
+      [...SQUAD_PLAYERS_QUERY_KEY, { status: "active" }],
+      [...SQUAD_PLAYERS_QUERY_KEY, { status: "all" }],
+      playerQueryKey("p2"),
+      [...SQUAD_QUERY_KEY, "summary"],
+    ]);
+  });
+
+  it("drops only that card: another player's id that starts the same stays", () => {
+    const queryClient = seeded();
+    queryClient.setQueryData(playerQueryKey("p10"), playerBody({ id: "p10" }));
+
+    onPlayerDeleted(queryClient, "p1");
+
+    expect(queryClient.getQueryData(playerQueryKey("p10"))).toBeDefined();
   });
 });

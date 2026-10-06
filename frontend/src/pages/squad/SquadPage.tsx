@@ -1,7 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
+import { FormNotice } from "@/components/form/FormMessage";
+import { PlayerActionDialog, type PlayerDialogTarget } from "@/components/squad/PlayerActionDialog";
+import { focusBack, useDialogHost } from "@/components/squad/playerDialogs";
 import { SquadFilterBar } from "@/components/squad/SquadFilterBar";
 import { SquadTable } from "@/components/squad/SquadTable";
 import { StatusControl } from "@/components/squad/StatusControl";
@@ -11,7 +15,8 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { hasFilterBarFilters } from "@/lib/squad/filters";
 import { EMPTY_SQUAD_KEYS } from "@/lib/squad/labels";
 import { NEW_PLAYER_PATH } from "@/lib/squad/paths";
-import { useSquadPlayers } from "@/lib/squad/players";
+import { onPlayerDeleted, useSquadPlayers } from "@/lib/squad/players";
+import { deletedPlayerNameFromState } from "@/lib/squad/routeState";
 import { useSquadFilters } from "@/lib/squad/useSquadFilters";
 import { cn } from "@/lib/utils";
 
@@ -19,11 +24,20 @@ import { cn } from "@/lib/utils";
  * /app/squad: the squad table. The status control and the "add player" link (EDIT_FULL and up),
  * the filter bar, the count, and the table. The filters live in the URL (useSquadFilters); the
  * list comes from useSquadPlayers, in the server's order. Its title comes from the route.
+ *
+ * The rows' in-place actions (release, re-activate, delete) open their dialog here, outside the
+ * table. "<name> נמחק לצמיתות." shows above the table after a delete, from a row or (carried in
+ * router state) from the card.
  */
 export function SquadPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { permissionLevel } = useCurrentUser();
+  // Before useSquadFilters: if both rewrite the URL on mount, the filters' normalization (which
+  // drops the state too) is the last word.
+  const [deletedName, setDeletedName] = useDeletedPlayerNotice();
   const { filters, setFilters, clearFilters } = useSquadFilters();
+  const { dialog, openDialog, close, closed } = useDialogHost<PlayerDialogTarget>();
   const players = useSquadPlayers(filters);
   const [clearCount, setClearCount] = useState(0);
 
@@ -61,11 +75,25 @@ export function SquadPage() {
       </TableMessage>
     );
   } else {
-    content = <SquadTable players={data} />;
+    content = (
+      <SquadTable
+        players={data}
+        onDialog={(kind, player, trigger) => openDialog({ kind, player }, focusBack(trigger))}
+      />
+    );
   }
 
   return (
     <div className="flex flex-col gap-4">
+      {/* The deleted-player notice's live region, always there so the notice is announced when
+          its text goes in (empty, it cancels the column's gap). */}
+      <div role="status" className="empty:-mb-4">
+        {deletedName !== null && (
+          <FormNotice icon="success" live={false}>
+            {t("squad.deletedNotice", { name: deletedName })}
+          </FormNotice>
+        )}
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <StatusControl value={filters.status} onChange={(status) => setFilters({ status })} />
         {hasPermission(permissionLevel, "EDIT_FULL") && (
@@ -99,8 +127,57 @@ export function SquadPage() {
       >
         {content}
       </div>
+      {dialog !== null && (
+        <PlayerActionDialog
+          key={dialog.key}
+          target={dialog.target}
+          place="table"
+          open={dialog.open}
+          onClose={close}
+          onClosed={closed}
+          finalFocus={dialog.finalFocus}
+          onDeleted={(player) => {
+            onPlayerDeleted(queryClient, player.id);
+            setDeletedName(player.fullName);
+            close();
+          }}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * The deleted-player notice: from the card's router state on arrival, or set after a delete from
+ * a row. The state is read once, then removed from the history entry (a replace to the same URL
+ * without state), so neither a reload nor coming Back to this entry shows it again. Arriving with
+ * it, the text goes in a tick after the page mounted, so it lands in a live region that's already
+ * there and is announced.
+ */
+function useDeletedPlayerNotice() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const fromState = deletedPlayerNameFromState(location.state);
+  const [arrivedWith] = useState(fromState);
+  const notice = useState<string | null>(null);
+  const setNotice = notice[1];
+
+  const { pathname, search, hash } = location;
+  useEffect(() => {
+    if (fromState !== null) {
+      void navigate({ pathname, search, hash }, { replace: true, state: null });
+    }
+  }, [fromState, pathname, search, hash, navigate]);
+
+  useEffect(() => {
+    if (arrivedWith === null) {
+      return;
+    }
+    const timer = setTimeout(() => setNotice(arrivedWith));
+    return () => clearTimeout(timer);
+  }, [arrivedWith, setNotice]);
+
+  return notice;
 }
 
 function TableMessage({ children }: { children: ReactNode }) {

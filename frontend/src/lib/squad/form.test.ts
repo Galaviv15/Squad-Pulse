@@ -4,6 +4,7 @@ import {
   EMPTY_PLAYER_FORM,
   formValuesToCreateBody,
   formValuesToUpdateBody,
+  jerseyNumberError,
   playerToFormValues,
   validatePlayerForm,
   type PlayerFormValues,
@@ -257,5 +258,26 @@ describe("form → API bodies", () => {
     });
     // Explicitly present, not left out: a full replacement clears them.
     expect(Object.keys(body)).toHaveLength(10);
+  });
+});
+
+describe("jerseyNumberError (the form's rule, and the re-activation dialog's)", () => {
+  it.each(["", "  ", "1", "99", " 7 ", "07"])("accepts %j", (text) => {
+    expect(jerseyNumberError(text)).toBeUndefined();
+  });
+
+  it.each(["0", "100", "-1", "1.5", "abc", "1e1", "٣", "0099"])("refuses %j", (text) => {
+    expect(jerseyNumberError(text)).toBe("squad.form.errors.jerseyNumberRange");
+  });
+
+  it("is the rule validatePlayerForm applies", () => {
+    for (const text of ["", "5", "0", "100", "x"]) {
+      const errors = validatePlayerForm(
+        { ...EMPTY_PLAYER_FORM, jerseyNumber: text },
+        new Date(2026, 0, 1),
+        "create",
+      );
+      expect(errors.jerseyNumber).toBe(jerseyNumberError(text));
+    }
   });
 });

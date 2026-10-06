@@ -14,6 +14,8 @@ interface ImageOrInitialsProps {
   className: string;
   /** Extra classes for the <img> only (object-fit). */
   imageClassName?: string;
+  /** Changed, refetches the same path (a replaced image); see useAuthorizedImage. */
+  refreshKey?: number;
 }
 
 /**
@@ -28,8 +30,9 @@ export function ImageOrInitials({
   fallbackIcon: FallbackIcon,
   className,
   imageClassName,
+  refreshKey,
 }: ImageOrInitialsProps) {
-  const image = useAuthorizedImage(path);
+  const image = useAuthorizedImage(path, refreshKey);
 
   if (image.status === "loaded") {
     return <img src={image.url} alt="" className={cn("shrink-0", className, imageClassName)} />;

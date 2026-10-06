@@ -21,8 +21,13 @@ interface FormFieldProps {
   labelAction?: ReactNode;
   /** Marked with a visual "*" (aria-hidden) and aria-required on the control. */
   required?: boolean;
-  /** A hint under the control; an error replaces it. */
+  /** A hint under the control; an error replaces it, unless `keepHint`. */
   hint?: string;
+  /**
+   * Keeps the hint under an error, both in aria-describedby (the error first): for a hint that
+   * still matters while the value is wrong (e.g. "leave empty for none").
+   */
+  keepHint?: boolean;
   /** The i18n key of the field's error, if it's invalid. */
   error?: string;
   className?: string;
@@ -40,6 +45,7 @@ export function FormField({
   labelAction,
   required,
   hint,
+  keepHint = false,
   error,
   className,
   children,
@@ -48,6 +54,7 @@ export function FormField({
   const labelId = `${id}-label`;
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
+  const showHint = Boolean(hint) && (!error || keepHint);
 
   const labelElement = (
     <Label id={labelId} htmlFor={id} className="gap-1">
@@ -73,21 +80,26 @@ export function FormField({
       {children({
         id,
         "aria-invalid": error ? true : undefined,
-        "aria-describedby": error ? errorId : hint ? hintId : undefined,
+        "aria-describedby": describedBy(error ? errorId : undefined, showHint ? hintId : undefined),
         "aria-required": required || undefined,
         "aria-labelledby": labelId,
       })}
-      {error ? (
+      {showHint && (
+        <p id={hintId} className="text-xs text-muted-foreground">
+          {hint}
+        </p>
+      )}
+      {error && (
         <p id={errorId} className="text-[0.8125rem] text-danger">
           {t(error)}
         </p>
-      ) : (
-        hint && (
-          <p id={hintId} className="text-xs text-muted-foreground">
-            {hint}
-          </p>
-        )
       )}
     </div>
   );
+}
+
+/** The ids that describe the control, space-separated, or undefined when there are none. */
+function describedBy(...ids: (string | undefined)[]): string | undefined {
+  const present = ids.filter((id) => id !== undefined);
+  return present.length > 0 ? present.join(" ") : undefined;
 }

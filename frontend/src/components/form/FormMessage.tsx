@@ -17,11 +17,26 @@ export function FormAlert({ children, action }: { children: ReactNode; action?: 
   );
 }
 
-/** A neutral or success notice: "code sent" (mail) or "password set" (success). */
-export function FormNotice({ children, icon }: { children: ReactNode; icon: "mail" | "success" }) {
+/**
+ * A neutral or success notice: "code sent" (mail) or "password set" (success). Its own live region
+ * by default; `live={false}` when it's rendered into a region that's always there (a region that
+ * appears together with its text isn't reliably announced).
+ */
+export function FormNotice({
+  children,
+  icon,
+  live = true,
+}: {
+  children: ReactNode;
+  icon: "mail" | "success";
+  live?: boolean;
+}) {
   const Icon = icon === "mail" ? Mail : CircleCheck;
   return (
-    <div role="status" className={`${MESSAGE_CLASSES} bg-secondary text-secondary-foreground`}>
+    <div
+      role={live ? "status" : undefined}
+      className={`${MESSAGE_CLASSES} bg-secondary text-secondary-foreground`}
+    >
       <Icon aria-hidden="true" className="size-[18px] shrink-0" />
       <p>{children}</p>
     </div>

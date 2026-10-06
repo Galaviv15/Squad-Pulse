@@ -18,11 +18,11 @@ export function PageMessage({ children }: { children: ReactNode }) {
   );
 }
 
-/** "חזרה לסגל", as an outline button-styled link. */
-export function BackToSquadLink() {
+/** "חזרה לסגל", as an outline button-styled link: 36px, or 40px beside other buttons (the card). */
+export function BackToSquadLink({ size = "sm" }: { size?: "sm" | "default" }) {
   const { t } = useTranslation();
   return (
-    <Link to={SQUAD_PATH} className={buttonVariants({ variant: "outline", size: "sm" })}>
+    <Link to={SQUAD_PATH} className={buttonVariants({ variant: "outline", size })}>
       {t("squad.backToSquad")}
     </Link>
   );

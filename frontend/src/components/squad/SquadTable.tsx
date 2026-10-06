@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router";
 import { ImageOrInitials } from "@/components/ImageOrInitials";
 import { MedicalStatusBadge, None, PositionChips, ReleasedBadge } from "./PlayerBadges";
 import { PlayerActionsMenu } from "./PlayerActionsMenu";
-import { playerActions } from "./playerActions";
+import { playerActions, type PlayerDialogKind } from "./playerActions";
 import {
   Table,
   TableBody,
@@ -36,9 +36,16 @@ const COLUMN_KEYS = [
  * re-sorted here). The name is a link to the player's card, the keyboard path; a click anywhere
  * else on the row opens it too, as a mouse convenience. A released player's row is dimmed and
  * carries a "משוחרר" pill, so it isn't marked by color alone. The last column is the row's actions
- * menu (playerActions: data, so KAN-59's items slot in), never dimmed.
+ * menu (playerActions), never dimmed; its in-place items go to `onDialog`, whose host (the squad
+ * page) renders the dialog, so it outlives the table (e.g. when the list empties).
  */
-export function SquadTable({ players }: { players: Player[] }) {
+export function SquadTable({
+  players,
+  onDialog,
+}: {
+  players: Player[];
+  onDialog(kind: PlayerDialogKind, player: Player, trigger: HTMLElement | null): void;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { permissionLevel } = useCurrentUser();
@@ -48,6 +55,7 @@ export function SquadTable({ players }: { players: Player[] }) {
     const { target } = event;
     // React bubbles a click inside a portal (the actions menu's popup) up the component tree to
     // this row, though the popup isn't inside the row in the DOM: only a click in the row counts.
+    // (The dialogs are rendered by the page, outside the table, so their clicks never get here.)
     if (!(target instanceof Element) || !event.currentTarget.contains(target)) {
       return;
     }
@@ -142,6 +150,7 @@ export function SquadTable({ players }: { players: Player[] }) {
                 <PlayerActionsMenu
                   player={player}
                   actions={playerActions(player, permissionLevel)}
+                  onDialog={onDialog}
                 />
               </TableCell>
             </TableRow>
