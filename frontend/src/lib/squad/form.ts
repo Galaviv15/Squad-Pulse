@@ -103,7 +103,7 @@ export function playerToFormValues(player: Player): PlayerFormValues {
 }
 
 /** A number field's value: null when empty. Called on validated values, so it's whole digits. */
-function toNumber(text: string): number | null {
+export function toNumber(text: string): number | null {
   const trimmed = text.trim();
   return trimmed === "" ? null : Number(trimmed);
 }
@@ -149,6 +149,17 @@ function wholeNumberIn(text: string, range: { min: number; max: number }): boole
 }
 
 /**
+ * The jersey number field's error (an i18n key), or undefined when it's valid: optional, a whole
+ * number 1–99 (squad.CreatePlayerRequest's @Min / @Max). Shared by the player form and the
+ * re-activation dialog (squad.ReactivatePlayerRequest has the same rule).
+ */
+export function jerseyNumberError(text: string): string | undefined {
+  return text.trim() !== "" && !wholeNumberIn(text, JERSEY_NUMBER_RANGE)
+    ? "squad.form.errors.jerseyNumberRange"
+    : undefined;
+}
+
+/**
  * The form's errors (an i18n key per invalid field), mirroring the API's validation exactly, so a
  * valid form is never refused with a 400:
  * - name: required (after trimming, as the server trims), at most 100 UTF-16 units (string.length,
@@ -183,11 +194,9 @@ export function validatePlayerForm(
     errors.secondaryPosition = "squad.form.errors.secondaryEqualsPrimary";
   }
 
-  if (
-    values.jerseyNumber.trim() !== "" &&
-    !wholeNumberIn(values.jerseyNumber, JERSEY_NUMBER_RANGE)
-  ) {
-    errors.jerseyNumber = "squad.form.errors.jerseyNumberRange";
+  const jerseyNumber = jerseyNumberError(values.jerseyNumber);
+  if (jerseyNumber !== undefined) {
+    errors.jerseyNumber = jerseyNumber;
   }
   if (values.heightCm.trim() !== "" && !wholeNumberIn(values.heightCm, HEIGHT_CM_RANGE)) {
     errors.heightCm = "squad.form.errors.heightRange";
