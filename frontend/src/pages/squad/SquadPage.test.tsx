@@ -8,7 +8,7 @@ import type { Player } from "@/lib/squad/types";
 import { deferred } from "@/test/deferred";
 import { apiError, imageReturns, loginReturns, meReturns, refreshReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { playerBody, playersReturn, recordedPlayers } from "@/test/msw/squad";
+import { playerBody, playerReturns, playersReturn, recordedPlayers } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 const LIST = "/squad/players";
@@ -720,12 +720,18 @@ describe("opening a player", () => {
       name: he.nav.squad,
     });
 
-  async function expectPlayerStub(router: { state: { location: { pathname: string } } }) {
+  beforeEach(() => {
+    server.use(playerReturns(playerBody()));
+  });
+
+  async function expectPlayerCard(router: { state: { location: { pathname: string } } }) {
     expect(
       await screen.findByRole("heading", { level: 1, name: he.squad.playerCard }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/app/squad/p1");
-    expect(screen.getByText(he.squad.playerCardStub)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Yossi Levi" }),
+    ).toBeInTheDocument();
     expect(squadNavLink()).toHaveAttribute("aria-current", "page");
   }
 
@@ -734,7 +740,7 @@ describe("opening a player", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Yossi Levi" }));
 
-    await expectPlayerStub(router);
+    await expectPlayerCard(router);
     expect(router.state.historyAction).toBe("PUSH");
   });
 
@@ -743,7 +749,7 @@ describe("opening a player", () => {
 
     fireEvent.click(cellsOf(rowOf("Yossi Levi"))[3]);
 
-    await expectPlayerStub(router);
+    await expectPlayerCard(router);
   });
 
   it("navigates once when the name link itself is clicked", async () => {
@@ -753,7 +759,7 @@ describe("opening a player", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Yossi Levi" }));
 
-    await expectPlayerStub(router);
+    await expectPlayerCard(router);
     expect(navigations.filter((path) => path === "/app/squad/p1")).toHaveLength(1);
   });
 
@@ -768,45 +774,15 @@ describe("opening a player", () => {
     expect(router.state.location.pathname).toBe("/app/squad");
   });
 
-  it("leads back to the squad from the player stub", async () => {
+  it("leads back to the squad from the player card", async () => {
     const { router } = await renderSquad();
     fireEvent.click(screen.getByRole("link", { name: "Yossi Levi" }));
-    await expectPlayerStub(router);
+    await expectPlayerCard(router);
 
     fireEvent.click(screen.getByRole("link", { name: he.squad.backToSquad }));
 
     expect(await screen.findByRole("link", { name: "Yossi Levi" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/app/squad");
-  });
-});
-
-describe("the stub routes", () => {
-  it("show the add stub at /app/squad/new, not a player card", async () => {
-    server.use(refreshReturns("t1"), meReturns());
-    renderWithProviders({ initialEntries: ["/app/squad/new"] });
-
-    expect(
-      await screen.findByRole("heading", { level: 1, name: he.squad.addPlayer }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(he.squad.newPlayerStub)).toBeInTheDocument();
-    expect(screen.queryByText(he.squad.playerCardStub)).toBeNull();
-    expect(screen.getByRole("link", { name: he.squad.backToSquad })).toHaveAttribute(
-      "href",
-      "/app/squad",
-    );
-    expect(document.title).toBe(`${he.squad.addPlayer} · SquadPulse`);
-    expect(fetchedPaths()).not.toContain(LIST);
-  });
-
-  it("show the player stub at /app/squad/:playerId, without loading anything", async () => {
-    server.use(refreshReturns("t1"), meReturns());
-    renderWithProviders({ initialEntries: ["/app/squad/abc123"] });
-
-    expect(
-      await screen.findByRole("heading", { level: 1, name: he.squad.playerCard }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(he.squad.playerCardStub)).toBeInTheDocument();
-    expect(fetchedPaths()).toEqual(["/auth/refresh", "/auth/users/me"]);
   });
 });
 
