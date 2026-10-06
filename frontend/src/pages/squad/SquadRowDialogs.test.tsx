@@ -14,6 +14,7 @@ import {
   reactivateReturns,
   releaseReturns,
 } from "@/test/msw/squad";
+import { watchLiveInsertion } from "@/test/liveRegion";
 import { renderWithProviders } from "@/test/render";
 
 let fetchSpy: MockInstance<typeof fetch>;
@@ -261,6 +262,28 @@ describe("deleting from a row", () => {
           String(input).endsWith("/squad/players/p1") && (init?.method ?? "GET") === "GET",
       ),
     ).toEqual([]);
+  });
+
+  it("announces the notice: its text goes into the status region that was already there", async () => {
+    const player = playerBody({ fullName: "דני לוי" });
+    const { store } = await renderSquad([player, playerBody({ id: "p2", fullName: "Avi" })]);
+    server.use(
+      deleteReturns("p1", () => {
+        store.players = store.players.slice(1);
+        return new HttpResponse(null, { status: 204 });
+      }).handler,
+    );
+    const region = screen.getByRole("status");
+    expect(region).toBeEmptyDOMElement();
+    const dialog = await choose("דני לוי", he.squad.actions.delete);
+    const watch = watchLiveInsertion("דני לוי נמחק לצמיתות.");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: he.squad.actions.delete }));
+
+    await waitFor(() => expect(region).toHaveTextContent("דני לוי נמחק לצמיתות."));
+    watch.stop();
+    expect(watch.result.intoExistingRegion).toBe(true);
+    expect(screen.getByRole("status")).toBe(region);
   });
 
   it("treats a 404 as already gone: the same notice", async () => {

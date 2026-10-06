@@ -55,7 +55,7 @@ async function renderSquad(
   server.use(refreshReturns("t1"), meReturns(user), list.handler);
   const rendered = renderWithProviders({ initialEntries: [path] });
   await screen.findByRole("heading", { level: 1, name: he.nav.squad });
-  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  await waitFor(() => expect(screen.queryByText(he.squad.loading)).toBeNull());
   return { ...rendered, queries: list.queries };
 }
 
@@ -564,7 +564,7 @@ describe("the list's states", () => {
 
     gate.resolve();
     expect(await screen.findByRole("table")).toBeInTheDocument();
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(he.squad.loading)).toBeNull();
   });
 
   it("shows an error with a retry when the list fails, and the retry can succeed", async () => {
@@ -651,7 +651,7 @@ describe("the list's states", () => {
     await waitFor(() => expect(answered).toEqual(["", "released"]));
     expect(screen.getByRole("link", { name: "Active One" })).toBeInTheDocument();
     expect(frame).toHaveAttribute("aria-busy", "true");
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(he.squad.loading)).toBeNull();
 
     gate.resolve();
     expect(await screen.findByRole("link", { name: "Released One" })).toBeInTheDocument();

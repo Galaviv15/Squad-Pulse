@@ -16,6 +16,7 @@ import {
   recordedPlayers,
   releaseReturns,
 } from "@/test/msw/squad";
+import { watchLiveInsertion } from "@/test/liveRegion";
 import { renderWithProviders } from "@/test/render";
 
 let fetchSpy: MockInstance<typeof fetch>;
@@ -469,6 +470,24 @@ describe("the card's permanent delete", () => {
       expect(sent().slice(before)).not.toContain("GET /squad/players/p1");
     },
   );
+
+  it("announces the notice: its text goes into the squad page's status region once mounted", async () => {
+    const player = playerBody({ fullName: "דני לוי" });
+    await renderCard(player);
+    server.use(deleteReturns(player.id).handler, recordedPlayers([]).handler);
+    const dialog = await openDialog(he.squad.actions.delete);
+    const watch = watchLiveInsertion("דני לוי נמחק לצמיתות.");
+
+    fireEvent.click(confirmButton(dialog, he.squad.actions.delete));
+
+    const notice = await screen.findByText("דני לוי נמחק לצמיתות.");
+    watch.stop();
+    expect(watch.result.intoExistingRegion).toBe(true);
+    const region = notice.closest('[role="status"]')!;
+    expect(region).toHaveTextContent("דני לוי נמחק לצמיתות.");
+    // One live region: the notice inside isn't a second one.
+    expect(region.querySelectorAll('[role="status"]')).toHaveLength(0);
+  });
 
   it("keeps the dialog open on a 403", async () => {
     const player = playerBody();

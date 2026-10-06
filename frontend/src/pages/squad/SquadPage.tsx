@@ -85,9 +85,15 @@ export function SquadPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      {deletedName !== null && (
-        <FormNotice icon="success">{t("squad.deletedNotice", { name: deletedName })}</FormNotice>
-      )}
+      {/* The deleted-player notice's live region, always there so the notice is announced when
+          its text goes in (empty, it cancels the column's gap). */}
+      <div role="status" className="empty:-mb-4">
+        {deletedName !== null && (
+          <FormNotice icon="success" live={false}>
+            {t("squad.deletedNotice", { name: deletedName })}
+          </FormNotice>
+        )}
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <StatusControl value={filters.status} onChange={(status) => setFilters({ status })} />
         {hasPermission(permissionLevel, "EDIT_FULL") && (
@@ -144,13 +150,17 @@ export function SquadPage() {
 /**
  * The deleted-player notice: from the card's router state on arrival, or set after a delete from
  * a row. The state is read once, then removed from the history entry (a replace to the same URL
- * without state), so neither a reload nor coming Back to this entry shows it again.
+ * without state), so neither a reload nor coming Back to this entry shows it again. Arriving with
+ * it, the text goes in a tick after the page mounted, so it lands in a live region that's already
+ * there and is announced.
  */
 function useDeletedPlayerNotice() {
   const location = useLocation();
   const navigate = useNavigate();
   const fromState = deletedPlayerNameFromState(location.state);
-  const notice = useState(fromState);
+  const [arrivedWith] = useState(fromState);
+  const notice = useState<string | null>(null);
+  const setNotice = notice[1];
 
   const { pathname, search, hash } = location;
   useEffect(() => {
@@ -158,6 +168,14 @@ function useDeletedPlayerNotice() {
       void navigate({ pathname, search, hash }, { replace: true, state: null });
     }
   }, [fromState, pathname, search, hash, navigate]);
+
+  useEffect(() => {
+    if (arrivedWith === null) {
+      return;
+    }
+    const timer = setTimeout(() => setNotice(arrivedWith));
+    return () => clearTimeout(timer);
+  }, [arrivedWith, setNotice]);
 
   return notice;
 }
