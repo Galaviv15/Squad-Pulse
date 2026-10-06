@@ -5,9 +5,15 @@ import { accessToken, apiError, loginReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
 import { ApiError } from "./errors";
 import {
+  authSession,
   createBrowserSession,
+  LOGOUT_CHANNEL_NAME,
+  LOGOUT_MESSAGE,
+  openLogoutChannel,
   REFRESH_LOCK_NAME,
+  resetAuthSessionForTests,
   useSessionStatus,
+  type LogoutChannel,
   type SessionStatus,
 } from "./session";
 
@@ -302,5 +308,175 @@ describe("createBrowserSession", () => {
 
     expect(session.getStatus()).toBe("unauthenticated");
     expect(session.getAccessToken()).toBeNull();
+  });
+});
+
+/** A BroadcastChannel stand-in: records what's posted, and delivers a message on `receive`. */
+class FakeLogoutChannel implements LogoutChannel {
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  readonly posted: unknown[] = [];
+  closed = false;
+
+  postMessage(message: unknown) {
+    this.posted.push(message);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  /** Another tab posted `data`. */
+  receive(data: unknown) {
+    this.onmessage?.(new MessageEvent("message", { data }));
+  }
+}
+
+/** POST /auth/logout answering 204. Counts the calls. */
+function logoutCounted() {
+  const calls = { count: 0 };
+  server.use(
+    http.post("/auth/logout", () => {
+      calls.count++;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  return calls;
+}
+
+describe("cross-tab logout", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts one logout message once its own logout has run", async () => {
+    server.use(loginReturns("t1"));
+    const logout = logoutCounted();
+    const channel = new FakeLogoutChannel();
+    const session = createBrowserSession({ logoutChannel: channel });
+    await session.login("coach@example.com", "pw");
+    // What the session had done by the time it posted.
+    const seenWhenPosted: unknown[] = [];
+    channel.postMessage = (message) => {
+      seenWhenPosted.push(message, logout.count, session.getStatus());
+    };
+
+    await session.logout();
+
+    expect(seenWhenPosted).toEqual([LOGOUT_MESSAGE, 1, "unauthenticated"]);
+  });
+
+  it("ends this tab's session when another tab logs out, without a second POST /auth/logout", async () => {
+    server.use(loginReturns("t1"));
+    const logout = logoutCounted();
+    const channel = new FakeLogoutChannel();
+    const session = createBrowserSession({ logoutChannel: channel });
+    await session.login("coach@example.com", "pw");
+
+    channel.receive(LOGOUT_MESSAGE);
+
+    expect(session.getStatus()).toBe("unauthenticated");
+    expect(session.getAccessToken()).toBeNull();
+    expect(logout.count).toBe(0);
+    // Receiving isn't sending: nothing is posted back.
+    expect(channel.posted).toEqual([]);
+  });
+
+  it("ignores any other message", async () => {
+    server.use(loginReturns("t1"));
+    const channel = new FakeLogoutChannel();
+    const session = createBrowserSession({ logoutChannel: channel });
+    await session.login("coach@example.com", "pw");
+
+    channel.receive("something else");
+
+    expect(session.getStatus()).toBe("authenticated");
+  });
+
+  it("still logs out when posting fails", async () => {
+    server.use(loginReturns("t1"));
+    logoutCounted();
+    const channel = new FakeLogoutChannel();
+    channel.postMessage = () => {
+      throw new DOMException("closed", "InvalidStateError");
+    };
+    const session = createBrowserSession({ logoutChannel: channel });
+    await session.login("coach@example.com", "pw");
+
+    await session.logout();
+
+    expect(session.getStatus()).toBe("unauthenticated");
+  });
+
+  it("logs out without a channel", async () => {
+    server.use(loginReturns("t1"));
+    const logout = logoutCounted();
+    const session = createBrowserSession();
+    await session.login("coach@example.com", "pw");
+
+    await session.logout();
+
+    expect(logout.count).toBe(1);
+    expect(session.getStatus()).toBe("unauthenticated");
+  });
+
+  it("closes the channel and stops listening on dispose", async () => {
+    server.use(loginReturns("t1"));
+    const channel = new FakeLogoutChannel();
+    const session = createBrowserSession({ logoutChannel: channel });
+    await session.login("coach@example.com", "pw");
+
+    session.dispose();
+    channel.receive(LOGOUT_MESSAGE);
+
+    expect(channel.closed).toBe(true);
+    expect(session.getStatus()).toBe("authenticated");
+  });
+
+  it("opens no channel where BroadcastChannel doesn't exist", () => {
+    vi.stubGlobal("BroadcastChannel", undefined);
+
+    expect(openLogoutChannel()).toBeNull();
+  });
+
+  it("opens a BroadcastChannel on the logout channel's name", () => {
+    const opened: string[] = [];
+    vi.stubGlobal(
+      "BroadcastChannel",
+      class extends FakeLogoutChannel {
+        constructor(name: string) {
+          super();
+          opened.push(name);
+        }
+      },
+    );
+
+    expect(openLogoutChannel()).toBeInstanceOf(FakeLogoutChannel);
+    expect(opened).toEqual([LOGOUT_CHANNEL_NAME]);
+  });
+
+  it("the app session (authSession) listens on the channel it was given", async () => {
+    server.use(loginReturns("t1"));
+    const channel = new FakeLogoutChannel();
+    resetAuthSessionForTests({ logoutChannel: channel });
+    await authSession.login("coach@example.com", "pw");
+
+    channel.receive(LOGOUT_MESSAGE);
+
+    expect(authSession.getStatus()).toBe("unauthenticated");
+  });
+});
+
+describe("resetAuthSessionForTests", () => {
+  it("starts the app session over, and closes the old one's channel", async () => {
+    server.use(loginReturns("t1"));
+    const channel = new FakeLogoutChannel();
+    resetAuthSessionForTests({ logoutChannel: channel });
+    await authSession.login("coach@example.com", "pw");
+
+    resetAuthSessionForTests();
+
+    expect(channel.closed).toBe(true);
+    expect(authSession.getStatus()).toBe("unknown");
+    expect(authSession.getAccessToken()).toBeNull();
   });
 });

@@ -44,6 +44,33 @@ export interface AuthSession {
 /** The Web Locks name that serializes refreshes across this origin's tabs. */
 export const REFRESH_LOCK_NAME = "squadpulse:auth-refresh";
 
+/** The BroadcastChannel name on which a tab tells the others it logged out. */
+export const LOGOUT_CHANNEL_NAME = "squadpulse:auth-logout";
+
+/** The one message sent on LOGOUT_CHANNEL_NAME. */
+export const LOGOUT_MESSAGE = "logout";
+
+/** The part of BroadcastChannel the session uses, so tests can pass a fake. */
+export interface LogoutChannel {
+  postMessage(message: unknown): void;
+  onmessage: ((event: MessageEvent) => void) | null;
+  close(): void;
+}
+
+export interface BrowserSessionOptions {
+  /**
+   * The channel for cross-tab logout (openLogoutChannel() for the real one). None by default: no
+   * cross-tab logout.
+   */
+  logoutChannel?: LogoutChannel | null;
+}
+
+/** The browser session, plus what only its owner needs. */
+export interface BrowserSession extends AuthSession {
+  /** Closes the logout channel. The session itself keeps working, without cross-tab logout. */
+  dispose(): void;
+}
+
 interface SessionState {
   accessToken: string | null;
   status: SessionStatus;
@@ -68,8 +95,14 @@ interface SessionState {
  *   never stores the new cookie presents the old one next time, which counts as reuse. Accepted
  *   residual risk: closing or reloading the page mid-refresh can still do that and end the
  *   session; the real fix would be a server-side grace window, not something the client can do.
+ *
+ * Cross-tab logout: an explicit logout() posts LOGOUT_MESSAGE on the logout channel once it has
+ * run, and every other tab that receives it ends its own session with clear(), never logout():
+ * the first tab has already revoked the family and cleared the shared cookie, so a second POST
+ * would only repeat that. A session that ends by itself (a refused refresh) isn't broadcast, and a
+ * login isn't either.
  */
-export function createBrowserSession(): AuthSession {
+export function createBrowserSession(options: BrowserSessionOptions = {}): BrowserSession {
   const store = createStore<SessionState>()(() => ({ accessToken: null, status: "unknown" }));
   let inFlightRefresh: Promise<string> | null = null;
   // Bumped whenever the session ends or a login starts, so a refresh that started before can tell.
@@ -81,6 +114,15 @@ export function createBrowserSession(): AuthSession {
     generation++;
     store.setState({ accessToken: null, status: "unauthenticated" });
   };
+
+  const logoutChannel = options.logoutChannel ?? null;
+  if (logoutChannel) {
+    logoutChannel.onmessage = (event) => {
+      if (event.data === LOGOUT_MESSAGE) {
+        clear();
+      }
+    };
+  }
 
   async function refreshOnce(): Promise<string> {
     const startedIn = generation;
@@ -148,10 +190,27 @@ export function createBrowserSession(): AuthSession {
       } finally {
         clear();
       }
+      try {
+        logoutChannel?.postMessage(LOGOUT_MESSAGE);
+      } catch {
+        // A closed channel: the other tabs keep their sessions until their tokens expire.
+      }
     },
 
     clear,
+
+    dispose() {
+      if (logoutChannel) {
+        logoutChannel.onmessage = null;
+        logoutChannel.close();
+      }
+    },
   };
+}
+
+/** A BroadcastChannel on LOGOUT_CHANNEL_NAME, or null where the browser has none. */
+export function openLogoutChannel(): LogoutChannel | null {
+  return typeof BroadcastChannel === "function" ? new BroadcastChannel(LOGOUT_CHANNEL_NAME) : null;
 }
 
 /** POST to /auth/login or /auth/refresh, without an access token, and read the new one. */
@@ -175,10 +234,36 @@ async function withRefreshLock<T>(task: () => Promise<T>): Promise<T> {
   return locks ? await locks.request(REFRESH_LOCK_NAME, task) : await task();
 }
 
-/** The app's session. */
-export const authSession: AuthSession = createBrowserSession();
+// Created on first use, not at import: tests install their own before anything uses it, so the
+// test run never opens a real BroadcastChannel (Vitest's jsdom environment has Node's).
+let appSession: BrowserSession | null = null;
+const app = () => (appSession ??= createBrowserSession({ logoutChannel: openLogoutChannel() }));
 
-/** The session's status, re-rendering on every change. KAN-47 routes on it. */
+/**
+ * The app's session, with cross-tab logout. A fixed object that forwards to the current browser
+ * session, so the test seam (resetAuthSessionForTests) can swap that session underneath.
+ */
+export const authSession: AuthSession = {
+  getAccessToken: () => app().getAccessToken(),
+  getStatus: () => app().getStatus(),
+  subscribe: (listener) => app().subscribe(listener),
+  login: (email, password) => app().login(email, password),
+  refresh: () => app().refresh(),
+  logout: () => app().logout(),
+  clear: () => app().clear(),
+};
+
+/**
+ * Tests only (src/test/setup.ts runs it before and after each test): replaces the app's session
+ * with a fresh one (status "unknown", no token, nothing in flight, no subscribers) and closes the
+ * old one's logout channel. The new one has no logout channel unless a test passes one (a fake).
+ */
+export function resetAuthSessionForTests(options: BrowserSessionOptions = {}) {
+  appSession?.dispose();
+  appSession = createBrowserSession(options);
+}
+
+/** The session's status, re-rendering on every change. The route guards route on it. */
 export function useSessionStatus(session: AuthSession = authSession): SessionStatus {
   return useSyncExternalStore(session.subscribe, session.getStatus);
 }

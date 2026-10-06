@@ -1,12 +1,13 @@
 # UI conventions
 
-The design direction approved in KAN-44 (2026-10-05). The sections up to "Implementation notes" are the approved text, unchanged.
+The design direction approved in KAN-44 (2026-10-05). The sections up to "Implementation notes" are the approved text, unchanged apart from the logo, approved in KAN-47 (its "Logo" decision and two tokens).
 
 ### Decisions
 
 * **Look:** muted deep "pitch" green on a cream / off-white base. Professional, not game-like.
 * **Light mode only** in the MVP. Every color still goes through CSS variables, so dark mode later is one more set of values.
 * **Font: Heebo, self-hosted** via `@fontsource` (no Google Fonts request). Weights 400/500/600/700. Numbers use `font-variant-numeric: tabular-nums` (jersey numbers, ages, stats); KAN-45 must verify the installed Heebo build supports `tnum`, not assume it.
+* **Logo (KAN-47):** a 40×40 `rounded-lg` mark with a stroke "pulse" icon, beside the wordmark "SquadPulse" (22/700, `letter-spacing: -0.01em`, an LTR island) in two colors. On a light background: mark `--sidebar` with the icon in `--brand-pulse-bright`, "Squad" in `--sidebar`, "Pulse" in `--brand-pulse`. On a dark background (the sidebar): mark `--sidebar-accent` with the icon in `--brand-pulse`, "Squad" in `--sidebar-accent`, "Pulse" in `--brand-pulse-bright`. `--brand-pulse` is 3.7:1 on `--background` (and `--brand-pulse-bright` 5.4:1 on `--sidebar`), so it's for the large wordmark only, never body text. `--brand-pulse-bright` has `--chart-3`'s value but is its own token, so brand and chart colors can change independently.
 * **Mobile:** desktop/tablet first. On a phone nothing breaks (sidebar stacks, wide tables scroll horizontally), but it isn't polished.
 
 ### Theme tokens (shadcn/ui names, hex values)
@@ -34,6 +35,7 @@ Format-neutral on purpose: KAN-45 converts them to whatever its Tailwind 3 vs 4 
 | `--sidebar` / `--sidebar-foreground` | `#1E3A2F` / `#E8E4D8` |
 | `--sidebar-muted-foreground` | `#A9B5AD` |
 | `--sidebar-accent` / `--sidebar-accent-foreground` (active item) | `#F2EEE3` / `#1E3A2F` |
+| `--brand-pulse` / `--brand-pulse-bright` (logo, KAN-47; large wordmark only) | `#5E8A2E` / `#8FB83F` |
 | `--chart-1` GK / `--chart-2` DEF / `--chart-3` MID / `--chart-4` ATT | `#C2841A` / `#0E7F5C` / `#8FB83F` / `#3A6DB8` |
 | `--radius` | `0.5rem` (8px; md 6px, sm 4px) |
 
@@ -68,3 +70,5 @@ Written in KAN-45; not part of the approved design above.
   * `Input`: `size="default"` (40px) or `size="sm"` (36px, filter bars). This `size` prop replaces the native `<input size>` attribute.
   * `Label`: 13/500.
   * `Badge`: a 12/500 `rounded-full` pill. Variants: `default` (filled `--secondary`, a primary position chip), `outline` (a secondary position chip), `success` ("fit": `--success` on `--success-muted`), `danger` ("injured": `--danger` on `--danger-muted`), `muted` ("released"). Position codes go in an LTR island: `<Badge dir="ltr">CB</Badge>`. The generated `secondary`, `destructive`, `ghost` and `link` variants were removed: `default` and `danger` cover them.
+* **Logo** (KAN-47): `frontend/src/components/BrandLogo.tsx`, `<BrandLogo />` on light backgrounds and `<BrandLogo tone="dark" />` on the sidebar. It's one `role="img"` named "SquadPulse" (its mark and the two wordmark halves are `aria-hidden`), so a screen reader says the name once, not "Squad" and "Pulse". The colors are the `brand-pulse` / `brand-pulse-bright` utilities (`text-brand-pulse`, ...), only for the logo.
+* **Auth screens** (KAN-47): `frontend/src/components/auth` holds their shared pieces: `AuthLayout` (logo, content, footer, centered), `AuthCard` (420px card, 32/28px padding, `<h1>` 22/700 and subtitle), `AuthField` (label, 40px input, hint or error linked by `aria-describedby`, `--danger` border when invalid), `FormAlert` (`role="alert"`, `--danger` on `--danger-muted`) / `FormNotice` (`role="status"`, `--secondary`), and the full-page `LoadingScreen` / `ServerErrorScreen`.
