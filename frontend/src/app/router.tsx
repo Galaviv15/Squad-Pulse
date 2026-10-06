@@ -1,9 +1,12 @@
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
-import { NotFoundPage } from "@/pages/NotFoundPage";
-import { PlaceholderPage } from "@/pages/PlaceholderPage";
+import { DashboardPage } from "@/pages/DashboardPage";
+import { NotFoundInShellPage, NotFoundPage } from "@/pages/NotFoundPage";
+import { SquadPage } from "@/pages/SquadPage";
 import { ForgotPasswordPage } from "@/pages/auth/ForgotPasswordPage";
 import { LoginPage } from "@/pages/auth/LoginPage";
 import { ResetPasswordPage } from "@/pages/auth/ResetPasswordPage";
+import { AppShell } from "./AppShell";
+import type { RouteHandle } from "./pageTitle";
 import { PublicOnlyRoute } from "./PublicOnlyRoute";
 import { RequireAuth } from "./RequireAuth";
 import { SessionGate } from "./SessionGate";
@@ -15,7 +18,8 @@ import { SessionGate } from "./SessionGate";
  * Everything under /app waits for the session (SessionGate). The public auth screens are under
  * PublicOnlyRoute (a logged-in user is sent on into the app); everything else is under
  * RequireAuth, including /app's own not-found page, so an unknown /app path asks for a login
- * first. The app shell (KAN-48) becomes RequireAuth's layout.
+ * first. RequireAuth's only child is the app shell, the layout of every protected page; each of
+ * those declares its title in its handle (RouteHandle), which the shell shows as the <h1>.
  */
 export const routes: RouteObject[] = [
   { path: "/", loader: () => redirect("/app") },
@@ -34,8 +38,26 @@ export const routes: RouteObject[] = [
       {
         element: <RequireAuth />,
         children: [
-          { index: true, element: <PlaceholderPage /> },
-          { path: "*", element: <NotFoundPage /> },
+          {
+            element: <AppShell />,
+            children: [
+              {
+                index: true,
+                element: <DashboardPage />,
+                handle: { titleKey: "nav.dashboard" } satisfies RouteHandle,
+              },
+              {
+                path: "squad",
+                element: <SquadPage />,
+                handle: { titleKey: "nav.squad" } satisfies RouteHandle,
+              },
+              {
+                path: "*",
+                element: <NotFoundInShellPage />,
+                handle: { titleKey: "notFound.title" } satisfies RouteHandle,
+              },
+            ],
+          },
         ],
       },
     ],

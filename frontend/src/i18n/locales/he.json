@@ -1,16 +1,39 @@
 {
   "app": {
     "name": "SquadPulse",
-    "welcome": "ברוך הבא ל-SquadPulse",
-    "phaseNote": "שלב 3 — תשתית הממשק. המסכים הראשונים בדרך.",
     "wordmark": {
       "squad": "Squad",
       "pulse": "Pulse"
     }
   },
-  "placeholder": {
-    "comingSoon": "בקרוב",
-    "logout": "יציאה"
+  "shell": {
+    "navLabel": "ניווט ראשי",
+    "logout": "יציאה",
+    "comingSoon": {
+      "label": "בקרוב",
+      "schedule": "לו״ז",
+      "training": "אימונים",
+      "matches": "משחקים",
+      "tactics": "לוח טקטי"
+    }
+  },
+  "nav": {
+    "dashboard": "דשבורד",
+    "squad": "סגל"
+  },
+  "dashboard": {
+    "stub": "סיכום הסגל יופיע כאן בקרוב."
+  },
+  "squad": {
+    "stub": "טבלת הסגל תופיע כאן בקרוב."
+  },
+  "titles": {
+    "CLUB_MANAGER": "מנהל מועדון",
+    "HEAD_COACH": "מאמן ראשי",
+    "ASSISTANT_COACH": "עוזר מאמן",
+    "GOALKEEPING_COACH": "מאמן שוערים",
+    "FITNESS_COACH": "מאמן כושר",
+    "ANALYST": "אנליסט"
   },
   "notFound": {
     "title": "הדף לא נמצא",

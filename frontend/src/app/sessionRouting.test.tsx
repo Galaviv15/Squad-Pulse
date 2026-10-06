@@ -23,8 +23,9 @@ import {
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
 
-/** The placeholder at /app: what a logged-in user sees. */
-const appHeading = () => screen.queryByRole("heading", { name: he.app.name });
+/** The shell's page title at /app: what a logged-in user sees. */
+const dashboardHeading = { level: 1, name: he.nav.dashboard } as const;
+const appHeading = () => screen.queryByRole("heading", dashboardHeading);
 const loginHeading = () => screen.queryByRole("heading", { name: he.auth.login.title });
 
 function currentUrl(router: { state: { location: { pathname: string; search: string } } }) {
@@ -100,7 +101,7 @@ describe("app-load bootstrap", () => {
     expect(appHeading()).toBeNull();
 
     meGate.resolve();
-    expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", dashboardHeading)).toBeInTheDocument();
     expect(loginHeading()).toBeNull();
   });
 
@@ -151,7 +152,7 @@ describe("app-load bootstrap", () => {
       failing = false;
       fireEvent.click(screen.getByRole("button", { name: he.auth.serverError.retry }));
 
-      expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", dashboardHeading)).toBeInTheDocument();
       expect(refresh.count).toBe(2);
     },
   );
@@ -176,7 +177,7 @@ describe("app-load bootstrap", () => {
     meFails = false;
     fireEvent.click(screen.getByRole("button", { name: he.auth.serverError.retry }));
 
-    expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", dashboardHeading)).toBeInTheDocument();
     expect(refresh.count).toBe(1);
   });
 
@@ -192,7 +193,7 @@ describe("app-load bootstrap", () => {
     await waitFor(() => expect(refresh.count).toBe(1));
     gate.resolve();
 
-    expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", dashboardHeading)).toBeInTheDocument();
     expect(refresh.count).toBe(1);
   });
 
@@ -236,7 +237,7 @@ describe("public auth routes", () => {
     server.use(...loggedIn());
     const { router } = renderWithProviders({ initialEntries: [start] });
 
-    expect(await screen.findByRole("heading", { name: he.app.name })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", dashboardHeading)).toBeInTheDocument();
     expect(currentUrl(router)).toBe(landing);
     expect(router.state.historyAction).toBe("REPLACE");
   });
@@ -246,7 +247,7 @@ describe("the session ending", () => {
   async function renderLoggedIn(path = "/app?view=all#top") {
     server.use(...loggedIn());
     const rendered = renderWithProviders({ initialEntries: [path] });
-    await screen.findByRole("heading", { name: he.app.name });
+    await screen.findByRole("heading", dashboardHeading);
     rendered.queryClient.setQueryData(["squad", "players"], ["p1"]);
     return rendered;
   }
@@ -269,10 +270,10 @@ describe("the session ending", () => {
     });
     const { router, queryClient } = await renderLoggedIn();
 
-    fireEvent.click(screen.getByRole("button", { name: he.placeholder.logout }));
+    fireEvent.click(screen.getByRole("button", { name: he.shell.logout }));
     await waitFor(() => expect(logout.count).toBe(1));
-    expect(screen.getByRole("button", { name: he.placeholder.logout })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: he.placeholder.logout }));
+    expect(screen.getByRole("button", { name: he.shell.logout })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: he.shell.logout }));
     gate.resolve();
 
     expect(await screen.findByRole("heading", { name: he.auth.login.title })).toBeInTheDocument();
@@ -285,7 +286,7 @@ describe("the session ending", () => {
     logoutCounted(() => HttpResponse.error());
     const { router } = await renderLoggedIn();
 
-    fireEvent.click(screen.getByRole("button", { name: he.placeholder.logout }));
+    fireEvent.click(screen.getByRole("button", { name: he.shell.logout }));
 
     expect(await screen.findByRole("heading", { name: he.auth.login.title })).toBeInTheDocument();
     expect(currentUrl(router)).toBe("/app/login");
@@ -298,7 +299,7 @@ describe("the session ending", () => {
     logoutCounted();
     await renderLoggedIn();
 
-    fireEvent.click(screen.getByRole("button", { name: he.placeholder.logout }));
+    fireEvent.click(screen.getByRole("button", { name: he.shell.logout }));
 
     await screen.findByRole("heading", { name: he.auth.login.title });
     expect(channel.posted).toEqual([LOGOUT_MESSAGE]);
@@ -331,7 +332,7 @@ describe("storage", () => {
     });
     fireEvent.change(screen.getByLabelText(he.auth.fields.password), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: he.auth.login.submit }));
-    await screen.findByRole("heading", { name: he.app.name });
+    await screen.findByRole("heading", dashboardHeading);
 
     // A reload: a fresh page, whose session starts unknown and refreshes with the cookie.
     first.unmount();
@@ -339,10 +340,10 @@ describe("storage", () => {
     resetSessionBootstrap();
     server.use(refreshReturns("t2"));
     renderWithProviders({ initialEntries: ["/app"] });
-    await screen.findByRole("heading", { name: he.app.name });
+    await screen.findByRole("heading", dashboardHeading);
 
     logoutCounted();
-    fireEvent.click(screen.getByRole("button", { name: he.placeholder.logout }));
+    fireEvent.click(screen.getByRole("button", { name: he.shell.logout }));
     await screen.findByRole("heading", { name: he.auth.login.title });
 
     expect(setItem).not.toHaveBeenCalled();
