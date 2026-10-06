@@ -9,7 +9,9 @@ import com.squadpulse.common.ConflictException;
  */
 class CannotChangeOwnPermissionLevelException extends ConflictException {
 
+  static final String CODE = "CANNOT_CHANGE_OWN_PERMISSION_LEVEL";
+
   CannotChangeOwnPermissionLevelException() {
-    super("You can't change your own permission level; another ADMIN must do it");
+    super(CODE, "You can't change your own permission level; another ADMIN must do it");
   }
 }

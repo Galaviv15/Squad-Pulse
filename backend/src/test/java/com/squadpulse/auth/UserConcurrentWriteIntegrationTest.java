@@ -299,6 +299,7 @@ class UserConcurrentWriteIntegrationTest {
 
     resetPassword(EMAIL)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
         .andExpect(jsonPath("$.message").value(CONFLICT_MESSAGE));
 
     User stored = stored(user);
@@ -313,6 +314,7 @@ class UserConcurrentWriteIntegrationTest {
 
     changePermissionLevel(user.getId(), PermissionLevel.ADMIN)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
         .andExpect(jsonPath("$.message").value(CONFLICT_MESSAGE));
 
     assertThat(stored(user).getPermissionLevel()).isEqualTo(PermissionLevel.EDIT_FULL);
@@ -325,6 +327,7 @@ class UserConcurrentWriteIntegrationTest {
 
     deactivate(user.getId())
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
         .andExpect(jsonPath("$.message").value(CONFLICT_MESSAGE));
 
     User stored = stored(user);

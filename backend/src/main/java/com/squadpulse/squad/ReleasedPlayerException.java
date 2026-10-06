@@ -8,7 +8,9 @@ import com.squadpulse.common.ConflictException;
  */
 class ReleasedPlayerException extends ConflictException {
 
+  static final String CODE = "PLAYER_RELEASED";
+
   ReleasedPlayerException() {
-    super("This player has been released; re-activate them before editing");
+    super(CODE, "This player has been released; re-activate them before editing");
   }
 }

@@ -28,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.squadpulse.auth.AuthWebMvcTestConfig;
 import com.squadpulse.auth.PermissionLevel;
 import com.squadpulse.auth.TestAccessTokens;
+import com.squadpulse.common.ConflictException;
 import com.squadpulse.common.ImageProperties;
 import com.squadpulse.common.ImageType;
 import com.squadpulse.common.ImageValidator;
@@ -444,12 +445,13 @@ class PlayerControllerTest {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("updateConflicts")
-  void updateConflictsAre409(RuntimeException conflict, String message) throws Exception {
+  void updateConflictsAre409(ConflictException conflict, String message) throws Exception {
     when(playerService.update(anyString(), any())).thenThrow(conflict);
 
     mockMvc
         .perform(asEditor(put("/squad/players/p-1"), updateBody()))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(conflict.getCode()))
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(jsonPath("$.message").value(message));
   }
@@ -461,6 +463,7 @@ class PlayerControllerTest {
     mockMvc
         .perform(asEditor(post("/squad/players"), createBody()))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("JERSEY_NUMBER_TAKEN"))
         .andExpect(
             jsonPath("$.message")
                 .value("Jersey number 7 is already taken by another active player"));
@@ -602,7 +605,7 @@ class PlayerControllerTest {
 
   @ParameterizedTest(name = "{0}: {1}")
   @MethodSource("lifecycleConflicts")
-  void lifecycleConflictsAre409(String action, RuntimeException conflict, String message)
+  void lifecycleConflictsAre409(String action, ConflictException conflict, String message)
       throws Exception {
     when(playerService.release(anyString(), any())).thenThrow(conflict);
     when(playerService.reactivate(anyString(), any())).thenThrow(conflict);
@@ -610,6 +613,7 @@ class PlayerControllerTest {
     mockMvc
         .perform(asEditor(post("/squad/players/p-1/" + action), "{\"version\": 3}"))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(conflict.getCode()))
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(jsonPath("$.message").value(message));
   }
@@ -767,12 +771,14 @@ class PlayerControllerTest {
     mockMvc
         .perform(asPhotoEditor(photoUpload("/squad/players/p-1/photo", TestImages.png())))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_RELEASED"))
         .andExpect(
             jsonPath("$.message")
                 .value("This player has been released; re-activate them before editing"));
     mockMvc
         .perform(asPhotoEditor(delete("/squad/players/p-1/photo")))
-        .andExpect(status().isConflict());
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_RELEASED"));
   }
 
   @Test

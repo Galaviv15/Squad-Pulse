@@ -95,6 +95,17 @@ class UserActivationIntegrationTest {
   @Autowired private ActiveCallerCheck activeCallerCheck;
   @MockitoBean private EmailSender emailSender;
 
+  /** The generic 401, {@code timestamp} aside, with {@code code} present and null. */
+  private static Map<String, Object> generic401Body() {
+    Map<String, Object> body = new HashMap<>();
+    body.put("status", 401);
+    body.put("error", "Unauthorized");
+    body.put("code", null);
+    body.put("message", "Authentication required");
+    body.put("details", List.of());
+    return body;
+  }
+
   @AfterEach
   void tearDown() {
     clubContext.clear();
@@ -261,6 +272,7 @@ class UserActivationIntegrationTest {
     for (String action : List.of("deactivate", "reactivate")) {
       perform(action(adminToken, action, manager.getId()))
           .andExpect(status().isConflict())
+          .andExpect(jsonPath("$.code").value("CANNOT_CHANGE_OWN_ACTIVE_STATUS"))
           .andExpect(
               jsonPath("$.message")
                   .value("You can't deactivate or reactivate yourself; another ADMIN must do it"));
@@ -319,7 +331,9 @@ class UserActivationIntegrationTest {
     perform(action(adminToken, "deactivate", coach.getId()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.hasPhoto").value(true));
-    perform(uploadPhoto(adminToken, coach.getId())).andExpect(status().isConflict());
+    perform(uploadPhoto(adminToken, coach.getId()))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("USER_DEACTIVATED"));
 
     perform(action(adminToken, "reactivate", coach.getId()))
         .andExpect(status().isOk())
@@ -361,16 +375,7 @@ class UserActivationIntegrationTest {
             invite(a1Token, "new@example.com"));
     for (RequestBuilder write : writes) {
       assertThat(errorBodyWithoutTimestamp(perform(write).andExpect(status().isUnauthorized())))
-          .isEqualTo(
-              Map.of(
-                  "status",
-                  401,
-                  "error",
-                  "Unauthorized",
-                  "message",
-                  "Authentication required",
-                  "details",
-                  List.of()));
+          .isEqualTo(generic401Body());
     }
 
     for (User user : List.of(a2, target, inactive)) {

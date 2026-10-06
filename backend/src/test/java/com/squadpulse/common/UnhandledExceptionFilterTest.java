@@ -60,6 +60,8 @@ class UnhandledExceptionFilterTest {
     assertThat(body.get("error").asString()).isEqualTo("Internal Server Error");
     assertThat(body.get("message").asString()).isEqualTo("An unexpected error occurred");
     assertThat(body.get("details").isEmpty()).isTrue();
+    assertThat(body.has("code")).isTrue();
+    assertThat(body.get("code").isNull()).isTrue();
     assertThat(response.getContentAsString()).doesNotContain("secret-marker");
     assertThat(errors()).singleElement();
     assertThat(errors().get(0).getFormattedMessage())

@@ -97,6 +97,7 @@ class PasswordResetControllerTest {
     mockMvc
         .perform(resetPassword("coach@example.com", "042137", VALID_PASSWORD))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(
             jsonPath("$.message").value("The resource was modified concurrently, please retry"));

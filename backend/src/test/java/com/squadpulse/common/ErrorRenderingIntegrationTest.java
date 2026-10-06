@@ -270,14 +270,19 @@ class ErrorRenderingIntegrationTest {
     return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
   }
 
-  /** The exact {@link ApiErrorResponse} shape: these five fields, no others. */
+  /**
+   * The exact {@link ApiErrorResponse} shape: these six fields, no others, as the real JSON mapper
+   * writes them — {@code code} included, as an explicit {@code null}.
+   */
   private static void assertApiError(
       HttpResponse<String> response, int status, String error, String message) {
     JsonNode body = JSON.readTree(response.body());
     List<String> fields = new ArrayList<>();
     Iterator<String> names = body.propertyNames().iterator();
     names.forEachRemaining(fields::add);
-    assertThat(fields).containsExactly("timestamp", "status", "error", "message", "details");
+    assertThat(fields)
+        .containsExactly("timestamp", "status", "error", "code", "message", "details");
+    assertThat(body.get("code").isNull()).isTrue();
     assertThat(body.get("status").asInt()).isEqualTo(status);
     assertThat(body.get("error").asString()).isEqualTo(error);
     assertThat(body.get("message").asString()).isEqualTo(message);

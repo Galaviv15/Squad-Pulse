@@ -177,6 +177,7 @@ class PlayerApiIntegrationTest {
 
     create(CLUB_A, fields("Second Seven", Position.CM, 7))
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("JERSEY_NUMBER_TAKEN"))
         .andExpect(
             jsonPath("$.message")
                 .value("Jersey number 7 is already taken by another active player"));
@@ -195,6 +196,7 @@ class PlayerApiIntegrationTest {
 
     update(CLUB_A, nine, body)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("JERSEY_NUMBER_TAKEN"))
         .andExpect(
             jsonPath("$.message")
                 .value("Jersey number 7 is already taken by another active player"));
@@ -331,6 +333,7 @@ class PlayerApiIntegrationTest {
     coachA.put("version", 0);
     update(CLUB_A, id, coachA)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("STALE_VERSION"))
         .andExpect(
             jsonPath("$.message")
                 .value(
@@ -360,6 +363,7 @@ class PlayerApiIntegrationTest {
 
     update(CLUB_A, id, body)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("STALE_VERSION"))
         .andExpect(
             jsonPath("$.message")
                 .value(
@@ -391,6 +395,7 @@ class PlayerApiIntegrationTest {
     body.put("version", 0);
     update(CLUB_A, id, body)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_RELEASED"))
         .andExpect(
             jsonPath("$.message")
                 .value("This player has been released; re-activate them before editing"));
@@ -484,6 +489,7 @@ class PlayerApiIntegrationTest {
     // The current version, so the state check — not the version check — is what refuses it.
     release(CLUB_A, id, 1)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_ALREADY_RELEASED"))
         .andExpect(jsonPath("$.message").value("This player has already been released"));
 
     assertThat(rawPlayer(id)).isEqualTo(before);
@@ -496,6 +502,7 @@ class PlayerApiIntegrationTest {
 
     reactivate(CLUB_A, id, 0, 8)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_ALREADY_ACTIVE"))
         .andExpect(jsonPath("$.message").value("This player is already active"));
 
     assertThat(rawPlayer(id)).isEqualTo(before);
@@ -513,6 +520,7 @@ class PlayerApiIntegrationTest {
 
     update(CLUB_A, id, body)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PLAYER_RELEASED"))
         .andExpect(
             jsonPath("$.message")
                 .value("This player has been released; re-activate them before editing"));
@@ -549,6 +557,7 @@ class PlayerApiIntegrationTest {
 
     reactivate(CLUB_A, id, 1, 7)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("JERSEY_NUMBER_TAKEN"))
         .andExpect(jsonPath("$.message").value(SEVEN_TAKEN));
 
     assertThat(rawPlayer(id)).isEqualTo(before);
@@ -614,6 +623,7 @@ class PlayerApiIntegrationTest {
 
     reactivate(CLUB_A, id, 1, 7)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("JERSEY_NUMBER_TAKEN"))
         .andExpect(jsonPath("$.message").value(SEVEN_TAKEN));
 
     assertThat(rawPlayer(id)).isEqualTo(before);
@@ -671,9 +681,11 @@ class PlayerApiIntegrationTest {
 
     release(CLUB_A, active, 5)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("STALE_VERSION"))
         .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
     reactivate(CLUB_A, released, 0, 10)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("STALE_VERSION"))
         .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
 
     assertThat(rawPlayer(active)).isEqualTo(activeBefore);
@@ -691,6 +703,7 @@ class PlayerApiIntegrationTest {
 
     release(CLUB_A, id, 0)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("STALE_VERSION"))
         .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
 
     Document stored = rawPlayer(id);
@@ -707,6 +720,7 @@ class PlayerApiIntegrationTest {
 
     reactivate(CLUB_A, id, 1, 7)
         .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("STALE_VERSION"))
         .andExpect(jsonPath("$.message").value(STALE_MESSAGE));
 
     Document stored = rawPlayer(id);

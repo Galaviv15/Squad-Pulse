@@ -138,7 +138,7 @@ Prerequisites: **JDK 21**, Node 22.22+ (or 24+; React Router 8 needs 22.22), Doc
 
 Errors use the same JSON shape as every other endpoint (`common.ApiErrorResponse`). An access token stays valid until it expires (at most 15 minutes) even after logout, deactivation or revocation — only refresh tokens are revocable. There are two exceptions, which re-read the caller and answer the generic `401` (`"Authentication required"`, the same body as a request without a token) once they're deactivated or deleted: `GET /auth/users/me`, and exactly these **writes**: every user-management write — invite, permission-level, deactivate and reactivate — and `PATCH /clubs/me` (see [Club API](#club-api)). The writes do this so a just-deactivated admin can't use their remaining minutes to deactivate or demote the admin who deactivated them, or rename the club. The club-logo and staff-photo writes deliberately don't re-check the caller: they're cosmetic and reversible, and the token lives at most 15 minutes. The caller is checked first, so a deactivated caller gets `401` whatever the target. The read-only `GET /auth/users` and every other endpoint don't re-check.
 
-**Concurrent writes to a user.** `User` is protected by optimistic locking (a `@Version` field): a save made from a stale copy fails instead of silently overwriting a concurrent change. Users stored before that field existed get it automatically: on startup, before the server accepts requests, `auth.UserVersionBackfill` sets `version: 0` on every user document that has none — nothing to do by hand. `/auth/reset-password`, `PATCH /auth/users/{id}/permission-level` and `POST /auth/users/{id}/deactivate` / `reactivate` resolve a conflict themselves by reloading the user and retrying (up to 3 attempts; a reset re-checks on each one that the user is still active, so it can never undo a deactivation; deactivate / reactivate re-check whether the user is already in the requested state, and never move the session-invalidation time backwards). A conflict that isn't resolved that way is a `409` with a generic "modified concurrently, please retry" message.
+**Concurrent writes to a user.** `User` is protected by optimistic locking (a `@Version` field): a save made from a stale copy fails instead of silently overwriting a concurrent change. Users stored before that field existed get it automatically: on startup, before the server accepts requests, `auth.UserVersionBackfill` sets `version: 0` on every user document that has none — nothing to do by hand. `/auth/reset-password`, `PATCH /auth/users/{id}/permission-level` and `POST /auth/users/{id}/deactivate` / `reactivate` resolve a conflict themselves by reloading the user and retrying (up to 3 attempts; a reset re-checks on each one that the user is still active, so it can never undo a deactivation; deactivate / reactivate re-check whether the user is already in the requested state, and never move the session-invalidation time backwards). A conflict that isn't resolved that way is a `409` with a generic "modified concurrently, please retry" message (`code` `CONCURRENT_MODIFICATION`).
 
 ### Club API
 
@@ -199,16 +199,16 @@ A player's response carries `id`, every field, `active`, `version`, `createdAt`,
 
 **Frontend note:** like every endpoint, `GET .../photo` needs the `Authorization` header, so a plain `<img src="/squad/players/{id}/photo">` won't work. In the app, `useAuthorizedImage(path)` (`frontend/src/lib/api`) fetches it with the token, shows it through an object URL and revokes that URL when it's no longer shown. Pass `null` when `hasPhoto` is false, to skip the request for players without one.
 
-**Conflicts (`409`).**
-- **Jersey number taken:** another *active* player in the club already has it (checked by a unique database index, so it holds under concurrent writes too). A released player's number is free, and players without a number never clash.
+**Conflicts (`409`).** Each carries its `code` (see [Conflict codes](#conflict-codes)).
+- **Jersey number taken** (`JERSEY_NUMBER_TAKEN`): another *active* player in the club already has it (checked by a unique database index, so it holds under concurrent writes too). A released player's number is free, and players without a number never clash.
 - **Jersey number taken on re-activation:** the number sent is held by another active player (possibly taken while the player was away). Same message as above; the player stays released — there's no silent fallback to "no number".
-- **Stale edit:** `PUT`, `release` and `reactivate` must send the `version` the client loaded. If the player has been saved since, the request is refused ("reload it and apply your changes again") and nothing is written. The client should reload and re-apply; it's never retried automatically. A save that loses a race right after that check gets the same `409` and message. `DELETE` has no version check.
-- **Released player:** a released player can be read but not edited — nor their photo replaced or removed — until they're re-activated.
-- **Already released / already active:** releasing a released player ("This player has already been released") or re-activating an active one ("This player is already active").
+- **Stale edit** (`STALE_VERSION`): `PUT`, `release` and `reactivate` must send the `version` the client loaded. If the player has been saved since, the request is refused ("reload it and apply your changes again") and nothing is written. The client should reload and re-apply; it's never retried automatically. A save that loses a race right after that check gets the same `409` and message. `DELETE` has no version check.
+- **Released player** (`PLAYER_RELEASED`): a released player can be read but not edited — nor their photo replaced or removed — until they're re-activated.
+- **Already released / already active** (`PLAYER_ALREADY_RELEASED` / `PLAYER_ALREADY_ACTIVE`): releasing a released player ("This player has already been released") or re-activating an active one ("This player is already active").
 
 ### Errors
 
-Every error from the API has one JSON shape (`common.ApiErrorResponse`): `{ "timestamp", "status", "error", "message", "details": [] }`. `error` is the status's standard reason phrase (or `Validation Failed`). Rejected values and request headers (such as the `Content-Type` sent) are never echoed back in an error; only the `404` for an unknown path and the `405` name the request's method and path. Error bodies are always JSON (`Content-Type: application/json`), whatever the `Accept` header says — even one that excludes JSON, such as `Accept: application/xml`, or can't be parsed.
+Every error from the API has one JSON shape (`common.ApiErrorResponse`): `{ "timestamp", "status", "error", "code", "message", "details": [] }`. `error` is the status's standard reason phrase (or `Validation Failed`). `code` is a machine-readable reason, always present: today only a `409` has one, every other error has `"code": null` (see [Conflict codes](#conflict-codes)). A client tells errors apart by `status` and `code`, never by the English `message`. Rejected values and request headers (such as the `Content-Type` sent) are never echoed back in an error; only the `404` for an unknown path and the `405` name the request's method and path. Error bodies are always JSON (`Content-Type: application/json`), whatever the `Accept` header says — even one that excludes JSON, such as `Accept: application/xml`, or can't be parsed.
 
 | Status | When | `message` / `details` |
 |---|---|---|
@@ -219,11 +219,32 @@ Every error from the API has one JSON shape (`common.ApiErrorResponse`): `{ "tim
 | `404` Not Found | No such resource in the caller's club, or no such endpoint (`"No endpoint GET /x"`) | |
 | `405` Method Not Allowed | The path exists, but not for this method | `details` and the `Allow` header list the supported methods |
 | `406` Not Acceptable | The `Accept` header allows nothing the endpoint produces (all JSON endpoints produce `application/json`) | `"None of the accepted media types can be produced"`; `details` lists what it produces |
-| `409` Conflict | A duplicate, a stale `version`, a released player, ... | the reason |
+| `409` Conflict | A duplicate, a stale `version`, a released player, ... | the reason; `code` says which (see below) |
 | `413` Content Too Large | An upload over its limit | |
 | `415` Unsupported Media Type | A body whose `Content-Type` the endpoint doesn't read (e.g. `text/plain` instead of `application/json`) | `"Unsupported Content-Type"`; `details` and the `Accept` header list the accepted types |
 | `429` Too Many Requests | Too many failed logins | `Retry-After` header in seconds |
 | `500` Internal Server Error | A bug | `"An unexpected error occurred"` |
+
+#### Conflict codes
+
+Every `409` carries a `code`. Codes are stable: new ones may be added, but a shipped code is never renamed or given another meaning. Example:
+
+```json
+{ "timestamp": "2026-10-06T15:00:00Z", "status": 409, "error": "Conflict", "code": "STALE_VERSION", "message": "This player was changed by someone else since you loaded it; reload it and apply your changes again", "details": [] }
+```
+
+| `code` | Meaning | Returned by |
+|---|---|---|
+| `JERSEY_NUMBER_TAKEN` | Another active player of the club has this jersey number | `POST /squad/players`, `PUT /squad/players/{id}`, `POST /squad/players/{id}/reactivate` |
+| `STALE_VERSION` | The player was saved since the client loaded it (the `version` sent is out of date, or the save lost a race) | `PUT /squad/players/{id}`, `POST /squad/players/{id}/release`, `POST /squad/players/{id}/reactivate` |
+| `PLAYER_RELEASED` | The player is released, so it can't be edited | `PUT /squad/players/{id}`, `PUT` / `DELETE /squad/players/{id}/photo` |
+| `PLAYER_ALREADY_RELEASED` | Releasing a released player | `POST /squad/players/{id}/release` |
+| `PLAYER_ALREADY_ACTIVE` | Re-activating an active player | `POST /squad/players/{id}/reactivate` |
+| `EMAIL_ALREADY_REGISTERED` | The email belongs to a user already (in any club) | `POST /auth/users/invite` |
+| `CANNOT_CHANGE_OWN_PERMISSION_LEVEL` | The caller tried to change their own level | `PATCH /auth/users/{id}/permission-level` |
+| `CANNOT_CHANGE_OWN_ACTIVE_STATUS` | The caller tried to deactivate or re-activate themselves | `POST /auth/users/{id}/deactivate`, `/reactivate` |
+| `USER_DEACTIVATED` | The user is deactivated, so their profile can't be changed | `PUT` / `DELETE /users/me/photo` and `/users/{id}/photo` |
+| `CONCURRENT_MODIFICATION` | A concurrent write to a user that a retry didn't resolve (generic; retry the request) | `POST /auth/reset-password`, the user-management writes |
 
 Authentication comes first: a request without a valid token is a `401` whatever else is wrong with it — except a path the security firewall rejects, which is a `400` before authentication is looked at. After that, the request's form is checked before the permission level, so a malformed request from a caller who couldn't make it anyway gets a `400` / `415` rather than a `403` (nothing is read or changed either way). Any other status Spring itself raises is passed on with a generic message (`"The request could not be processed"`, or `"An unexpected error occurred"` for a 5xx).
 
