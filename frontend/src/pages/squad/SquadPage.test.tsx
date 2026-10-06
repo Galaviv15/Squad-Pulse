@@ -598,6 +598,7 @@ describe("the list's states", () => {
 
     expect(screen.getByText(text)).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText(/מוצג/)).toBeNull();
     expect(screen.getAllByRole("button", { name: he.squad.filters.clear })).toHaveLength(1);
   });
 
@@ -608,6 +609,7 @@ describe("the list's states", () => {
 
     expect(screen.getByText(he.squad.empty.filtered)).toBeInTheDocument();
     expect(screen.queryByText(he.squad.empty.released)).toBeNull();
+    expect(screen.queryByText(/מוצג/)).toBeNull();
     const buttons = screen.getAllByRole("button", { name: he.squad.filters.clear });
     expect(buttons).toHaveLength(2);
 
@@ -667,7 +669,6 @@ describe("the count", () => {
   });
 
   it.each([
-    [0, "מוצגים 0 שחקנים"],
     [1, "מוצג שחקן אחד"],
     [2, "מוצגים 2 שחקנים"],
     [3, "מוצגים 3 שחקנים"],

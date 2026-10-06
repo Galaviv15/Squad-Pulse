@@ -82,12 +82,13 @@ export function SquadPage() {
         onClear={clear}
         clearCount={clearCount}
       />
-      {/* Always in the DOM, so a screen reader announces the new count after a filter change. */}
+      {/* Always in the DOM, so a screen reader announces the new count after a filter change.
+          Empty on an empty list, whose message says so already. */}
       <p
         aria-live="polite"
         className="text-[0.8125rem] font-medium text-muted-foreground tabular-nums"
       >
-        {data !== undefined && t("squad.count", { count: data.length })}
+        {data !== undefined && data.length > 0 && t("squad.count", { count: data.length })}
       </p>
       <div
         aria-busy={players.isPlaceholderData || undefined}
