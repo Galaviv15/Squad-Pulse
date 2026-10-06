@@ -52,6 +52,9 @@
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
 
+  --color-brand-pulse: var(--brand-pulse);
+  --color-brand-pulse-bright: var(--brand-pulse-bright);
+
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -100,6 +103,15 @@
   --sidebar-muted-foreground: #a9b5ad;
   --sidebar-accent: #f2eee3;
   --sidebar-accent-foreground: #1e3a2f;
+
+  /*
+   * The logo's "Pulse" (KAN-47): --brand-pulse on light backgrounds, --brand-pulse-bright on dark
+   * ones. --brand-pulse is 3.7:1 on --background, so it's for the large wordmark only, never body
+   * text. --brand-pulse-bright has --chart-3's value but is its own token, so brand and chart
+   * colors can change independently.
+   */
+  --brand-pulse: #5e8a2e;
+  --brand-pulse-bright: #8fb83f;
 
   /* Lines: GK, DEF, MID, ATT. A chart must always carry a legend (see the conventions). */
   --chart-1: #c2841a;

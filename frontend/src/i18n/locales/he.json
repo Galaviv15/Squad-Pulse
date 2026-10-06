@@ -2,14 +2,86 @@
   "app": {
     "name": "SquadPulse",
     "welcome": "ברוך הבא ל-SquadPulse",
-    "phaseNote": "שלב 3 — תשתית הממשק. המסכים הראשונים בדרך."
+    "phaseNote": "שלב 3 — תשתית הממשק. המסכים הראשונים בדרך.",
+    "wordmark": {
+      "squad": "Squad",
+      "pulse": "Pulse"
+    }
   },
   "placeholder": {
-    "comingSoon": "בקרוב"
+    "comingSoon": "בקרוב",
+    "logout": "יציאה"
   },
   "notFound": {
     "title": "הדף לא נמצא",
     "description": "הכתובת שביקשת לא קיימת.",
     "backToApp": "חזרה לדף הבית"
+  },
+  "auth": {
+    "footer": "מערכת לניהול הצוות המקצועי של המועדון",
+    "loading": "טוען…",
+    "backToLogin": "חזרה לכניסה",
+    "fields": {
+      "email": "אימייל",
+      "emailPlaceholder": "name@club.co.il",
+      "password": "סיסמה",
+      "code": "קוד אימות",
+      "codePlaceholder": "000000",
+      "newPassword": "סיסמה חדשה",
+      "confirmPassword": "אימות סיסמה"
+    },
+    "hints": {
+      "code": "6 ספרות, מהמייל שקיבלתם",
+      "newPassword": "8 תווים לפחות"
+    },
+    "login": {
+      "title": "כניסה",
+      "subtitle": "התחברו עם האימייל והסיסמה שלכם.",
+      "submit": "כניסה",
+      "forgotLink": "שכחתי סיסמה",
+      "activationPrompt": "קיבלתם הזמנה או קוד במייל?",
+      "activationLink": "הזנת קוד והגדרת סיסמה",
+      "passwordSet": "הסיסמה נשמרה. אפשר להתחבר עם הסיסמה החדשה."
+    },
+    "forgot": {
+      "title": "שכחתי סיסמה",
+      "subtitle": "נשלח קוד בן 6 ספרות לאימייל שלכם. הקוד תקף ל־15 דקות.",
+      "submit": "שליחת קוד"
+    },
+    "reset": {
+      "title": "הגדרת סיסמה",
+      "subtitle": "להפעלת חשבון חדש או לאיפוס סיסמה: הזינו את הקוד שקיבלתם במייל ובחרו סיסמה.",
+      "submit": "שמירה וכניסה",
+      "codeSent": "אם הכתובת רשומה במערכת, נשלח אליה קוד. כדאי לבדוק גם בתיקיית הספאם.",
+      "resendPrompt": "לא קיבלתם קוד?",
+      "resendLink": "שליחה מחדש",
+      "invalidCode": "הקוד שגוי או שפג תוקפו.",
+      "requestNewCode": "שליחת קוד חדש"
+    },
+    "errors": {
+      "wrongCredentials": "האימייל או הסיסמה שגויים.",
+      "tooManyAttempts": "יותר מדי ניסיונות כניסה. נסו שוב בעוד כמה דקות.",
+      "serverUnreachable": "אין חיבור לשרת כרגע. נסו שוב בעוד רגע.",
+      "invalidRequest": "חלק מהפרטים אינם תקינים. בדקו אותם ונסו שוב.",
+      "unexpected": "משהו השתבש. נסו שוב."
+    },
+    "validation": {
+      "emailRequired": "הזינו כתובת אימייל.",
+      "emailTooLong": "כתובת האימייל ארוכה מדי.",
+      "emailInvalid": "כתובת האימייל אינה תקינה.",
+      "passwordRequired": "הזינו סיסמה.",
+      "codeRequired": "הזינו את הקוד שקיבלתם במייל.",
+      "codeFormat": "הקוד צריך להיות בן 6 ספרות.",
+      "newPasswordRequired": "בחרו סיסמה חדשה.",
+      "newPasswordTooShort": "הסיסמה צריכה להכיל 8 תווים לפחות.",
+      "newPasswordTooLong": "הסיסמה יכולה להכיל עד 128 תווים.",
+      "newPasswordLength": "הסיסמה צריכה להכיל בין 8 ל־128 תווים.",
+      "passwordsDontMatch": "הסיסמאות אינן תואמות."
+    },
+    "serverError": {
+      "title": "אין חיבור לשרת",
+      "body": "לא הצלחנו להתחבר לשרת של SquadPulse. ייתכן שיש תקלה זמנית.",
+      "retry": "נסו שוב"
+    }
   }
 }
