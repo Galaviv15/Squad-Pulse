@@ -101,3 +101,76 @@ export const updatePlayerReturns = (
       playerBody({ ...body, id, version: Number(body.version) + 1 } as Partial<Player>),
     ),
 ) => recordedWrite("put", `/squad/players/${id}`, answer);
+
+/**
+ * POST /squad/players/:id/release for `player`: by default a 200 with the player released, its
+ * version moved on by one.
+ */
+export const releaseReturns = (
+  player: Player,
+  answer: WriteAnswer = (body) =>
+    HttpResponse.json({ ...player, active: false, version: Number(body.version) + 1 }),
+) => recordedWrite("post", `/squad/players/${player.id}/release`, answer);
+
+/**
+ * POST /squad/players/:id/reactivate for `player`: by default a 200 with the player active, the
+ * number as sent (null for none), its version moved on by one.
+ */
+export const reactivateReturns = (
+  player: Player,
+  answer: WriteAnswer = (body) =>
+    HttpResponse.json({
+      ...player,
+      active: true,
+      jerseyNumber: (body.jerseyNumber as number | null) ?? null,
+      version: Number(body.version) + 1,
+    }),
+) => recordedWrite("post", `/squad/players/${player.id}/reactivate`, answer);
+
+type BodylessAnswer = () => Response | Promise<Response>;
+
+const noContent = () => new HttpResponse(null, { status: 204 });
+
+/** A handler without a request body, counting its requests in `requests.count`. */
+function countedRequest(method: "delete", path: string, answer: BodylessAnswer) {
+  const requests = { count: 0 };
+  const handler = http[method](path, () => {
+    requests.count += 1;
+    return answer();
+  });
+  return { handler, requests };
+}
+
+/** DELETE /squad/players/:id: by default 204. */
+export const deleteReturns = (id: string, answer: BodylessAnswer = noContent) =>
+  countedRequest("delete", `/squad/players/${id}`, answer);
+
+/** DELETE /squad/players/:id/photo: by default 204. */
+export const photoDeleteReturns = (id: string, answer: BodylessAnswer = noContent) =>
+  countedRequest("delete", `/squad/players/${id}/photo`, answer);
+
+/** What a photo upload sent: the multipart parts' names, and the `file` part's name, size and type. */
+export interface RecordedUpload {
+  partNames: string[];
+  fileName: string | null;
+  size: number | null;
+  type: string | null;
+}
+
+/** PUT /squad/players/:id/photo recording each upload in `uploads`: by default 204. */
+export function photoUploadReturns(id: string, answer: BodylessAnswer = noContent) {
+  const uploads: RecordedUpload[] = [];
+  const handler = http.put(`/squad/players/${id}/photo`, async ({ request }) => {
+    const form = await request.formData();
+    const file = form.get("file");
+    const isFile = typeof file === "object" && file !== null;
+    uploads.push({
+      partNames: [...form.keys()],
+      fileName: isFile ? file.name : null,
+      size: isFile ? file.size : null,
+      type: isFile ? file.type : null,
+    });
+    return answer();
+  });
+  return { handler, uploads };
+}

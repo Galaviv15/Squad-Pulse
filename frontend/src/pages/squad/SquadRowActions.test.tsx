@@ -42,31 +42,39 @@ describe("the row actions", () => {
     expect(cell.closest("tr")!.className).toContain("[&>td:not([data-actions])]:opacity-60");
   });
 
-  it.each(["ADMIN", "EDIT_FULL"] as PermissionLevel[])(
-    "offer open and edit to %s on an active player",
-    async (permissionLevel) => {
-      await renderSquad({ user: { permissionLevel } });
+  it.each([
+    ["ADMIN", true, ["open", "edit", "release", "delete"]],
+    ["EDIT_FULL", true, ["open", "edit", "release"]],
+    ["EDIT_PARTIAL", true, ["open"]],
+    ["VIEW_ONLY", true, ["open"]],
+    ["ADMIN", false, ["open", "reactivate", "delete"]],
+    ["EDIT_FULL", false, ["open", "reactivate"]],
+    ["EDIT_PARTIAL", false, ["open"]],
+    ["VIEW_ONLY", false, ["open"]],
+  ] as [PermissionLevel, boolean, string[]][])(
+    "offer %s on an active (%s) player: %j",
+    async (permissionLevel, active, keys) => {
+      await renderSquad({ user: { permissionLevel }, players: [playerBody({ active })] });
 
-      expect(itemNames(await openMenu("Yossi Levi"))).toEqual([
-        he.squad.actions.open,
-        he.squad.edit,
-      ]);
+      const labels: Record<string, string> = {
+        open: he.squad.actions.open,
+        edit: he.squad.edit,
+        release: he.squad.actions.release,
+        reactivate: he.squad.actions.reactivate,
+        delete: he.squad.actions.delete,
+      };
+      expect(itemNames(await openMenu("Yossi Levi"))).toEqual(keys.map((key) => labels[key]));
     },
   );
 
-  it.each(["EDIT_PARTIAL", "VIEW_ONLY"] as PermissionLevel[])(
-    "offer only open to %s",
-    async (permissionLevel) => {
-      await renderSquad({ user: { permissionLevel } });
+  it("put delete last, after a separator, styled destructive", async () => {
+    await renderSquad();
+    const menu = await openMenu("Yossi Levi");
 
-      expect(itemNames(await openMenu("Yossi Levi"))).toEqual([he.squad.actions.open]);
-    },
-  );
-
-  it("offer only open on a released player, even to an admin", async () => {
-    await renderSquad({ players: [playerBody({ active: false })] });
-
-    expect(itemNames(await openMenu("Yossi Levi"))).toEqual([he.squad.actions.open]);
+    const remove = within(menu).getByRole("menuitem", { name: he.squad.actions.delete });
+    expect(remove).toHaveAttribute("data-variant", "destructive");
+    expect(remove.previousElementSibling).toHaveAttribute("role", "separator");
+    expect(within(menu).getAllByRole("separator")).toHaveLength(1);
   });
 
   it("open from the trigger without opening the player", async () => {
