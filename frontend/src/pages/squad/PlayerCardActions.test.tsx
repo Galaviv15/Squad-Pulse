@@ -277,6 +277,31 @@ describe("the card's re-activation", () => {
     expect(button(he.squad.actions.release)).toBeInTheDocument();
   });
 
+  it("links the hint to the field, and keeps it linked after the error", async () => {
+    await renderCard(released());
+    const dialog = await openDialog(he.squad.actions.reactivate);
+    const field = numberField(dialog);
+
+    expect(field).toHaveAttribute("aria-describedby", "reactivate-jersey-number-hint");
+    expect(field).not.toHaveAttribute("aria-invalid");
+    expect(document.getElementById("reactivate-jersey-number-hint")).toHaveTextContent(
+      he.squad.dialog.reactivate.hint,
+    );
+
+    fireEvent.change(field, { target: { value: "100" } });
+    fireEvent.click(confirmButton(dialog, he.squad.actions.reactivate));
+
+    await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
+    expect(field).toHaveAttribute(
+      "aria-describedby",
+      "reactivate-jersey-number-error reactivate-jersey-number-hint",
+    );
+    expect(document.getElementById("reactivate-jersey-number-error")).toHaveTextContent(
+      he.squad.form.errors.jerseyNumberRange,
+    );
+    expect(within(dialog).getByText(he.squad.dialog.reactivate.hint)).toBeVisible();
+  });
+
   it("prefills nothing for a player without a number", async () => {
     await renderCard(released({ jerseyNumber: null }));
 
@@ -314,7 +339,7 @@ describe("the card's re-activation", () => {
 
     await waitFor(() =>
       expect(numberField(dialog)).toHaveAccessibleDescription(
-        he.squad.form.errors.jerseyNumberTaken,
+        `${he.squad.form.errors.jerseyNumberTaken} ${he.squad.dialog.reactivate.hint}`,
       ),
     );
     expect(numberField(dialog)).toHaveAttribute("aria-invalid", "true");
@@ -342,7 +367,7 @@ describe("the card's re-activation", () => {
 
     await waitFor(() =>
       expect(numberField(dialog)).toHaveAccessibleDescription(
-        he.squad.form.errors.jerseyNumberRange,
+        `${he.squad.form.errors.jerseyNumberRange} ${he.squad.dialog.reactivate.hint}`,
       ),
     );
     expect(numberField(dialog)).toHaveFocus();
@@ -366,7 +391,7 @@ describe("the card's re-activation", () => {
 
     await waitFor(() =>
       expect(numberField(dialog)).toHaveAccessibleDescription(
-        he.squad.form.errors.jerseyNumberRange,
+        `${he.squad.form.errors.jerseyNumberRange} ${he.squad.dialog.reactivate.hint}`,
       ),
     );
   });

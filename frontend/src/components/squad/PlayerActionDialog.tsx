@@ -159,6 +159,7 @@ function ReactivateDialog({ player, place, ...dialog }: DialogProps) {
         id="reactivate-jersey-number"
         label={t("squad.fields.jerseyNumber")}
         hint={t("squad.dialog.reactivate.hint")}
+        keepHint
         error={fieldError}
       >
         {(control) => (
