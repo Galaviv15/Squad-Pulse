@@ -1,6 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
 import { apiJson } from "@/lib/api/client";
+import type { PermissionLevel } from "./permissions";
+
+export type { PermissionLevel } from "./permissions";
 
 /** auth.Title. */
 export type Title =
@@ -10,9 +13,6 @@ export type Title =
   | "GOALKEEPING_COACH"
   | "FITNESS_COACH"
   | "ANALYST";
-
-/** auth.PermissionLevel, highest first (the backend's role hierarchy follows this order). */
-export type PermissionLevel = "ADMIN" | "EDIT_FULL" | "EDIT_PARTIAL" | "VIEW_ONLY";
 
 /** auth.ClubResponse: the caller's club. */
 export interface Club {

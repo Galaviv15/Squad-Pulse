@@ -2,6 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
+import { playersReturn } from "@/test/msw/squad";
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
 
@@ -21,7 +22,8 @@ describe("routes", () => {
 
   it.each([
     ["/app", he.nav.dashboard, he.dashboard.stub],
-    ["/app/squad", he.nav.squad, he.squad.stub],
+    ["/app/squad/new", he.squad.addPlayer, he.squad.newPlayerStub],
+    ["/app/squad/p1", he.squad.playerCard, he.squad.playerCardStub],
   ])("renders %s inside the shell", async (path, title, stub) => {
     renderWithProviders({ initialEntries: [path] });
 
@@ -45,7 +47,17 @@ describe("routes", () => {
     },
   );
 
-  it.each(["/app/nope", "/app/squad/x"])(
+  it("renders the squad table at /app/squad", async () => {
+    server.use(playersReturn([]));
+    renderWithProviders({ initialEntries: ["/app/squad"] });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: he.nav.squad }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(he.squad.empty.active)).toBeInTheDocument();
+  });
+
+  it.each(["/app/nope", "/app/squad/p1/x"])(
     "renders the not-found page inside the shell at %s",
     async (path) => {
       renderWithProviders({ initialEntries: [path] });
