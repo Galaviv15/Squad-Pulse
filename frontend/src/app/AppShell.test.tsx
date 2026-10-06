@@ -13,14 +13,18 @@ import {
   refreshReturns,
 } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
+import { playersReturn } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 const LOGO = "/clubs/me/logo";
 const PHOTO = "/users/me/photo";
 
-/** Logged in at `path`, with /me answering currentUserBody(user). Waits for the shell's <h1>. */
+/**
+ * Logged in at `path`, with /me answering currentUserBody(user) and an empty squad. Waits for the
+ * shell's <h1>.
+ */
 async function renderShell(path = "/app", user: Partial<CurrentUser> = {}) {
-  server.use(refreshReturns("t1"), meReturns(user));
+  server.use(refreshReturns("t1"), meReturns(user), playersReturn([]));
   const rendered = renderWithProviders({ initialEntries: [path] });
   await screen.findByRole("heading", { level: 1 });
   return rendered;
@@ -245,7 +249,9 @@ describe("navigation", () => {
     expect(router.state.location.pathname).toBe("/app/squad");
     expect(navLink(he.nav.squad)).toHaveAttribute("aria-current", "page");
     expect(navLink(he.nav.dashboard)).not.toHaveAttribute("aria-current");
-    expect(within(screen.getByRole("main")).getByText(he.squad.stub)).toBeInTheDocument();
+    expect(
+      await within(screen.getByRole("main")).findByText(he.squad.empty.active),
+    ).toBeInTheDocument();
   });
 
   it("keeps the squad link current below /app/squad", async () => {

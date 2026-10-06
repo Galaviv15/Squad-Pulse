@@ -25,7 +25,60 @@
     "stub": "סיכום הסגל יופיע כאן בקרוב."
   },
   "squad": {
-    "stub": "טבלת הסגל תופיע כאן בקרוב."
+    "addPlayer": "הוספת שחקן",
+    "playerCard": "כרטיס שחקן",
+    "newPlayerStub": "טופס הוספת שחקן יופיע כאן בקרוב.",
+    "playerCardStub": "כרטיס השחקן יופיע כאן בקרוב.",
+    "backToSquad": "חזרה לסגל",
+    "statusLabel": "סטטוס שחקנים",
+    "status": {
+      "active": "פעילים",
+      "released": "משוחררים",
+      "all": "הכל"
+    },
+    "filters": {
+      "position": "עמדה ראשית",
+      "minAge": "מגיל",
+      "maxAge": "עד גיל",
+      "medicalStatus": "מצב רפואי",
+      "preferredFoot": "רגל",
+      "any": "הכל",
+      "clear": "ניקוי סינון",
+      "ageOutOfRange": "גיל בין {{min}} ל-{{max}}",
+      "ageOrder": "הגיל ההתחלתי גדול מהגיל הסופי"
+    },
+    "medical": {
+      "FIT": "כשיר",
+      "INJURED": "פצוע"
+    },
+    "foot": {
+      "RIGHT": "ימין",
+      "LEFT": "שמאל",
+      "BOTH": "שתיהן"
+    },
+    "count_one": "מוצג שחקן אחד",
+    "count_two": "מוצגים {{count}} שחקנים",
+    "count_other": "מוצגים {{count}} שחקנים",
+    "released": "משוחרר",
+    "columns": {
+      "jerseyNumber": "#",
+      "name": "שם",
+      "position": "עמדה",
+      "age": "גיל",
+      "height": "גובה (ס״מ)",
+      "weight": "משקל (ק״ג)",
+      "foot": "רגל",
+      "medicalStatus": "מצב רפואי"
+    },
+    "loading": "טוען שחקנים…",
+    "loadError": "לא הצלחנו לטעון את רשימת השחקנים.",
+    "retry": "נסו שוב",
+    "empty": {
+      "active": "אין עדיין שחקנים פעילים בסגל.",
+      "released": "אין שחקנים משוחררים.",
+      "all": "אין עדיין שחקנים במועדון.",
+      "filtered": "אין שחקנים שמתאימים לסינון."
+    }
   },
   "titles": {
     "CLUB_MANAGER": "מנהל מועדון",
