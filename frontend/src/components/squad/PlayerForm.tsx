@@ -1,6 +1,7 @@
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
+import { FIELD_INVALID_CLASSES } from "@/components/form/fieldClasses";
 import { FormField, type FormControlProps } from "@/components/form/FormField";
 import { FormAlert } from "@/components/form/FormMessage";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -57,9 +58,6 @@ interface PlayerFormProps {
    */
   onReloadLatest?: () => Promise<boolean>;
 }
-
-const INVALID_CLASSES =
-  "aria-invalid:border-danger aria-invalid:ring-danger/20 focus-visible:aria-invalid:border-danger";
 
 /** A field's control id, from the form's own id. */
 const fieldId = (formId: string, field: PlayerFormField) => `${formId}-${field}`;
@@ -231,7 +229,7 @@ export function PlayerForm({
           inputMode="numeric"
           autoComplete="off"
           dir="ltr"
-          className={cn("tabular-nums", INVALID_CLASSES)}
+          className={cn("tabular-nums", FIELD_INVALID_CLASSES)}
           value={values[name]}
           onChange={(event) => change(name, event.target.value)}
         />
@@ -264,7 +262,7 @@ export function PlayerForm({
             <Input
               {...control}
               autoComplete="off"
-              className={INVALID_CLASSES}
+              className={FIELD_INVALID_CLASSES}
               value={values.fullName}
               onChange={(event) => change("fullName", event.target.value)}
             />
@@ -299,7 +297,7 @@ export function PlayerForm({
               type="date"
               dir="ltr"
               max={toIsoDate(today)}
-              className={cn("tabular-nums", INVALID_CLASSES)}
+              className={cn("tabular-nums", FIELD_INVALID_CLASSES)}
               value={values.dateOfBirth}
               onChange={(event) => change("dateOfBirth", event.target.value)}
             />
@@ -378,7 +376,7 @@ function SelectControl<T extends string>({
       value={value === "" ? null : value}
       onValueChange={(next) => onChange(next ?? "")}
     >
-      <SelectTrigger {...control} className={cn("w-full bg-card", INVALID_CLASSES)}>
+      <SelectTrigger {...control} className={cn("w-full bg-card", FIELD_INVALID_CLASSES)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
