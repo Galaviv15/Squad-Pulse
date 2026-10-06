@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { AuthField } from "@/components/auth/AuthField";
 import { AuthCard, AuthLayout } from "@/components/auth/AuthLayout";
-import { FormAlert, FormNotice } from "@/components/auth/FormMessage";
+import { FormAlert, FormNotice } from "@/components/form/FormMessage";
 import { Button } from "@/components/ui/button";
 import { apiJson } from "@/lib/api/client";
 import { authSession } from "@/lib/api/session";
