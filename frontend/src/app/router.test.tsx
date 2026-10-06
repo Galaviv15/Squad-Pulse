@@ -1,9 +1,17 @@
 import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
+import { loggedIn } from "@/test/msw/auth";
+import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
 
 describe("routes", () => {
+  // /app needs a session: the app-load refresh succeeds and /me answers. The not-found page
+  // outside /app never asks for either (an unexpected request would fail the test).
+  beforeEach(() => {
+    server.use(...loggedIn());
+  });
+
   it("redirects / to /app", async () => {
     const { router } = renderWithProviders({ initialEntries: ["/"] });
 

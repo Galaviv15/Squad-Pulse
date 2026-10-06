@@ -2,10 +2,12 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useLogout } from "@/lib/auth/logout";
 
 /** Stands in for /app until the real screens exist; shows the base components under RTL. */
 export function PlaceholderPage() {
   const { t } = useTranslation();
+  const { logout, pending } = useLogout();
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-8 text-foreground">
@@ -21,6 +23,10 @@ export function PlaceholderPage() {
           {/* Position codes stay in English, as an LTR island (docs/design/ui-conventions.md). */}
           <Badge dir="ltr">CB</Badge>
           <Button>{t("placeholder.comingSoon")}</Button>
+          {/* Temporary, so logout can be tried end to end: the real button is KAN-48's top bar. */}
+          <Button variant="outline" disabled={pending} onClick={() => void logout()}>
+            {t("placeholder.logout")}
+          </Button>
         </CardContent>
       </Card>
     </main>

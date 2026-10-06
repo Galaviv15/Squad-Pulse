@@ -6,9 +6,13 @@ import { createAppRouter } from "./app/router.tsx";
 import { DirectionProvider } from "./components/ui/direction.tsx";
 import "./i18n/i18n.ts";
 import "./index.css";
+import { authSession } from "./lib/api/session.ts";
+import { bindSessionToQueryClient } from "./lib/auth/bindSessionToQueryClient.ts";
 import { createQueryClient } from "./lib/queryClient.ts";
 
 const queryClient = createQueryClient();
+// Lives as long as the page: nothing unbinds it.
+bindSessionToQueryClient(authSession, queryClient);
 const router = createAppRouter();
 
 createRoot(document.getElementById("root")!).render(
