@@ -3,6 +3,10 @@ dist/
 dist-ssr/
 *.local
 
+# Per-machine dev-server TLS key and certificate (npm run dev:cert) — never commit
+.cert/
+*.pem
+
 # IDE
 .vscode/
 .idea/
