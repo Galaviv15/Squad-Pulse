@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
  * Smoke test: fails fast if the Spring context can't even start.
@@ -50,5 +52,21 @@ class SquadpulseApplicationTests {
     assertThat(context.containsBean("clubBootstrapService")).isFalse();
     assertThat(context.containsBean("clubBootstrapRunner")).isFalse();
     assertThat(context.getEnvironment().getProperty("squadpulse.bootstrap.owner-secret")).isNull();
+  }
+
+  /**
+   * Endpoints a test registers for itself (under {@code /test-only/}, e.g. {@code
+   * ForwardedHeadersIntegrationTest.PeerProbe}) must never leak into other contexts: component
+   * scanning reaches test classes too, so each one is a {@code @TestComponent} brought in by an
+   * explicit {@code @Import}.
+   */
+  @Test
+  void noTestOnlyEndpointIsRegistered(
+      @Autowired RequestMappingHandlerMapping requestMappingHandlerMapping) {
+    assertThat(
+            requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
+                .map(RequestMappingInfo::getPatternValues)
+                .flatMap(java.util.Set::stream))
+        .noneMatch(path -> path.startsWith("/test-only/"));
   }
 }

@@ -71,6 +71,9 @@ squadpulse:
   security:
     jwt-secret: ${JWT_SECRET:}
     password-pepper: ${PASSWORD_PEPPER:}
+    # Spring Security's default Strict-Transport-Security header on secure requests (see
+    # auth.SecurityConfig). Off only in the dev profile (application-dev.yml).
+    hsts-enabled: true
     # Not secrets, so set here rather than via env vars (see auth.TokenProperties).
     token:
       access-ttl: 15m
