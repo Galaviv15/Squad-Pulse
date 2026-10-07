@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { playersReturn } from "@/test/msw/squad";
+import { playersReturn, summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 import { routes as appRoutes } from "./router";
 
@@ -63,6 +63,7 @@ describe("a page whose code fails to load", () => {
   });
 
   it("shows the error inside the shell when navigated to", async () => {
+    server.use(summaryReturns());
     const { router } = renderWithProviders({
       initialEntries: ["/app"],
       routes: withFailingSquadChunk(appRoutes),
@@ -95,6 +96,7 @@ describe("a page whose code fails to load", () => {
   });
 
   it("leaves the other pages working", async () => {
+    server.use(summaryReturns());
     const { router } = renderWithProviders({
       initialEntries: ["/app/squad"],
       routes: withFailingSquadChunk(appRoutes),
@@ -108,5 +110,9 @@ describe("a page whose code fails to load", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(router.state.location.pathname).toBe("/app");
+    // The dashboard itself, not just the shell's title.
+    expect(
+      await screen.findByRole("heading", { level: 2, name: he.dashboard.lines.title }),
+    ).toBeInTheDocument();
   });
 });

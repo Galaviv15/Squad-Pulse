@@ -1,5 +1,5 @@
 import { http, HttpResponse } from "msw";
-import type { Player } from "@/lib/squad/types";
+import type { Player, SquadSummary } from "@/lib/squad/types";
 import { apiError } from "./auth";
 
 /**
@@ -174,3 +174,30 @@ export function photoUploadReturns(id: string, answer: BodylessAnswer = noConten
   });
   return { handler, uploads };
 }
+
+/** A GET /squad/summary body (SquadSummaryResponse): 23 active players, 3 / 8 / 7 / 5 by line. */
+export function summaryBody(overrides: Partial<SquadSummary> = {}): SquadSummary {
+  return {
+    playerCount: 23,
+    averageAge: 26.4,
+    lines: { GOALKEEPERS: 3, DEFENSE: 8, MIDFIELD: 7, ATTACK: 5 },
+    ...overrides,
+  };
+}
+
+type SummaryAnswer = SquadSummary | (() => Response | Promise<Response>);
+
+/**
+ * GET /squad/summary, which the dashboard (/app) requests on every visit: so any test that lands
+ * on /app needs this. Answers with `answer`, a body or a function (read on each request, e.g. an
+ * error, or the next of several answers).
+ */
+export const summaryReturns = (
+  answer: SummaryAnswer = summaryBody(),
+  { gate, onRequest }: { gate?: Promise<void>; onRequest?: () => void } = {},
+) =>
+  http.get("/squad/summary", async () => {
+    onRequest?.();
+    await gate;
+    return typeof answer === "function" ? answer() : HttpResponse.json(answer);
+  });

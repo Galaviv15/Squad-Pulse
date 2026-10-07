@@ -46,3 +46,26 @@ export interface Player {
   /** Whether GET /squad/players/{id}/photo has a photo: fetch it only when true. */
   hasPhoto: boolean;
 }
+
+/**
+ * squad.Line: the line of the team a primary position belongs to, from the goal outwards (the
+ * summary's order, and the dashboard legend's and donut's).
+ */
+export const LINES = ["GOALKEEPERS", "DEFENSE", "MIDFIELD", "ATTACK"] as const;
+export type Line = (typeof LINES)[number];
+
+/**
+ * squad.SquadSummaryResponse (GET /squad/summary): the club's active players only, whatever their
+ * medical status. playerCount can exceed the sum of `lines`: a player without a primary position
+ * (only in data not written through the API) is counted but in no line.
+ */
+export interface SquadSummary {
+  playerCount: number;
+  /**
+   * The mean exact age, rounded to one decimal by the server, but a JSON number: 26.0 arrives as
+   * 26 (format it with formatAverageAge). null when no active player has a date of birth.
+   */
+  averageAge: number | null;
+  /** Active players per line by primary position: every line, 0 for an empty one. */
+  lines: Record<Line, number>;
+}

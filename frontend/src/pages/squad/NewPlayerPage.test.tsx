@@ -1,6 +1,15 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse } from "msw";
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser, PermissionLevel } from "@/lib/auth/currentUser";
 import { toIsoDate } from "@/lib/squad/dates";
@@ -17,6 +26,9 @@ import {
 } from "@/test/msw/squad";
 import { choose, combobox, errorOf, fields, input, submitButton, type } from "@/test/playerForm";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/NewPlayerPage"));
 
 let fetchSpy: MockInstance<typeof fetch>;
 

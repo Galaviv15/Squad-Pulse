@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser, PermissionLevel } from "@/lib/auth/currentUser";
 import type { Player } from "@/lib/squad/types";
@@ -7,6 +7,9 @@ import { meReturns, refreshReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
 import { playerBody, playerReturns, recordedPlayers } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/SquadPage"));
 
 async function renderSquad({
   players = [playerBody()],

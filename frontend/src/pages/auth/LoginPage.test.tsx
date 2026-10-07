@@ -5,6 +5,7 @@ import he from "@/i18n/locales/he.json";
 import { deferred } from "@/test/deferred";
 import { accessToken, apiError, meReturns, refreshRefused } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
+import { summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 /** POST /auth/login answering with `answer`. Records each request's JSON body. */
@@ -39,7 +40,8 @@ function fillIn(email: string, password: string) {
 describe("LoginPage", () => {
   it("logs in and goes to next, replacing the login screen in the history", async () => {
     const bodies = loginAnswering(() => accessToken("t1"));
-    server.use(meReturns());
+    // The dashboard at /app requests the squad summary.
+    server.use(meReturns(), summaryReturns());
     const { router } = await renderLogin("/app/login?next=%2Fapp%3Fview%3Dall", ["/before"]);
 
     fillIn("  coach@example.com ", "correct horse");
@@ -60,7 +62,8 @@ describe("LoginPage", () => {
 
   it("goes to /app without next", async () => {
     loginAnswering(() => accessToken("t1"));
-    server.use(meReturns());
+    // The dashboard at /app requests the squad summary.
+    server.use(meReturns(), summaryReturns());
     const { router } = await renderLogin();
 
     fillIn("coach@example.com", "pw");

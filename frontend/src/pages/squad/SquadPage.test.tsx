@@ -1,6 +1,15 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import { AGE_DEBOUNCE_MS } from "@/components/squad/AgeRangeFilter";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser, PermissionLevel } from "@/lib/auth/currentUser";
@@ -8,8 +17,17 @@ import type { Player } from "@/lib/squad/types";
 import { deferred } from "@/test/deferred";
 import { apiError, imageReturns, loginReturns, meReturns, refreshReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { playerBody, playerReturns, playersReturn, recordedPlayers } from "@/test/msw/squad";
+import {
+  playerBody,
+  playerReturns,
+  playersReturn,
+  recordedPlayers,
+  summaryReturns,
+} from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/SquadPage"));
 
 const LIST = "/squad/players";
 const photo = (id: string) => `/squad/players/${id}/photo`;
@@ -808,6 +826,8 @@ describe("after a logout", () => {
         gate: gate.promise,
         onRequest: (query) => queries.push(query.toString()),
       }),
+      // The login lands on /app, whose dashboard requests the squad summary.
+      summaryReturns(),
     );
     fireEvent.change(screen.getByLabelText(he.auth.fields.email), {
       target: { value: "coach@example.com" },

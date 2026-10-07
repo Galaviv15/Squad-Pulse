@@ -1,6 +1,15 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse } from "msw";
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser } from "@/lib/auth/currentUser";
 import type { Player } from "@/lib/squad/types";
@@ -15,9 +24,13 @@ import {
   reactivateReturns,
   recordedPlayers,
   releaseReturns,
+  summaryReturns,
 } from "@/test/msw/squad";
 import { watchLiveInsertion } from "@/test/liveRegion";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/PlayerCardPage"));
 
 let fetchSpy: MockInstance<typeof fetch>;
 
@@ -443,7 +456,8 @@ describe("the card's permanent delete", () => {
       const player = playerBody({ fullName: "דני לוי" });
       const { router } = await renderCard(player, { entries: ["/app"] });
       const remove = deleteReturns(player.id, answer);
-      server.use(remove.handler, recordedPlayers([]).handler);
+      // Back to /app below shows the dashboard, which requests the squad summary.
+      server.use(remove.handler, recordedPlayers([]).handler, summaryReturns());
       const dialog = await openDialog(he.squad.actions.delete);
       const before = sent().length;
 
