@@ -13,5 +13,14 @@
 # getRemoteAddr(): through the proxy that is still the loopback address (the X-Forwarded-For Vite
 # adds), but a loopback client could pick its own by sending X-Forwarded-For — acceptable for local
 # development only.
+#
+# Those requests then count as secure, so Spring Security would add its HSTS header
+# (Strict-Transport-Security: max-age=31536000 ; includeSubDomains); browsers keep that for
+# localhost — every port, not just 5173 — for a year and force https on other local projects. It's
+# switched off here only; the default stays on, unchanged.
 server:
   forward-headers-strategy: native
+
+squadpulse:
+  security:
+    hsts-enabled: false

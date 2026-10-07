@@ -5,6 +5,7 @@ import com.squadpulse.common.ClubContext;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -93,10 +94,24 @@ class SecurityConfig {
     return builder.build();
   }
 
+  /**
+   * {@code hstsEnabled} ({@code squadpulse.security.hsts-enabled}, default true) is false only
+   * under the {@code dev} profile (application-dev.yml, KAN-56): there forwarded headers make
+   * requests through the HTTPS dev server secure, and browsers would keep an HSTS header for
+   * localhost — every port — for a year. When true, Spring Security's default headers are left
+   * exactly as they are.
+   */
   @Bean
   SecurityFilterChain securityFilterChain(
-      HttpSecurity http, JwtService jwtService, ClubContext clubContext, JsonMapper jsonMapper)
+      HttpSecurity http,
+      JwtService jwtService,
+      ClubContext clubContext,
+      JsonMapper jsonMapper,
+      @Value("${squadpulse.security.hsts-enabled:true}") boolean hstsEnabled)
       throws Exception {
+    if (!hstsEnabled) {
+      http.headers(headers -> headers.httpStrictTransportSecurity(hsts -> hsts.disable()));
+    }
     http.csrf(AbstractHttpConfigurer::disable)
         .sessionManagement(
             session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

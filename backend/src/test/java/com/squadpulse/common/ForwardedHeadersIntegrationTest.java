@@ -26,6 +26,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.testcontainers.junit.jupiter.Container;
@@ -125,6 +126,36 @@ class ForwardedHeadersIntegrationTest {
       assertThat(peer.get("scheme").asString()).isEqualTo("https");
       assertThat(peer.get("secure").asBoolean()).isTrue();
     }
+
+    /**
+     * A request made secure by the forwarded headers gets no HSTS header: browsers would keep it
+     * for localhost (every port) for a year and force https on other local projects.
+     */
+    @Test
+    void aSecureRequestGetsNoHstsHeader() throws Exception {
+      HttpResponse<String> response = sendPeer(VITE_FORWARDED_HEADERS);
+
+      assertThat(JSON.readTree(response.body()).get("secure").asBoolean()).isTrue();
+      assertThat(response.headers().firstValue("Strict-Transport-Security")).isEmpty();
+    }
+  }
+
+  /**
+   * Forwarded headers honored as under the dev profile, but without it: a secure request gets
+   * Spring Security's default HSTS header, unchanged — only the dev profile switches it off.
+   */
+  @Nested
+  @TestPropertySource(properties = "server.forward-headers-strategy=native")
+  class SecureRequestsWithoutTheDevProfile {
+
+    @Test
+    void getTheDefaultHstsHeader() throws Exception {
+      HttpResponse<String> response = sendPeer(VITE_FORWARDED_HEADERS);
+
+      assertThat(JSON.readTree(response.body()).get("secure").asBoolean()).isTrue();
+      assertThat(response.headers().allValues("Strict-Transport-Security"))
+          .containsExactly("max-age=31536000 ; includeSubDomains");
+    }
   }
 
   @Nested
@@ -166,6 +197,10 @@ class ForwardedHeadersIntegrationTest {
   }
 
   private JsonNode peer(Map<String, String> headers) throws Exception {
+    return JSON.readTree(sendPeer(headers).body());
+  }
+
+  private HttpResponse<String> sendPeer(Map<String, String> headers) throws Exception {
     HttpRequest.Builder request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/test-only/peer"))
             .header("Authorization", tokens.bearer(CLUB, PermissionLevel.VIEW_ONLY))
@@ -174,6 +209,6 @@ class ForwardedHeadersIntegrationTest {
     HttpResponse<String> response =
         client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     assertThat(response.statusCode()).isEqualTo(200);
-    return JSON.readTree(response.body());
+    return response;
   }
 }
