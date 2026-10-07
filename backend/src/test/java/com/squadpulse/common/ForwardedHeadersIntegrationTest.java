@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestComponent;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -74,7 +75,13 @@ class ForwardedHeadersIntegrationTest {
     registry.add("spring.mongodb.uri", MONGO_DB_CONTAINER::getReplicaSetUrl);
   }
 
-  /** Echoes what the app sees of the request's origin; test-only. */
+  /**
+   * Echoes what the app sees of the request's origin; test-only. {@code @TestComponent} keeps
+   * component scanning from registering it in every other test context (Boot's
+   * TestTypeExcludeFilter doesn't recognize this enclosing class as a test: its {@code @Test}
+   * methods are all in {@code @Nested} classes); the {@code @Import} above registers it here.
+   */
+  @TestComponent
   @RestController
   static class PeerProbe {
     @GetMapping("/test-only/peer")
