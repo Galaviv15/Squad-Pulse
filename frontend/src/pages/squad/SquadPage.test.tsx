@@ -1,6 +1,15 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import { AGE_DEBOUNCE_MS } from "@/components/squad/AgeRangeFilter";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser, PermissionLevel } from "@/lib/auth/currentUser";
@@ -16,6 +25,9 @@ import {
   summaryReturns,
 } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/SquadPage"));
 
 const LIST = "/squad/players";
 const photo = (id: string) => `/squad/players/${id}/photo`;
