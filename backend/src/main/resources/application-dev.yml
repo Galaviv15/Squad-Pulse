@@ -1,0 +1,17 @@
+# Local development profile (KAN-56): ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+#
+# The Vite dev server serves the SPA over HTTPS and proxies the API here over plain http, adding
+# X-Forwarded-For / -Host / -Port / -Proto (xfwd in frontend/vite.config.ts). Honoring them makes
+# the request look like the browser's https://localhost:5173 one, so URLs the backend builds from
+# the request (the Location of POST /squad/players) point at the dev server.
+#
+# Only in this profile, never by default: trusting forwarded headers lets whoever sends them choose
+# the scheme, host and client address the app sees. "native" = Tomcat's RemoteIpValve, which trusts
+# them only from server.tomcat.remoteip.internal-proxies (Boot's default: loopback and private
+# ranges), so a request from anywhere else keeps its real peer address — unlike "framework"
+# (Spring's ForwardedHeaderFilter), which trusts every sender. The login throttle keys on
+# getRemoteAddr(): through the proxy that is still the loopback address (the X-Forwarded-For Vite
+# adds), but a loopback client could pick its own by sending X-Forwarded-For — acceptable for local
+# development only.
+server:
+  forward-headers-strategy: native

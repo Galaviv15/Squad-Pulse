@@ -45,10 +45,13 @@ export default defineConfig(({ command, mode, isPreview }) => {
         // No path or cookie rewriting: the refresh cookie (Path=/auth, no Domain) must reach the
         // browser unchanged. changeOrigin stays false so the backend sees the dev server's Host,
         // as it will behind a production reverse proxy; e.g. the Location header of
-        // POST /squad/players is built from it and must point at this origin.
+        // POST /squad/players is built from it and must point at this origin. xfwd adds
+        // X-Forwarded-For / -Port / -Proto / -Host, so the backend's "dev" profile (which alone
+        // trusts them) builds https://localhost:5173/... URLs over this plain-http hop.
         [BACKEND_PATHS]: {
           target: backendUrl,
           changeOrigin: false,
+          xfwd: true,
         },
       },
     },
