@@ -479,7 +479,9 @@ describe("the card's permanent delete", () => {
       // Forward again, to the squad entry: rendered from history, without the notice.
       await act(() => router.navigate(1));
       expect(router.state.location.pathname).toBe("/app/squad");
-      expect(await screen.findByRole("radiogroup")).toBeInTheDocument();
+      expect(
+        await screen.findByRole("radiogroup", { name: he.squad.statusLabel }),
+      ).toBeInTheDocument();
       expect(screen.queryByText("דני לוי נמחק לצמיתות.")).toBeNull();
       expect(sent().slice(before)).not.toContain("GET /squad/players/p1");
     },

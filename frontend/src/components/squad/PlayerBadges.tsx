@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { MEDICAL_STATUS_KEYS } from "@/lib/squad/labels";
 import type { MedicalStatus, Position } from "@/lib/squad/types";
+import { cn } from "@/lib/utils";
 
 /** A missing value: a muted dash. */
 export function None() {
@@ -10,20 +11,23 @@ export function None() {
 
 /**
  * A player's position chips, in LTR islands (the codes stay in English): the primary filled, the
- * secondary outlined. A dash when there's neither.
+ * secondary outlined. A dash when there's neither. `className` adds to the chips' row (e.g.
+ * flex-wrap where it's narrow).
  */
 export function PositionChips({
   primary,
   secondary,
+  className,
 }: {
   primary: Position | null;
   secondary: Position | null;
+  className?: string;
 }) {
   if (primary === null && secondary === null) {
     return <None />;
   }
   return (
-    <div className="flex items-center gap-1.5">
+    <div className={cn("flex items-center gap-1.5", className)}>
       {primary !== null && <Badge dir="ltr">{primary}</Badge>}
       {secondary !== null && (
         <Badge variant="outline" dir="ltr">
