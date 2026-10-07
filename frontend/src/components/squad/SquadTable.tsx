@@ -1,8 +1,8 @@
 import { User } from "lucide-react";
-import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router";
 import { ImageOrInitials } from "@/components/ImageOrInitials";
+import { isOpenClick } from "./openClick";
 import { MedicalStatusBadge, None, PositionChips, ReleasedBadge } from "./PlayerBadges";
 import { PlayerActionsMenu } from "./PlayerActionsMenu";
 import { playerActions, type PlayerDialogKind } from "./playerActions";
@@ -34,10 +34,11 @@ const COLUMN_KEYS = [
 /**
  * The squad table: one row per player, in the order given (the server's squad order: never
  * re-sorted here). The name is a link to the player's card, the keyboard path; a click anywhere
- * else on the row opens it too, as a mouse convenience. A released player's row is dimmed and
- * carries a "משוחרר" pill, so it isn't marked by color alone. The last column is the row's actions
- * menu (playerActions), never dimmed; its in-place items go to `onDialog`, whose host (the squad
- * page) renders the dialog, so it outlives the table (e.g. when the list empties).
+ * else on the row opens it too, as a mouse convenience (isOpenClick, shared with the cards). A
+ * released player's row is dimmed and carries a "משוחרר" pill, so it isn't marked by color alone.
+ * The last column is the row's actions menu (playerActions), never dimmed; its in-place items go
+ * to `onDialog`, whose host (the squad page) renders the dialog, so it outlives the table (e.g.
+ * when the list empties).
  */
 export function SquadTable({
   players,
@@ -50,25 +51,6 @@ export function SquadTable({
   const navigate = useNavigate();
   const { permissionLevel } = useCurrentUser();
   const today = new Date();
-
-  function openFromRow(event: MouseEvent<HTMLTableRowElement>, player: Player) {
-    const { target } = event;
-    // React bubbles a click inside a portal (the actions menu's popup) up the component tree to
-    // this row, though the popup isn't inside the row in the DOM: only a click in the row counts.
-    // (The dialogs are rendered by the page, outside the table, so their clicks never get here.)
-    if (!(target instanceof Element) || !event.currentTarget.contains(target)) {
-      return;
-    }
-    // A link or button (the name, the menu's trigger) acts by itself, and a click that ends a
-    // text selection isn't an "open" click.
-    if (target.closest("a, button")) {
-      return;
-    }
-    if ((window.getSelection()?.toString() ?? "") !== "") {
-      return;
-    }
-    void navigate(playerPath(player.id));
-  }
 
   return (
     <Table>
@@ -96,7 +78,11 @@ export function SquadTable({
               key={player.id}
               data-released={!player.active || undefined}
               className="h-[52px] cursor-pointer data-released:[&>td:not([data-actions])]:opacity-60"
-              onClick={(event) => openFromRow(event, player)}
+              onClick={(event) => {
+                if (isOpenClick(event)) {
+                  void navigate(playerPath(player.id));
+                }
+              }}
             >
               <TableCell className="px-4 font-semibold tabular-nums">
                 {player.jerseyNumber === null ? (
