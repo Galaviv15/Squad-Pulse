@@ -1,4 +1,5 @@
 import type { Line, MedicalStatus, PlayerStatus, PreferredFoot } from "./types";
+import type { SquadView } from "./view";
 
 /*
  * The squad enums' i18n keys. Records over the full unions, so a new backend value is a compile
@@ -21,6 +22,12 @@ export const PLAYER_STATUS_KEYS: Record<PlayerStatus, string> = {
   active: "squad.status.active",
   released: "squad.status.released",
   all: "squad.status.all",
+};
+
+/** The view toggle's options (their aria-label and tooltip). */
+export const SQUAD_VIEW_KEYS: Record<SquadView, string> = {
+  list: "squad.views.list",
+  cards: "squad.views.cards",
 };
 
 /** The empty list's text when no filter-bar filter is set, by status. */

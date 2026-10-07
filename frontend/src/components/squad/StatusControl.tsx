@@ -3,6 +3,8 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 import { useTranslation } from "react-i18next";
 import { PLAYER_STATUS_KEYS } from "@/lib/squad/labels";
 import { PLAYER_STATUSES, type PlayerStatus } from "@/lib/squad/types";
+import { cn } from "@/lib/utils";
+import { SEGMENTED_GROUP_CLASSES, SEGMENTED_OPTION_CLASSES } from "./segmentedControl";
 
 function isPlayerStatus(value: unknown): value is PlayerStatus {
   return PLAYER_STATUSES.some((status) => status === value);
@@ -32,13 +34,16 @@ export function StatusControl({
           onChange(next);
         }
       }}
-      className="inline-flex h-9 items-stretch gap-0.5 rounded-lg bg-muted p-[3px]"
+      className={SEGMENTED_GROUP_CLASSES}
     >
       {PLAYER_STATUSES.map((status) => (
         <Radio.Root
           key={status}
           value={status}
-          className="flex cursor-pointer items-center rounded-md border border-transparent px-3 text-sm font-medium text-muted-foreground transition-colors outline-none select-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 data-checked:border-border data-checked:bg-card data-checked:font-semibold data-checked:text-foreground"
+          className={cn(
+            SEGMENTED_OPTION_CLASSES,
+            "px-3 text-sm font-medium data-checked:font-semibold",
+          )}
         >
           {t(PLAYER_STATUS_KEYS[status])}
         </Radio.Root>

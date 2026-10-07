@@ -5,10 +5,13 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router";
 import { FormNotice } from "@/components/form/FormMessage";
 import { PlayerActionDialog, type PlayerDialogTarget } from "@/components/squad/PlayerActionDialog";
+import type { PlayerDialogKind } from "@/components/squad/playerActions";
 import { focusBack, useDialogHost } from "@/components/squad/playerDialogs";
+import { SquadCards } from "@/components/squad/SquadCards";
 import { SquadFilterBar } from "@/components/squad/SquadFilterBar";
 import { SquadTable } from "@/components/squad/SquadTable";
 import { StatusControl } from "@/components/squad/StatusControl";
+import { ViewToggle } from "@/components/squad/ViewToggle";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useCurrentUser } from "@/lib/auth/currentUser";
 import { hasPermission } from "@/lib/auth/permissions";
@@ -17,26 +20,29 @@ import { EMPTY_SQUAD_KEYS } from "@/lib/squad/labels";
 import { NEW_PLAYER_PATH } from "@/lib/squad/paths";
 import { onPlayerDeleted, useSquadPlayers } from "@/lib/squad/players";
 import { deletedPlayerNameFromState } from "@/lib/squad/routeState";
-import { useSquadFilters } from "@/lib/squad/useSquadFilters";
+import type { Player } from "@/lib/squad/types";
+import { useSquadPageQuery } from "@/lib/squad/useSquadPageQuery";
 import { cn } from "@/lib/utils";
 
 /**
- * /app/squad: the squad table. The status control and the "add player" link (EDIT_FULL and up),
- * the filter bar, the count, and the table. The filters live in the URL (useSquadFilters); the
- * list comes from useSquadPlayers, in the server's order. Its title comes from the route.
+ * /app/squad: the squad. The status control, the view toggle and the "add player" link (EDIT_FULL
+ * and up), the filter bar, the count, and the list as a table or as cards. The filters and the
+ * view live in the URL (useSquadPageQuery); the list comes from useSquadPlayers, in the server's
+ * order, the same for both views (switching views doesn't refetch it). Its title comes from the
+ * route.
  *
- * The rows' in-place actions (release, re-activate, delete) open their dialog here, outside the
- * table. "<name> נמחק לצמיתות." shows above the table after a delete, from a row or (carried in
- * router state) from the card.
+ * The rows' and cards' in-place actions (release, re-activate, delete) open their dialog here,
+ * outside the list. "<name> נמחק לצמיתות." shows above the toolbar after a delete, from a row, a
+ * card or (carried in router state) the player card.
  */
 export function SquadPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { permissionLevel } = useCurrentUser();
-  // Before useSquadFilters: if both rewrite the URL on mount, the filters' normalization (which
-  // drops the state too) is the last word.
+  // Before useSquadPageQuery: if both rewrite the URL on mount, the page query's normalization
+  // (which drops the state too) is the last word.
   const [deletedName, setDeletedName] = useDeletedPlayerNotice();
-  const { filters, setFilters, clearFilters } = useSquadFilters();
+  const { filters, setFilters, clearFilters, view, setView } = useSquadPageQuery();
   const { dialog, openDialog, close, closed } = useDialogHost<PlayerDialogTarget>();
   const players = useSquadPlayers(filters);
   const [clearCount, setClearCount] = useState(0);
@@ -47,39 +53,44 @@ export function SquadPage() {
   }
 
   const { data } = players;
+  const busy = players.isPlaceholderData;
+  const onDialog = (kind: PlayerDialogKind, player: Player, trigger: HTMLElement | null) =>
+    openDialog({ kind, player }, focusBack(trigger));
   let content: ReactNode;
   if (data === undefined) {
     content =
       players.isError && !players.isFetching ? (
-        <TableMessage>
+        <ListMessage busy={busy}>
           <p>{t("squad.loadError")}</p>
           <Button variant="outline" size="sm" onClick={() => void players.refetch()}>
             {t("squad.retry")}
           </Button>
-        </TableMessage>
+        </ListMessage>
       ) : (
-        <TableMessage>
+        <ListMessage busy={busy}>
           <p role="status">{t("squad.loading")}</p>
-        </TableMessage>
+        </ListMessage>
       );
   } else if (data.length === 0) {
     const filtered = hasFilterBarFilters(filters);
     content = (
-      <TableMessage>
+      <ListMessage busy={busy}>
         <p>{t(filtered ? "squad.empty.filtered" : EMPTY_SQUAD_KEYS[filters.status])}</p>
         {filtered && (
           <Button variant="outline" size="sm" onClick={clear}>
             {t("squad.filters.clear")}
           </Button>
         )}
-      </TableMessage>
+      </ListMessage>
     );
+  } else if (view === "cards") {
+    // No frame: the cards are cards themselves.
+    content = <SquadCards players={data} busy={busy} onDialog={onDialog} />;
   } else {
     content = (
-      <SquadTable
-        players={data}
-        onDialog={(kind, player, trigger) => openDialog({ kind, player }, focusBack(trigger))}
-      />
+      <ListFrame busy={busy}>
+        <SquadTable players={data} onDialog={onDialog} />
+      </ListFrame>
     );
   }
 
@@ -96,13 +107,16 @@ export function SquadPage() {
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <StatusControl value={filters.status} onChange={(status) => setFilters({ status })} />
-        {hasPermission(permissionLevel, "EDIT_FULL") && (
-          // A real link styled as a button: Base UI's Button would give the <a> role="button".
-          <Link to={NEW_PLAYER_PATH} className={buttonVariants()}>
-            <Plus aria-hidden="true" />
-            {t("squad.addPlayer")}
-          </Link>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <ViewToggle value={view} onChange={setView} />
+          {hasPermission(permissionLevel, "EDIT_FULL") && (
+            // A real link styled as a button: Base UI's Button would give the <a> role="button".
+            <Link to={NEW_PLAYER_PATH} className={buttonVariants()}>
+              <Plus aria-hidden="true" />
+              {t("squad.addPlayer")}
+            </Link>
+          )}
+        </div>
       </div>
       <SquadFilterBar
         filters={filters}
@@ -118,15 +132,7 @@ export function SquadPage() {
       >
         {data !== undefined && data.length > 0 && t("squad.count", { count: data.length })}
       </p>
-      <div
-        aria-busy={players.isPlaceholderData || undefined}
-        className={cn(
-          "overflow-hidden rounded-lg border border-border bg-card transition-opacity",
-          players.isPlaceholderData && "opacity-60",
-        )}
-      >
-        {content}
-      </div>
+      {content}
       {dialog !== null && (
         <PlayerActionDialog
           key={dialog.key}
@@ -180,10 +186,31 @@ function useDeletedPlayerNotice() {
   return notice;
 }
 
-function TableMessage({ children }: { children: ReactNode }) {
+/**
+ * The table's frame, and the messages' (loading, error, empty) in both views: a bordered card,
+ * dimmed and aria-busy while a new filter's list loads (the previous one still shown). The cards
+ * view has none; SquadCards marks its grid busy the same way.
+ */
+function ListFrame({ busy, children }: { busy: boolean; children: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center text-sm text-muted-foreground">
+    <div
+      aria-busy={busy || undefined}
+      className={cn(
+        "overflow-hidden rounded-lg border border-border bg-card transition-opacity",
+        busy && "opacity-60",
+      )}
+    >
       {children}
     </div>
+  );
+}
+
+function ListMessage({ busy, children }: { busy: boolean; children: ReactNode }) {
+  return (
+    <ListFrame busy={busy}>
+      <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center text-sm text-muted-foreground">
+        {children}
+      </div>
+    </ListFrame>
   );
 }

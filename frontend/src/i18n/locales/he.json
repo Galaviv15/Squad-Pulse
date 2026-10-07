@@ -74,6 +74,11 @@
     "noPermission": "אין לך הרשאה לפעולה הזו.",
     "backToSquad": "חזרה לסגל",
     "statusLabel": "סטטוס שחקנים",
+    "viewLabel": "תצוגה",
+    "views": {
+      "list": "רשימה",
+      "cards": "כרטיסיות"
+    },
     "status": {
       "active": "פעילים",
       "released": "משוחררים",
@@ -112,6 +117,10 @@
       "weight": "משקל (ק״ג)",
       "foot": "רגל",
       "medicalStatus": "מצב רפואי"
+    },
+    "stats": {
+      "height": "גובה",
+      "weight": "משקל"
     },
     "loading": "טוען שחקנים…",
     "loadError": "לא הצלחנו לטעון את רשימת השחקנים.",
