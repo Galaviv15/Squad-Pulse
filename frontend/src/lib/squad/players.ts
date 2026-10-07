@@ -15,8 +15,8 @@ import type { Player } from "./types";
 
 /**
  * The prefix of every squad query's key: the lists (SQUAD_PLAYERS_QUERY_KEY), each player's card
- * (playerQueryKey) and KAN-51's summary (["squad", "summary"]). Invalidating it after a player
- * write refetches all of them.
+ * (playerQueryKey) and the dashboard's summary (SQUAD_SUMMARY_QUERY_KEY, ./summary.ts).
+ * Invalidating it after a player write refetches all of them.
  */
 export const SQUAD_QUERY_KEY = ["squad"] as const;
 
