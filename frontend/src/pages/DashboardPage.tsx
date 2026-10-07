@@ -1,8 +1,17 @@
-import { useTranslation } from "react-i18next";
+import { ComingSoonCards, WeeklySchedulePlaceholder } from "@/components/dashboard/ComingSoon";
+import { SquadSummaryCards } from "@/components/dashboard/SquadSummaryCards";
 
-/** /app: a stub until the dashboard (KAN-51). Its title comes from the route (the shell's <h1>). */
+/**
+ * /app: the dashboard. The squad row (KPI tiles and the by-line donut, from GET /squad/summary),
+ * then the "coming soon" placeholders, which need no data and show at once, whatever the summary's
+ * state. Its title comes from the route (the shell's <h1>); the cards' titles are <h2>s.
+ */
 export function DashboardPage() {
-  const { t } = useTranslation();
-
-  return <p className="text-sm text-muted-foreground">{t("dashboard.stub")}</p>;
+  return (
+    <div className="flex flex-col gap-5">
+      <SquadSummaryCards />
+      <ComingSoonCards />
+      <WeeklySchedulePlaceholder />
+    </div>
+  );
 }

@@ -8,7 +8,13 @@ import type { Player } from "@/lib/squad/types";
 import { deferred } from "@/test/deferred";
 import { apiError, imageReturns, loginReturns, meReturns, refreshReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { playerBody, playerReturns, playersReturn, recordedPlayers } from "@/test/msw/squad";
+import {
+  playerBody,
+  playerReturns,
+  playersReturn,
+  recordedPlayers,
+  summaryReturns,
+} from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 const LIST = "/squad/players";
@@ -808,6 +814,8 @@ describe("after a logout", () => {
         gate: gate.promise,
         onRequest: (query) => queries.push(query.toString()),
       }),
+      // The login lands on /app, whose dashboard requests the squad summary.
+      summaryReturns(),
     );
     fireEvent.change(screen.getByLabelText(he.auth.fields.email), {
       target: { value: "coach@example.com" },

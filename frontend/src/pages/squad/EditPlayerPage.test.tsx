@@ -8,7 +8,13 @@ import type { Player } from "@/lib/squad/types";
 import { deferred } from "@/test/deferred";
 import { apiError, meReturns, refreshReturns } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { conflict, playerBody, playerReturns, updatePlayerReturns } from "@/test/msw/squad";
+import {
+  conflict,
+  playerBody,
+  playerReturns,
+  summaryReturns,
+  updatePlayerReturns,
+} from "@/test/msw/squad";
 import { combobox, errorOf, fields, input, submitButton, type } from "@/test/playerForm";
 import { renderWithProviders } from "@/test/render";
 
@@ -154,6 +160,7 @@ describe("the edit form", () => {
       meReturns(),
       playerReturns(playerBody({ fullName: "Name B", version: 2 }), { gate: fresh.promise }),
       update.handler,
+      summaryReturns(),
     );
     const { router, queryClient } = renderWithProviders({ initialEntries: ["/app"] });
     await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
@@ -184,6 +191,7 @@ describe("the edit form", () => {
           ? apiError(500, "Internal Server Error", "An unexpected error occurred")
           : HttpResponse.json(playerBody({ fullName: "Name B", version: 2 })),
       ),
+      summaryReturns(),
     );
     const { router, queryClient } = renderWithProviders({ initialEntries: ["/app"] });
     await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });

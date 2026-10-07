@@ -22,7 +22,49 @@
     "squad": "סגל"
   },
   "dashboard": {
-    "stub": "סיכום הסגל יופיע כאן בקרוב."
+    "activePlayers": "שחקנים פעילים",
+    "toSquadTable": "לטבלת הסגל ←",
+    "averageAge": "גיל ממוצע",
+    "activePlayersOnly": "שחקנים פעילים בלבד",
+    "loadError": "לא הצלחנו לטעון את נתוני הסגל.",
+    "lines": {
+      "title": "פילוח לפי קווים",
+      "chartLabel": "פילוח הסגל הפעיל לפי קווים",
+      "centerUnit": "שחקנים",
+      "segmentTitle": "{{line}}: {{count}}",
+      "GOALKEEPERS": "שוערים",
+      "DEFENSE": "הגנה",
+      "MIDFIELD": "קישור",
+      "ATTACK": "התקפה"
+    },
+    "comingSoon": "בקרוב",
+    "placeholders": {
+      "training": {
+        "title": "האימון הבא",
+        "body": "לוח האימונים יופיע כאן כשמודול האימונים יהיה מוכן."
+      },
+      "match": {
+        "title": "המשחק הבא",
+        "body": "המשחק הקרוב ופרטיו, מתוך לוח המשחקים."
+      },
+      "league": {
+        "title": "טבלת הליגה",
+        "body": "מיקום הקבוצה בטבלת הליגה יופיע כאן."
+      }
+    },
+    "weekly": {
+      "title": "לו״ז שבועי",
+      "caption": "השבוע הקרוב, נגזר מהלו״ז המלא: אימונים, משחקים ואירועי מועדון.",
+      "days": {
+        "sunday": "ראשון",
+        "monday": "שני",
+        "tuesday": "שלישי",
+        "wednesday": "רביעי",
+        "thursday": "חמישי",
+        "friday": "שישי",
+        "saturday": "שבת"
+      }
+    }
   },
   "squad": {
     "addPlayer": "הוספת שחקן",

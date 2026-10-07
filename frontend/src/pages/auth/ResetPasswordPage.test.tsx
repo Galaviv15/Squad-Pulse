@@ -5,6 +5,7 @@ import he from "@/i18n/locales/he.json";
 import { deferred } from "@/test/deferred";
 import { accessToken, apiError, meReturns, refreshRefused } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
+import { summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 /** A POST handler answering with `answer`, recording each request's JSON body. */
@@ -55,7 +56,8 @@ describe("ResetPasswordPage", () => {
   it("sets the password, logs in with it and goes to next", async () => {
     const resets = postAnswering("/auth/reset-password", noContent);
     const logins = postAnswering("/auth/login", () => accessToken("t1"));
-    server.use(meReturns());
+    // The dashboard at /app requests the squad summary.
+    server.use(meReturns(), summaryReturns());
     const { router } = await renderReset("/app/reset-password?next=%2Fapp%3Fview%3Dall");
 
     fillIn({ email: " new@example.com " });
@@ -75,7 +77,8 @@ describe("ResetPasswordPage", () => {
   it("goes to /app without next", async () => {
     postAnswering("/auth/reset-password", noContent);
     postAnswering("/auth/login", () => accessToken("t1"));
-    server.use(meReturns());
+    // The dashboard at /app requests the squad summary.
+    server.use(meReturns(), summaryReturns());
     const { router } = await renderReset();
 
     fillIn();

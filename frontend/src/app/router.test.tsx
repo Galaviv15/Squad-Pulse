@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
-import { playerBody, playerReturns, playersReturn } from "@/test/msw/squad";
+import { playerBody, playerReturns, playersReturn, summaryReturns } from "@/test/msw/squad";
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
 
@@ -14,6 +14,7 @@ describe("routes", () => {
   });
 
   it("redirects / to /app", async () => {
+    server.use(summaryReturns());
     const { router } = renderWithProviders({ initialEntries: ["/"] });
 
     expect(await screen.findByRole("heading", { name: he.nav.dashboard })).toBeInTheDocument();
@@ -21,6 +22,7 @@ describe("routes", () => {
   });
 
   it("renders /app inside the shell", async () => {
+    server.use(summaryReturns());
     renderWithProviders({ initialEntries: ["/app"] });
 
     expect(
@@ -28,7 +30,12 @@ describe("routes", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("navigation", { name: he.shell.navLabel })).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByText(he.dashboard.stub)).toBeInTheDocument();
+    expect(
+      await within(screen.getByRole("main")).findByRole("heading", {
+        level: 2,
+        name: he.dashboard.lines.title,
+      }),
+    ).toBeInTheDocument();
   });
 
   // React Router ranks a static segment above a dynamic one, so "new" is never a :playerId,
@@ -114,6 +121,7 @@ describe("routes", () => {
     // index.html sets <html lang="he" dir="rtl">, but Vitest doesn't load index.html, so set it
     // here as the page would and check that rendering the app leaves it alone.
     document.documentElement.setAttribute("dir", "rtl");
+    server.use(summaryReturns());
     renderWithProviders({ initialEntries: ["/app"] });
 
     await screen.findByRole("heading", { name: he.nav.dashboard });

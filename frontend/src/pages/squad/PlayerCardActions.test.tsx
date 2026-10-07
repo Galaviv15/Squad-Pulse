@@ -15,6 +15,7 @@ import {
   reactivateReturns,
   recordedPlayers,
   releaseReturns,
+  summaryReturns,
 } from "@/test/msw/squad";
 import { watchLiveInsertion } from "@/test/liveRegion";
 import { renderWithProviders } from "@/test/render";
@@ -443,7 +444,8 @@ describe("the card's permanent delete", () => {
       const player = playerBody({ fullName: "דני לוי" });
       const { router } = await renderCard(player, { entries: ["/app"] });
       const remove = deleteReturns(player.id, answer);
-      server.use(remove.handler, recordedPlayers([]).handler);
+      // Back to /app below shows the dashboard, which requests the squad summary.
+      server.use(remove.handler, recordedPlayers([]).handler, summaryReturns());
       const dialog = await openDialog(he.squad.actions.delete);
       const before = sent().length;
 

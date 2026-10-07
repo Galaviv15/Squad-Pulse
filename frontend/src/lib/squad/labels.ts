@@ -1,4 +1,4 @@
-import type { MedicalStatus, PlayerStatus, PreferredFoot } from "./types";
+import type { Line, MedicalStatus, PlayerStatus, PreferredFoot } from "./types";
 
 /*
  * The squad enums' i18n keys. Records over the full unions, so a new backend value is a compile
@@ -28,4 +28,12 @@ export const EMPTY_SQUAD_KEYS: Record<PlayerStatus, string> = {
   active: "squad.empty.active",
   released: "squad.empty.released",
   all: "squad.empty.all",
+};
+
+/** The dashboard's line names (legend, segment titles), in LINES order. */
+export const LINE_KEYS: Record<Line, string> = {
+  GOALKEEPERS: "dashboard.lines.GOALKEEPERS",
+  DEFENSE: "dashboard.lines.DEFENSE",
+  MIDFIELD: "dashboard.lines.MIDFIELD",
+  ATTACK: "dashboard.lines.ATTACK",
 };

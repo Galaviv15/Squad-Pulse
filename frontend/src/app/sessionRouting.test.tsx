@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import he from "@/i18n/locales/he.json";
 import {
   authSession,
@@ -21,7 +21,14 @@ import {
   refreshReturns,
 } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
+import { summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
+
+// Most of these tests end on /app, whose dashboard requests GET /squad/summary as soon as it
+// shows: answer it everywhere, as any test landing on /app must.
+beforeEach(() => {
+  server.use(summaryReturns());
+});
 
 /** The shell's page title at /app: what a logged-in user sees. */
 const dashboardHeading = { level: 1, name: he.nav.dashboard } as const;

@@ -13,18 +13,18 @@ import {
   refreshReturns,
 } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { playersReturn } from "@/test/msw/squad";
+import { playersReturn, summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 const LOGO = "/clubs/me/logo";
 const PHOTO = "/users/me/photo";
 
 /**
- * Logged in at `path`, with /me answering currentUserBody(user) and an empty squad. Waits for the
- * shell's <h1>.
+ * Logged in at `path`, with /me answering currentUserBody(user), an empty squad and the dashboard's
+ * summary. Waits for the shell's <h1>.
  */
 async function renderShell(path = "/app", user: Partial<CurrentUser> = {}) {
-  server.use(refreshReturns("t1"), meReturns(user), playersReturn([]));
+  server.use(refreshReturns("t1"), meReturns(user), playersReturn([]), summaryReturns());
   const rendered = renderWithProviders({ initialEntries: [path] });
   await screen.findByRole("heading", { level: 1 });
   return rendered;
@@ -99,6 +99,7 @@ describe("the app shell", () => {
         await gate.promise;
         return HttpResponse.json(currentUserBody());
       }),
+      summaryReturns(),
     );
     renderWithProviders({ initialEntries: ["/app"] });
 
@@ -139,7 +140,8 @@ describe("the club logo and the user photo", () => {
       club: { id: "c1", name: "Test FC", hasLogo: false },
     });
 
-    expect(fetchedPaths()).toEqual(["/auth/refresh", "/auth/users/me"]);
+    // The dashboard's own request, and no image.
+    expect(fetchedPaths()).toEqual(["/auth/refresh", "/auth/users/me", "/squad/summary"]);
     expect(screen.getByText("TF")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("DC")).toHaveAttribute("aria-hidden", "true");
     expect(images()).toEqual([]);
