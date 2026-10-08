@@ -16,3 +16,9 @@ dist-ssr/
 
 # Logs
 npm-debug.log*
+
+# Playwright E2E output (npm run e2e) and the E2E backend / seeder logs
+test-results/
+playwright-report/
+blob-report/
+e2e/.logs/

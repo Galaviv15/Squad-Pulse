@@ -1,0 +1,6 @@
+# The E2E seeder's profile (auth.E2eSeeder, test sources only, KAN-53): a one-shot process that
+# seeds the E2E database and exits — no web server of its own, like application-bootstrap.yml.
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"

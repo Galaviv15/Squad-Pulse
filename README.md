@@ -86,12 +86,13 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 
 ## CI
 
-One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. Both jobs run on `ubuntu-24.04`, pinned on purpose instead of `ubuntu-latest`, so the runner OS (and its Docker, which Testcontainers uses) changes only in a PR that changes it; moving to `ubuntu-26.04` (Docker 29) is a deliberate future step. Two independent jobs run in parallel:
+One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. All jobs run on `ubuntu-24.04`, pinned on purpose instead of `ubuntu-latest`, so the runner OS (and its Docker, which Testcontainers uses) changes only in a PR that changes it; moving to `ubuntu-26.04` (Docker 29) is a deliberate future step. Three independent jobs run in parallel:
 
 - **`backend-ci`** — JDK 21 (Temurin): `./mvnw spotless:check`, then `./mvnw verify`.
 - **`frontend-ci`** — Node 22: `npm ci`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`.
+- **`e2e`** — the Playwright suite (see [End-to-end tests](#end-to-end-tests)): a throwaway `.env` with random values, `docker compose up -d --wait`, a self-signed certificate, the backend jar, the browsers (cached per Playwright version), `npm run e2e`. On failure it uploads the HTML report, traces, videos and the backend / seeder logs (artifact `e2e-results`, kept 7 days). Not a required check.
 
-No Docker build or CD yet. Integration tests start their own MongoDB and Redis through Testcontainers (using the runner's Docker), so the workflow needs no service containers. Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches).
+No Docker build or CD yet. Integration tests start their own MongoDB and Redis through Testcontainers (using the runner's Docker), so the workflow needs no service containers (the `e2e` job starts `docker-compose.yml`'s own). Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches); `e2e` isn't required (yet).
 
 ## Roadmap
 
@@ -271,6 +272,23 @@ java -jar target/squadpulse-backend-0.1.0-SNAPSHOT.jar --spring.profiles.active=
 It then prompts (no echo) for the owner secret and, only if that's right, for the Club Manager's initial password, twice. Secrets are never accepted as arguments — those are visible to other local users (e.g. via `ps`) and end up in shell history — so `--owner-secret` / `--manager-password` are rejected outright. Run it directly in a terminal: prompting needs one, so it refuses to run through a pipe, `./mvnw spring-boot:run` or an IDE run configuration.
 
 In production, give `OWNER_BOOTSTRAP_SECRET` only to the environment of the bootstrap run, not to the running server's. (Locally, the `.env` import puts it in every process's Spring `Environment` as an unused raw value; nothing outside the `bootstrap` profile reads it.)
+
+### End-to-end tests
+
+A small [Playwright](https://playwright.dev/) suite (`frontend/e2e/`, KAN-53) runs the real stack together in Chromium and WebKit: login → shell → squad table, a reload keeping the session (the `Secure` refresh cookie stored and sent), a silent refresh after the access token really expires, logout (incl. that the server revoked the old refresh token) and a wrong password. Detailed UI cases stay in Vitest + MSW.
+
+Prerequisites: the containers running (`docker compose up -d`, with the root `.env`), the local certificate (`npm run dev:cert`, once — see step 4 above) and the browsers, once per Playwright version: `cd frontend && npx playwright install chromium webkit` (on Linux: `npx playwright install --with-deps chromium webkit`, which also installs their system packages).
+
+Run: `cd frontend && npm run e2e` (`npm run e2e:ui` for Playwright's UI mode). It:
+
+1. builds the backend jar and runs the E2E seeder once (`./mvnw -DskipTests package spring-boot:test-run -Dspring-boot.run.profiles=e2e-seed`): a test-sources-only class (`auth.E2eSeeder`) that wipes the E2E database and Redis database and creates one club with one admin through the real bootstrap service. It refuses to run unless the database name ends with `_e2e` and the Redis database isn't `0`;
+2. starts the backend **from the jar** (`dev` profile) on port **8081**, database **`squadpulse_e2e`**, Redis database **1** — so your dev backend (8080), database (`squadpulse`) and Redis database (0) are never touched — with a **10-second access-token lifetime**, so the expiry is real;
+3. builds the frontend and serves the bundle with `vite preview` over **HTTPS** on port **4174** (`SQUADPULSE_PREVIEW_HTTPS=1`; plain `npm run preview` stays http and needs no certificate), proxying the backend paths like the dev server;
+4. creates the players through the API, runs the tests, then stops both servers.
+
+Ports 8081 and 4174 must be free (a server already there fails the run rather than being reused). Output goes to `frontend/test-results/` (traces and videos of failed tests), `frontend/playwright-report/` (CI's HTML report) and `frontend/e2e/.logs/` (`backend.log`, `seed.log`), all git-ignored. Open a trace with `npx playwright show-trace test-results/<test>/trace.zip`. For E2E only, the failed-login limit is raised (repeated runs log in as the same admin from one address); the refresh cookie is never weakened.
+
+WebKit here is Playwright's WebKit build, not Safari on macOS: checking the app in Safari itself stays manual.
 
 ## Deployment notes
 

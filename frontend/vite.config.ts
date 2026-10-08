@@ -2,7 +2,7 @@ import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { loadEnv } from "vite";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { DEV_CERT_DIR, devHttpsOptions } from "./devHttps.ts";
 
 /**
@@ -25,6 +25,10 @@ export default defineConfig(({ command, mode, isPreview }) => {
   // "serve" too (and sets VITEST), and `vite preview` is a "serve" with isPreview; neither, nor a
   // build, may require a certificate (CI has none).
   const isDevServer = command === "serve" && !isPreview && !process.env.VITEST;
+  // `vite preview` serves HTTPS only when asked (the E2E suite, KAN-53, sets it): browsers keep
+  // the `Secure` refresh cookie only over https. Plain `npm run preview` stays http, with no
+  // certificate needed; when asked, a missing certificate fails the start, with no http fallback.
+  const isHttpsPreview = isPreview && env.SQUADPULSE_PREVIEW_HTTPS === "1";
 
   return {
     plugins: [react(), tailwindcss()],
@@ -55,8 +59,15 @@ export default defineConfig(({ command, mode, isPreview }) => {
         },
       },
     },
+    // Vite's preview takes proxy, cors (and https, when unset here) from `server` above, so the
+    // backend paths are proxied the same way, with no CORS headers.
+    preview: {
+      https: isHttpsPreview ? devHttpsOptions(DEV_CERT_DIR) : undefined,
+    },
     test: {
       environment: "jsdom",
+      // The Playwright suite (e2e/, `npm run e2e`) runs in real browsers, never under Vitest.
+      exclude: [...configDefaults.exclude, "e2e/**"],
       setupFiles: ["./src/test/setup.ts"],
     },
   };

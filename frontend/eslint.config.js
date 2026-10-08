@@ -26,6 +26,11 @@ export default defineConfig([
     },
   },
   {
+    // The Playwright suite and its config run in Node, not the browser.
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    languageOptions: { globals: globals.node },
+  },
+  {
     // shadcn/ui components are generated: some export their variants (e.g. buttonVariants)
     // next to the component. Scoped to src/components/ui only; keep the rule everywhere else.
     files: ["src/components/ui/**/*.{ts,tsx}"],
