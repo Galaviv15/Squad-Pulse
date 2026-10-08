@@ -272,6 +272,23 @@ It then prompts (no echo) for the owner secret and, only if that's right, for th
 
 In production, give `OWNER_BOOTSTRAP_SECRET` only to the environment of the bootstrap run, not to the running server's. (Locally, the `.env` import puts it in every process's Spring `Environment` as an unused raw value; nothing outside the `bootstrap` profile reads it.)
 
+### End-to-end tests
+
+A small [Playwright](https://playwright.dev/) suite (`frontend/e2e/`, KAN-53) runs the real stack together in Chromium and WebKit: login → shell → squad table, a reload keeping the session (the `Secure` refresh cookie stored and sent), a silent refresh after the access token really expires, logout (incl. that the server revoked the old refresh token) and a wrong password. Detailed UI cases stay in Vitest + MSW.
+
+Prerequisites: the containers running (`docker compose up -d`, with the root `.env`), the local certificate (`npm run dev:cert`, once — see step 4 above) and the browsers, once per Playwright version: `cd frontend && npx playwright install chromium webkit` (on Linux: `npx playwright install --with-deps chromium webkit`, which also installs their system packages).
+
+Run: `cd frontend && npm run e2e` (`npm run e2e:ui` for Playwright's UI mode). It:
+
+1. builds the backend jar and runs the E2E seeder once (`./mvnw -DskipTests package spring-boot:test-run -Dspring-boot.run.profiles=e2e-seed`): a test-sources-only class (`auth.E2eSeeder`) that wipes the E2E database and Redis database and creates one club with one admin through the real bootstrap service. It refuses to run unless the database name ends with `_e2e` and the Redis database isn't `0`;
+2. starts the backend **from the jar** (`dev` profile) on port **8081**, database **`squadpulse_e2e`**, Redis database **1** — so your dev backend (8080), database (`squadpulse`) and Redis database (0) are never touched — with a **10-second access-token lifetime**, so the expiry is real;
+3. builds the frontend and serves the bundle with `vite preview` over **HTTPS** on port **4174** (`SQUADPULSE_PREVIEW_HTTPS=1`; plain `npm run preview` stays http and needs no certificate), proxying the backend paths like the dev server;
+4. creates the players through the API, runs the tests, then stops both servers.
+
+Ports 8081 and 4174 must be free (a server already there fails the run rather than being reused). Output goes to `frontend/test-results/` (traces and videos of failed tests), `frontend/playwright-report/` (CI's HTML report) and `frontend/e2e/.logs/` (`backend.log`, `seed.log`), all git-ignored. Open a trace with `npx playwright show-trace test-results/<test>/trace.zip`. For E2E only, the failed-login limit is raised (repeated runs log in as the same admin from one address); the refresh cookie is never weakened.
+
+WebKit here is Playwright's WebKit build, not Safari on macOS: checking the app in Safari itself stays manual.
+
 ## Deployment notes
 
 Nothing is deployed yet (Phase 6+). Things the deployment must respect:
