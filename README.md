@@ -86,12 +86,13 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 
 ## CI
 
-One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. Both jobs run on `ubuntu-24.04`, pinned on purpose instead of `ubuntu-latest`, so the runner OS (and its Docker, which Testcontainers uses) changes only in a PR that changes it; moving to `ubuntu-26.04` (Docker 29) is a deliberate future step. Two independent jobs run in parallel:
+One workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on PRs targeting `master` and on pushes to `master`. A new push to the same ref cancels the previous in-flight run. All jobs run on `ubuntu-24.04`, pinned on purpose instead of `ubuntu-latest`, so the runner OS (and its Docker, which Testcontainers uses) changes only in a PR that changes it; moving to `ubuntu-26.04` (Docker 29) is a deliberate future step. Three independent jobs run in parallel:
 
 - **`backend-ci`** — JDK 21 (Temurin): `./mvnw spotless:check`, then `./mvnw verify`.
 - **`frontend-ci`** — Node 22: `npm ci`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`.
+- **`e2e`** — the Playwright suite (see [End-to-end tests](#end-to-end-tests)): a throwaway `.env` with random values, `docker compose up -d --wait`, a self-signed certificate, the backend jar, the browsers (cached per Playwright version), `npm run e2e`. On failure it uploads the HTML report, traces, videos and the backend / seeder logs (artifact `e2e-results`, kept 7 days). Not a required check.
 
-No Docker build or CD yet. Integration tests start their own MongoDB and Redis through Testcontainers (using the runner's Docker), so the workflow needs no service containers. Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches).
+No Docker build or CD yet. Integration tests start their own MongoDB and Redis through Testcontainers (using the runner's Docker), so the workflow needs no service containers (the `e2e` job starts `docker-compose.yml`'s own). Branch protection on `master` should require both `backend-ci` and `frontend-ci` to pass before merging (GitHub → Settings → Branches); `e2e` isn't required (yet).
 
 ## Roadmap
 
