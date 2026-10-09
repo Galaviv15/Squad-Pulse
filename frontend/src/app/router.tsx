@@ -1,5 +1,6 @@
-import { createBrowserRouter, redirect, type RouteObject } from "react-router";
+import { createBrowserRouter, Navigate, type RouteObject } from "react-router";
 import { LoadingScreen } from "@/components/auth/StatusScreens";
+import { APP_HOME } from "@/lib/auth/paths";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { NotFoundInShellPage, NotFoundPage } from "@/pages/NotFoundPage";
 import { RouteErrorPage } from "@/pages/RouteErrorPage";
@@ -26,7 +27,9 @@ import { SessionGate } from "./SessionGate";
  * handle stays static.
  */
 export const routes: RouteObject[] = [
-  { path: "/", loader: () => redirect("/app") },
+  // An element, not a loader's redirect: a route with a loader and no element makes React Router
+  // warn (no element, no HydrateFallback) on a page load at /. Replace, so Back never returns to /.
+  { path: "/", element: <Navigate to={APP_HOME} replace /> },
   {
     path: "/app",
     element: <SessionGate />,
