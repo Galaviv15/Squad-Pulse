@@ -69,6 +69,12 @@ export default defineConfig(({ command, mode, isPreview }) => {
       // The Playwright suite (e2e/, `npm run e2e`) runs in real browsers, never under Vitest.
       exclude: [...configDefaults.exclude, "e2e/**"],
       setupFiles: ["./src/test/setup.ts"],
+      // Vitest 5.0 picks its reporter by environment: when std-env detects an AI agent
+      // (CLAUDECODE, AI_AGENT, ...) the default is "minimal", which is silent: "passed-only" and
+      // drops every console message of a passing test; the config's own `silent` doesn't reach
+      // it. Name the reporter, so console output shows wherever the suite runs. GitHub Actions
+      // keeps its annotations reporter, which Vitest otherwise adds there by default.
+      reporters: process.env.GITHUB_ACTIONS === "true" ? ["default", "github-actions"] : ["default"],
     },
   };
 });
