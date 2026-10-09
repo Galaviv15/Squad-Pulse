@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import he from "@/i18n/locales/he.json";
 import type { CurrentUser, Title } from "@/lib/auth/currentUser";
 import { deferred } from "@/test/deferred";
@@ -13,7 +13,7 @@ import {
   refreshReturns,
 } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
-import { playersReturn, summaryReturns } from "@/test/msw/squad";
+import { playerBody, playerReturns, playersReturn, summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
 const LOGO = "/clubs/me/logo";
@@ -237,6 +237,10 @@ describe("the club logo and the user photo", () => {
 });
 
 describe("navigation", () => {
+  // The card is a lazy page; load its chunk up front, so its first load doesn't count against
+  // findBy's wait.
+  beforeAll(() => import("@/pages/squad/PlayerCardPage"));
+
   it("marks the current page and moves with a click", async () => {
     const { router } = await renderShell("/app");
 
@@ -257,7 +261,11 @@ describe("navigation", () => {
   });
 
   it("keeps the squad link current below /app/squad", async () => {
+    // A player card: answer its request and wait for it, so nothing is left in flight.
+    const player = playerBody({ id: "x" });
+    server.use(playerReturns(player));
     await renderShell("/app/squad/x");
+    await screen.findByText(player.fullName);
 
     expect(navLink(he.nav.squad)).toHaveAttribute("aria-current", "page");
     expect(navLink(he.nav.dashboard)).not.toHaveAttribute("aria-current");

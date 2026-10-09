@@ -19,6 +19,8 @@ describe("routes", () => {
 
     expect(await screen.findByRole("heading", { name: he.nav.dashboard })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/app");
+    // Back must not return to /.
+    expect(router.state.historyAction).toBe("REPLACE");
   });
 
   it("renders /app inside the shell", async () => {
