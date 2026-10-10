@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { RouteObject } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import he from "@/i18n/locales/he.json";
@@ -39,9 +39,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * The error element is up and has logged the error. Every test that renders it waits for the log:
+ * it comes from an effect, which may run only after the alert is on screen; a log left for the
+ * cleanup would land after afterEach restored console.error, and fail the test.
+ */
+async function findErrorAlert() {
+  const alert = await screen.findByRole("alert");
+  await waitFor(() => expect(consoleError).toHaveBeenCalledWith(expect.any(String), chunkError));
+  return alert;
+}
+
 /** The error element is up, inside the shell, with the page's own title. */
 async function expectErrorInShell() {
-  const alert = await screen.findByRole("alert");
+  const alert = await findErrorAlert();
   expect(alert).toHaveTextContent(he.routeError.message);
   expect(within(alert).getByRole("button", { name: he.routeError.reload })).toBeInTheDocument();
   expect(screen.getByRole("main")).toContainElement(alert);
@@ -85,7 +96,7 @@ describe("a page whose code fails to load", () => {
       initialEntries: ["/app/squad"],
       routes: withFailingSquadChunk(appRoutes),
     });
-    await screen.findByRole("alert");
+    await findErrorAlert();
     const reload = vi.fn();
     // jsdom's location.reload can't be redefined, but the location object can be replaced.
     vi.stubGlobal("location", { ...window.location, reload });
@@ -101,7 +112,7 @@ describe("a page whose code fails to load", () => {
       initialEntries: ["/app/squad"],
       routes: withFailingSquadChunk(appRoutes),
     });
-    await screen.findByRole("alert");
+    await findErrorAlert();
 
     fireEvent.click(within(nav()).getByRole("link", { name: he.nav.dashboard }));
 
