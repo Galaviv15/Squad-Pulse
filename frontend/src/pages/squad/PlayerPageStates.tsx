@@ -6,7 +6,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
 import { useCurrentUser } from "@/lib/auth/currentUser";
 import { hasPermission } from "@/lib/auth/permissions";
-import { SQUAD_PATH } from "@/lib/squad/paths";
+import { squadReturnPath } from "@/lib/squad/squadReturnPath";
 import type { Player } from "@/lib/squad/types";
 
 /** A page-level message in a card panel: a state instead of the page's content. */
@@ -18,11 +18,14 @@ export function PageMessage({ children }: { children: ReactNode }) {
   );
 }
 
-/** "חזרה לסגל", as an outline button-styled link: 36px, or 40px beside other buttons (the card). */
+/**
+ * "חזרה לסגל", as an outline button-styled link: 36px, or 40px beside other buttons (the card). To
+ * the squad as last seen in this tab (its filters and view), else the bare squad.
+ */
 export function BackToSquadLink({ size = "sm" }: { size?: "sm" | "default" }) {
   const { t } = useTranslation();
   return (
-    <Link to={SQUAD_PATH} className={buttonVariants({ variant: "outline", size })}>
+    <Link to={squadReturnPath()} className={buttonVariants({ variant: "outline", size })}>
       {t("squad.backToSquad")}
     </Link>
   );

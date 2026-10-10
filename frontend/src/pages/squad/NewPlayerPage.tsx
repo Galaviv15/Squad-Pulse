@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router";
 import { PlayerForm } from "@/components/squad/PlayerForm";
 import { EMPTY_PLAYER_FORM, formValuesToCreateBody } from "@/lib/squad/form";
-import { playerPath, SQUAD_PATH } from "@/lib/squad/paths";
+import { playerPath } from "@/lib/squad/paths";
 import { useCreatePlayer } from "@/lib/squad/players";
+import { squadReturnPath } from "@/lib/squad/squadReturnPath";
 import { RequireEditFull } from "./PlayerPageStates";
 
 /**
@@ -27,7 +28,7 @@ function NewPlayerForm() {
       initialValues={EMPTY_PLAYER_FORM}
       save={(values) => create.mutateAsync(formValuesToCreateBody(values))}
       onSaved={(player) => void navigate(playerPath(player.id), { replace: true })}
-      cancelTo={SQUAD_PATH}
+      cancelTo={squadReturnPath()}
     />
   );
 }

@@ -26,7 +26,8 @@ import {
   type PlayerFormValues,
 } from "@/lib/squad/form";
 import { MEDICAL_STATUS_KEYS, PREFERRED_FOOT_KEYS } from "@/lib/squad/labels";
-import { playerPath, SQUAD_PATH } from "@/lib/squad/paths";
+import { playerPath } from "@/lib/squad/paths";
+import { squadReturnPath } from "@/lib/squad/squadReturnPath";
 import {
   MEDICAL_STATUSES,
   POSITIONS,
@@ -417,7 +418,7 @@ function SaveAlertMessage({
       return (
         <FormAlert
           action={
-            <Link to={SQUAD_PATH} className={linkClass}>
+            <Link to={squadReturnPath()} className={linkClass}>
               {t("squad.backToSquad")}
             </Link>
           }

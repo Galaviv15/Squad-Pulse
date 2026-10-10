@@ -48,6 +48,8 @@ export function SquadSummaryCards() {
       <div className="grid grid-cols-1 gap-5 @min-[500px]:grid-cols-2 @min-[1020px]:grid-cols-4">
         <Tile title={t("dashboard.activePlayers")}>
           <KpiNumber>{data.playerCount}</KpiNumber>
+          {/* The bare squad, never the last one seen: this tile counts the active players, which
+              a remembered view (e.g. the released players) would contradict. */}
           <Link to={SQUAD_PATH} className="w-fit text-sm font-medium text-primary hover:underline">
             {t("dashboard.toSquadTable")}
           </Link>

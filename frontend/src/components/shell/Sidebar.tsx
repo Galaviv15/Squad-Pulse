@@ -24,7 +24,11 @@ interface NavItem {
   end?: boolean;
 }
 
-/** The live pages. A new page gets its route (with a titleKey handle) and an entry here. */
+/**
+ * The live pages. A new page gets its route (with a titleKey handle) and an entry here. Each links
+ * to its page fresh: "סגל" is the bare squad, never the last filters and view seen (those are for
+ * the "חזרה לסגל" links), so clicking it on a filtered squad resets the filters.
+ */
 const NAV_ITEMS: NavItem[] = [
   { to: "/app", labelKey: "nav.dashboard", icon: LayoutDashboard, end: true },
   { to: "/app/squad", labelKey: "nav.squad", icon: Users },

@@ -6,6 +6,7 @@ import {
   squadFiltersToSearchParams,
   type SquadFilters,
 } from "./filters";
+import { rememberSquadPage } from "./squadReturnPath";
 import { parseSquadView, squadPageSearchParams, type SquadView } from "./view";
 
 export interface SquadPageQueryControl {
@@ -46,6 +47,12 @@ export function useSquadPageQuery(): SquadPageQueryControl {
       setSearchParams(normalized, { replace: true });
     }
   }, [current, normalized, setSearchParams]);
+
+  // The "back to the squad" links' target: the normalized filters and view, never the raw query
+  // (which, on a non-normalized URL's first render, the rewrite above hasn't replaced yet).
+  useEffect(() => {
+    rememberSquadPage(filters, view);
+  }, [filters, view]);
 
   const setFilters = useCallback(
     (patch: Partial<SquadFilters>) => {

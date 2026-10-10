@@ -10,13 +10,13 @@ import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/errors";
 import { PLAYER_ERROR_CODES } from "@/lib/squad/errorCodes";
 import { jerseyNumberError, toNumber } from "@/lib/squad/form";
-import { SQUAD_PATH } from "@/lib/squad/paths";
 import {
   SQUAD_QUERY_KEY,
   useDeletePlayer,
   useReactivatePlayer,
   useReleasePlayer,
 } from "@/lib/squad/players";
+import { squadReturnPath } from "@/lib/squad/squadReturnPath";
 import type { Player } from "@/lib/squad/types";
 import { cn } from "@/lib/utils";
 import { ActionDialog } from "./ActionDialog";
@@ -252,7 +252,8 @@ export function ActionError({
     );
   } else if (offer === "squad") {
     action = (
-      <Link to={SQUAD_PATH} className="self-start underline underline-offset-3">
+      // Never on the squad page itself (place "table" reloads instead), so never a stale value.
+      <Link to={squadReturnPath()} className="self-start underline underline-offset-3">
         {t("squad.backToSquad")}
       </Link>
     );

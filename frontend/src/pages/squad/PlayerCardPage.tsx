@@ -22,7 +22,7 @@ import { ageOn } from "@/lib/squad/age";
 import { formatIsoDate } from "@/lib/squad/dates";
 import { PREFERRED_FOOT_KEYS } from "@/lib/squad/labels";
 import { PHOTO_ACCEPT, photoFileError, photoUploadErrorKey } from "@/lib/squad/photo";
-import { editPlayerPath, playerPhotoPath, SQUAD_PATH } from "@/lib/squad/paths";
+import { editPlayerPath, playerPhotoPath } from "@/lib/squad/paths";
 import {
   onPlayerDeleted,
   usePlayer,
@@ -30,6 +30,7 @@ import {
   useUploadPlayerPhoto,
 } from "@/lib/squad/players";
 import { deletedPlayerState } from "@/lib/squad/routeState";
+import { squadReturnPath } from "@/lib/squad/squadReturnPath";
 import type { Player } from "@/lib/squad/types";
 import { cn } from "@/lib/utils";
 import { BackToSquadLink, PlayerQueryState } from "./PlayerPageStates";
@@ -105,7 +106,12 @@ function PlayerCard({ player }: { player: Player }) {
 
   async function leaveDeleted(deleted: Player) {
     // Away from the card first: while it's mounted, dropping its query would refetch it (a 404).
-    await navigate(SQUAD_PATH, { replace: true, state: deletedPlayerState(deleted.fullName) });
+    // To the squad as last seen in this tab; the squad page keeps its search when it clears the
+    // notice from the state.
+    await navigate(squadReturnPath(), {
+      replace: true,
+      state: deletedPlayerState(deleted.fullName),
+    });
     onPlayerDeleted(queryClient, deleted.id);
   }
 
