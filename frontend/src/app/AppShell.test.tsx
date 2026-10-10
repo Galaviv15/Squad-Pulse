@@ -16,6 +16,11 @@ import { server } from "@/test/msw/server";
 import { playerBody, playerReturns, playersReturn, summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
+// Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() =>
+  Promise.all([import("@/pages/squad/SquadPage"), import("@/pages/squad/PlayerCardPage")]),
+);
+
 const LOGO = "/clubs/me/logo";
 const PHOTO = "/users/me/photo";
 
@@ -237,10 +242,6 @@ describe("the club logo and the user photo", () => {
 });
 
 describe("navigation", () => {
-  // The card is a lazy page; load its chunk up front, so its first load doesn't count against
-  // findBy's wait.
-  beforeAll(() => import("@/pages/squad/PlayerCardPage"));
-
   it("marks the current page and moves with a click", async () => {
     const { router } = await renderShell("/app");
 

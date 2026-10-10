@@ -1,10 +1,20 @@
 import { screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
 import { playerBody, playerReturns, playersReturn, summaryReturns } from "@/test/msw/squad";
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() =>
+  Promise.all([
+    import("@/pages/squad/SquadPage"),
+    import("@/pages/squad/NewPlayerPage"),
+    import("@/pages/squad/PlayerCardPage"),
+    import("@/pages/squad/EditPlayerPage"),
+  ]),
+);
 
 describe("routes", () => {
   // /app needs a session: the app-load refresh succeeds and /me answers. The not-found page

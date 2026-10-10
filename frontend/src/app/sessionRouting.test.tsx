@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import he from "@/i18n/locales/he.json";
 import {
   authSession,
@@ -23,6 +23,9 @@ import {
 import { server } from "@/test/msw/server";
 import { summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/SquadPage"));
 
 // Most of these tests end on /app, whose dashboard requests GET /squad/summary as soon as it
 // shows: answer it everywhere, as any test landing on /app must.

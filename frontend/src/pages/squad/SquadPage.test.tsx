@@ -26,8 +26,14 @@ import {
 } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
-// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
-beforeAll(() => import("@/pages/squad/SquadPage"));
+// Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() =>
+  Promise.all([
+    import("@/pages/squad/SquadPage"),
+    import("@/pages/squad/NewPlayerPage"),
+    import("@/pages/squad/PlayerCardPage"),
+  ]),
+);
 
 const LIST = "/squad/players";
 const photo = (id: string) => `/squad/players/${id}/photo`;

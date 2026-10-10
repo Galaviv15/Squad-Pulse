@@ -27,8 +27,10 @@ import {
 import { combobox, errorOf, fields, input, submitButton, type } from "@/test/playerForm";
 import { renderWithProviders } from "@/test/render";
 
-// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
-beforeAll(() => import("@/pages/squad/EditPlayerPage"));
+// Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() =>
+  Promise.all([import("@/pages/squad/EditPlayerPage"), import("@/pages/squad/PlayerCardPage")]),
+);
 
 let fetchSpy: MockInstance<typeof fetch>;
 

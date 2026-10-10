@@ -29,8 +29,10 @@ import {
 import { watchLiveInsertion } from "@/test/liveRegion";
 import { renderWithProviders } from "@/test/render";
 
-// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
-beforeAll(() => import("@/pages/squad/PlayerCardPage"));
+// Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() =>
+  Promise.all([import("@/pages/squad/PlayerCardPage"), import("@/pages/squad/SquadPage")]),
+);
 
 let fetchSpy: MockInstance<typeof fetch>;
 

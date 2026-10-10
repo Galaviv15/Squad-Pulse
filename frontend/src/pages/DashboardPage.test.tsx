@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { onPlayerWritten } from "@/lib/squad/players";
 import { SQUAD_SUMMARY_QUERY_KEY } from "@/lib/squad/summary";
@@ -10,6 +10,9 @@ import { apiError, loggedIn } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
 import { playerBody, playersReturn, summaryBody, summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
+
+// Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
+beforeAll(() => import("@/pages/squad/SquadPage"));
 
 /** Logged in at /app with the summary answering `answer`; waits for the shell's <h1>. */
 async function renderDashboard(answer: Parameters<typeof summaryReturns>[0] = summaryBody()) {
