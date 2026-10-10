@@ -1,4 +1,6 @@
+import { cleanup, render } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
+import { createElement, useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiUrl } from "@/lib/config";
 import { server } from "./msw/server";
@@ -21,6 +23,18 @@ function checkNow() {
   beginUnhandledRequestGuardTest("unhandledRequestGuard.test.ts");
   return error;
 }
+
+/** Renders a component that sends an unmocked GET /squad/summary when it unmounts. */
+function renderRequestingOnUnmount() {
+  function RequestsOnUnmount() {
+    useEffect(() => () => void fetch(apiUrl("/squad/summary")).catch(() => {}), []);
+    return null;
+  }
+  render(createElement(RequestsOnUnmount));
+}
+
+/** One macrotask, as setup.ts's afterEach waits between its cleanup and its checks. */
+const macrotask = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Sends a request and waits until MSW has answered it (rejected, when no handler covers it). */
 async function send(path: string, init?: RequestInit) {
@@ -90,6 +104,15 @@ describe("unhandled request guard", () => {
     expect(checkNow()?.message).toContain(`GET ${SUMMARY}`);
   });
 
+  it("has reported a request sent during cleanup() one macrotask later", async () => {
+    renderRequestingOnUnmount();
+
+    cleanup();
+    await macrotask();
+
+    expect(checkNow()?.message).toContain(`GET ${SUMMARY}`);
+  });
+
   it("keeps a request sent outside a test for the end of the file", async () => {
     endUnhandledRequestGuardTest();
     await send("/squad/summary");
@@ -107,6 +130,14 @@ describe("unhandled request guard", () => {
   describe("expectUnhandledRequest (the opt-out)", () => {
     it("accepts the expected request", async () => {
       expectUnhandledRequest("GET", "/squad/summary");
+
+      await send("/squad/summary");
+
+      expect(checkNow()).toBeNull();
+    });
+
+    it("accepts a lower-case method", async () => {
+      expectUnhandledRequest("get", "/squad/summary");
 
       await send("/squad/summary");
 
@@ -151,6 +182,11 @@ describe("unhandled request guard", () => {
   it.fails("fails a test whose unmocked request lands after its last assertion", () => {
     expect(true).toBe(true);
     void fetch(apiUrl("/squad/summary")).catch(() => {});
+  });
+
+  // Sent by setup.ts's cleanup(), after the test's body: it still fails this test, not the file.
+  it.fails("fails a test whose component sends an unmocked request when it unmounts", () => {
+    renderRequestingOnUnmount();
   });
 
   it.fails("fails a test that mocks console.error and sends an unmocked request", async () => {

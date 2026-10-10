@@ -23,11 +23,8 @@ import {
 // before anything else logs; not a vi.spyOn, so vi.restoreAllMocks() leaves it in place.
 installConsoleGuard();
 
-/**
- * Runs every step, even after one throws, then throws what failed: the error itself if one did,
- * otherwise one error carrying all of their messages, so no check hides another.
- */
-function runAll(steps: (() => Error | null | void)[]) {
+/** Runs every step, even after one throws, and returns what failed. */
+function runAll(steps: (() => Error | null | void)[]): unknown[] {
   const errors: unknown[] = [];
   for (const step of steps) {
     try {
@@ -37,6 +34,11 @@ function runAll(steps: (() => Error | null | void)[]) {
       errors.push(error);
     }
   }
+  return errors;
+}
+
+/** Throws the error itself if one failed, otherwise one error carrying all of their messages. */
+function throwAll(errors: unknown[]) {
   if (errors.length === 1) throw errors[0];
   if (errors.length > 1) {
     const message = `Several checks failed:\n\n${errors
@@ -47,6 +49,10 @@ function runAll(steps: (() => Error | null | void)[]) {
     throw combined;
   }
 }
+
+// Taken before any test runs, so a test that leaves vi.useFakeTimers() on can't stop the flush
+// in afterEach from ever finishing.
+const realSetTimeout = globalThis.setTimeout;
 
 // A request no handler covers is stopped (fetch rejects, nothing reaches the network) and fails
 // the test that sent it, or the file if it lands outside a test (see unhandledRequestGuard.ts).
@@ -66,8 +72,8 @@ beforeEach(() => {
   resetSessionBootstrap();
 });
 
-afterEach(() => {
-  runAll([
+afterEach(async () => {
+  const errors = runAll([
     // Testing Library unmounts after each test by itself only when Vitest's globals are on; they
     // aren't here, so do it explicitly.
     () => cleanup(),
@@ -76,13 +82,16 @@ afterEach(() => {
     () => resetSessionBootstrap(),
     // Drop the handlers a test added with server.use(...).
     () => server.resetHandlers(),
-    // The checks last, so a request or warning from the cleanup above counts too. The setup
-    // file's afterEach runs after the test file's own (Vitest's default sequence.hooks "stack").
-    endUnhandledRequestGuardTest,
-    endConsoleGuardTest,
   ]);
+  // MSW reports an unhandled request a few microtasks after fetch(): one macrotask lets a request
+  // sent during the cleanup above (e.g. from an unmount effect), and a warning logged meanwhile,
+  // reach the checks below and count for this test. The setup file's afterEach runs after the
+  // test file's own (Vitest's default sequence.hooks "stack").
+  await new Promise((resolve) => realSetTimeout(resolve, 0));
+  errors.push(...runAll([endUnhandledRequestGuardTest, endConsoleGuardTest]));
+  throwAll(errors);
 });
 
 afterAll(() => {
-  runAll([() => server.close(), endUnhandledRequestGuardFile, endConsoleGuardFile]);
+  throwAll(runAll([() => server.close(), endUnhandledRequestGuardFile, endConsoleGuardFile]));
 });

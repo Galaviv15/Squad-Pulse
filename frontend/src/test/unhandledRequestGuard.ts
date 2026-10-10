@@ -97,7 +97,12 @@ export function beginUnhandledRequestGuardTest(name?: string) {
  */
 export function expectUnhandledRequest(method: string, path: string) {
   if (!duringTest) throw new Error("expectUnhandledRequest is only allowed inside a test");
-  expected.push({ method, url: new URL(path, window.location.href).href, met: false });
+  // Request methods arrive upper-case ("GET"), whatever case the fetch() call used.
+  expected.push({
+    method: method.toUpperCase(),
+    url: new URL(path, window.location.href).href,
+    met: false,
+  });
 }
 
 /**
