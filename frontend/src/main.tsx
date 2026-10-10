@@ -9,10 +9,12 @@ import "./index.css";
 import { authSession } from "./lib/api/session.ts";
 import { bindSessionToQueryClient } from "./lib/auth/bindSessionToQueryClient.ts";
 import { createQueryClient } from "./lib/queryClient.ts";
+import { bindSessionToSquadReturnPath } from "./lib/squad/squadReturnPath.ts";
 
 const queryClient = createQueryClient();
-// Lives as long as the page: nothing unbinds it.
+// These live as long as the page: nothing unbinds them.
 bindSessionToQueryClient(authSession, queryClient);
+bindSessionToSquadReturnPath(authSession);
 const router = createAppRouter();
 
 createRoot(document.getElementById("root")!).render(

@@ -7,6 +7,7 @@ import { routes as appRoutes } from "@/app/router";
 import { DirectionProvider } from "@/components/ui/direction";
 import { authSession } from "@/lib/api/session";
 import { bindSessionToQueryClient } from "@/lib/auth/bindSessionToQueryClient";
+import { bindSessionToSquadReturnPath } from "@/lib/squad/squadReturnPath";
 import "@/i18n/i18n";
 
 interface RenderOptions {
@@ -21,9 +22,10 @@ interface RenderOptions {
 /**
  * Renders a route tree the way the app does: in RTL for Base UI, inside a fresh QueryClient
  * (nothing cached between tests) that the app session empties when it ends, as in main.tsx, and a
- * memory router. Every component test goes through this. Query retries are off here, and only
+ * memory router; the remembered squad URL is forgotten when the session ends, as in main.tsx too.
+ * Every component test goes through this. Query retries are off here, and only
  * here, so a failing request fails the test at once instead of after the retry delays. The
- * session binding is dropped with the session by the reset after each test (src/test/setup.ts).
+ * session bindings are dropped with the session by the reset after each test (src/test/setup.ts).
  */
 export function renderWithProviders({
   initialEntries = ["/"],
@@ -34,6 +36,7 @@ export function renderWithProviders({
     defaultOptions: { queries: { retry: false } },
   });
   bindSessionToQueryClient(authSession, queryClient);
+  bindSessionToSquadReturnPath(authSession);
   const router = createMemoryRouter(routes, { initialEntries });
 
   const tree: ReactNode = (

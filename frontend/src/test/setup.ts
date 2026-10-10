@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { resetAuthSessionForTests } from "@/lib/api/session";
 import { resetSessionBootstrap } from "@/lib/auth/bootstrap";
+import { forgetSquadReturnPath } from "@/lib/squad/squadReturnPath";
 import {
   beginConsoleGuardTest,
   endConsoleGuardFile,
@@ -62,14 +63,16 @@ beforeAll(() => {
   installUnhandledRequestGuard(server);
 });
 
-// The app session and the app-load bootstrap are module-level. Every test starts with a fresh
-// session ("unknown", no token, no subscribers, no logout channel) and no bootstrap; installed
+// The app session, the app-load bootstrap and the remembered squad URL are module-level. Every
+// test starts with a fresh session ("unknown", no token, no subscribers, no logout channel), no
+// bootstrap and no remembered squad URL (so "חזרה לסגל" is the bare path); installed
 // before the test too, so the app session's real BroadcastChannel is never opened.
 beforeEach(() => {
   beginConsoleGuardTest();
   beginUnhandledRequestGuardTest(expect.getState().currentTestName);
   resetAuthSessionForTests();
   resetSessionBootstrap();
+  forgetSquadReturnPath();
 });
 
 afterEach(async () => {
