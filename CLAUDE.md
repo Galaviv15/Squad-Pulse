@@ -65,6 +65,7 @@ Frontend (KAN-45): every SPA route lives under `/app` (`/` redirects there; the 
 - Branch: `feature/KAN-123-short-desc` or `fix/KAN-124-...` — always include the ticket key.
 - Commit: [Conventional Commits](https://www.conventionalcommits.org/) with the ticket key, e.g. `feat(squad): add player creation endpoint (KAN-12)`.
 - One ticket = one PR into `master`, even solo.
+- Dependabot's PRs, branches and commits are the one exception to the ticket-key rule; its commits are `ci(deps): ...` (GitHub Actions) and `build(deps): ...` (Maven, npm), or `build(deps-dev): ...` for development dependencies (`.github/dependabot.yml`, KAN-42).
 - Jira workflow: Backlog → To Do → In Progress → In Review → Done. GitHub↔Jira are linked, so branches/commits/PRs referencing a ticket key show up automatically on that ticket.
 
 ## Roadmap (current phase in bold)
