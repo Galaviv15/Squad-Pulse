@@ -1,0 +1,41 @@
+# Dependabot (KAN-42). Security alerts and security updates are enabled in the repository
+# settings; this file sets their commit format and the GitHub Actions version updates.
+# scraper/ isn't listed yet: it has no lockfile; it's added with the first Phase 5 ticket.
+version: 2
+updates:
+  # Version updates for the actions in .github/workflows, all in one PR per run.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - major
+          - minor
+          - patch
+    commit-message:
+      prefix: ci
+      include: scope
+
+  # Limit 0 = no version updates; the entry only sets the format of security-update PRs.
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: build
+      include: scope
