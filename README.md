@@ -83,7 +83,7 @@ Hebrew is the primary and only supported UI language at launch (RTL-first, via a
 - **Branches:** `feature/KAN-123-short-desc` / `fix/KAN-124-...` — always include the ticket key.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) with the ticket key, e.g. `feat(squad): add player creation endpoint (KAN-12)`.
 - **PRs:** one ticket = one PR into `master`, even solo — keeps CI as a real gate and leaves a review trail.
-- **Dependabot:** its PRs, branches and commits are the one exception to the ticket-key rule; its commits are `ci(deps): ...` (GitHub Actions) / `build(deps): ...` (Maven, npm).
+- **Dependabot:** its PRs, branches and commits are the one exception to the ticket-key rule; its commits are `ci(deps): ...` (GitHub Actions) and `build(deps): ...` (Maven, npm), or `build(deps-dev): ...` for development dependencies.
 - **Jira workflow:** Backlog → To Do → In Progress → In Review → Done. GitHub is connected to Jira, so branches/commits/PRs referencing a ticket key show up automatically on that ticket.
 
 ## CI
