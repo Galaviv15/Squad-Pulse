@@ -25,4 +25,19 @@ public interface ClubRepository extends MongoRepository<Club, String> {
   @Query("{ '_id': ?0 }")
   @Update("{ '$set': { 'name': ?1 } }")
   void updateNameByClubId(String clubId, String name);
+
+  /**
+   * Replaces the football.org.il mapping of the club {@code clubId} (KAN-65) — a {@code $set} of
+   * the whole {@code footballOrgIl} sub-document on {@code {_id: clubId}}, so all three ids change
+   * together and no other field of the document is ever written. Only the system owner's bootstrap
+   * ({@link ClubBootstrapService#updateFootballOrgIl}) calls it, with a {@code mapping} it has
+   * already validated: nothing here re-checks it. The {@code _id} is mapped like {@link
+   * #findById}'s.
+   *
+   * <p>{@code void} for the same reason as {@link #updateNameByClubId}: the modified count can't
+   * tell a missing club from an unchanged mapping, so the caller checks the club exists first.
+   */
+  @Query("{ '_id': ?0 }")
+  @Update("{ '$set': { 'footballOrgIl': ?1 } }")
+  void updateFootballOrgIlByClubId(String clubId, FootballOrgIlMapping mapping);
 }
