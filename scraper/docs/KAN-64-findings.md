@@ -5,15 +5,16 @@ Investigated on 2026-10-11 against Sderot FC (מ.כ. שדרות), Liga Alef Sout
 ## Summary and recommendation
 
 - **Neither data source needs JavaScript rendering.** Fixtures are in the team-games page's initial HTML. Standings come from one `GET` to an ASMX endpoint (`/Components.asmx/LeagueTable`) returning XML that wraps an HTML fragment. It needs no token, no session and no special header. The HTML a plain HTTP client received when it got through was byte-identical to what the browser received.
-- **But the whole site is behind Cloudflare, which blocks non-browser clients.** `curl` and Node `fetch` were answered `403` "Sorry, you have been blocked" 9 of 11 times. Headless Chromium (Playwright) with the same identifiable User-Agent was let through 4 of 5 times. No JS challenge ran in the browser loads; Cloudflare decides on the first request. The deciding signal isn't visible from outside.
-- **Recommendation: Playwright (headless Chromium) for both sources, as the HTTP client only.** Load the team-games document, load the league page document (to read the current standings round), and call `LeagueTable` with `fetch` from inside the page. Parse everything with Cheerio. Block every non-document resource. One scrape = 3 requests.
-- **We must not try to defeat the protection.** That means no browser-UA spoofing, no "stealth" plugins and no proxy rotation. If the honest headless browser is blocked, the scrape fails with a "source blocked" error. Before relying on this in production, Gal should decide whether to ask the IFA (ההתאחדות לכדורגל) for permission or a data feed (see Risks).
+- **But the whole site is behind Cloudflare, which blocks non-browser clients.** `curl` and Node `fetch` were answered `403` "Sorry, you have been blocked" 9 of 11 times. Headless Chromium (Playwright) with the same identifiable User-Agent was let through on 10 of 11 scrapes so far (17 of 18 page loads). No JS challenge ran in the browser loads; Cloudflare decides on the first request. The deciding signal isn't visible from outside.
+- **Recommendation: Playwright (headless Chromium) for both sources, as the HTTP client only.** Load the team-games document, load the league page document (to read the current standings round), and call `LeagueTable` with `fetch` from inside the page. Parse everything with Cheerio.
+- **The exact setup was verified:** documents plus our own `LeagueTable` fetch, everything else aborted. It ran 6 times, at least 60 s apart: 6 of 6 complete, 0 blocks, all data present (see "Verification of the recommended setup"). One scrape = 3 requests.
+- **We don't try to defeat the protection (Gal's decision).** We use the honest headless browser: no browser-UA spoofing, no "stealth" plugins, no proxy rotation. If it's blocked, the scrape fails with "source blocked" and the old data stays. Gal is contacting the IFA (ההתאחדות לכדורגל) for permission or a data feed in parallel; that doesn't block development.
 
 ## Method
 
 - **Browser:** Playwright 1.64.0 with Chromium, installed in a temporary folder outside the repo (deleted afterwards). It ran headless with User-Agent `SquadPulse-research/0.1 (+https://github.com/Galaviv15/Squad-Pulse)` and locale `he-IL`. A `page.route` handler aborted third-party requests, images, fonts, media, stylesheets and SVGs, and logged every request and response (method, URL, status, request and response headers, XHR bodies).
 - **Plain HTTP:** `curl` and Node 22 `fetch`, with the same User-Agent and normal `Accept` / `Accept-Language` headers. No browser User-Agent was tried, on purpose.
-- **Volume:** **84 requests** to football.org.il in total, including the static scripts the browser loaded in its first runs. Requests were sequential, at least 5 s apart, and 10 s apart in the final block-rate check.
+- **Volume:** **102 requests** to football.org.il in total: 84 in the investigation (including the static scripts the browser loaded in its first runs) and 18 in the verification. Requests were sequential, at least 5 s apart, 10 s apart in the plain-HTTP block-rate check, and scrapes at least 60 s apart in the verification.
 
 Key commands, to repeat the investigation (scripts not committed):
 
@@ -28,17 +29,64 @@ mkdir /tmp/pw && cd /tmp/pw && npm init -y && npm i playwright@1.64.0 && npx pla
 ```
 
 ```js
-// The essence of the browser run (Playwright, ESM)
-const ctx = await (await chromium.launch()).newContext({ userAgent: UA, locale: "he-IL" });
+// The verified setup (Playwright, ESM): documents + our own LeagueTable fetch, everything else aborted.
+const ORIGIN = "https://www.football.org.il/";
+const browser = await chromium.launch({ headless: true });
+const ctx = await browser.newContext({ userAgent: UA, locale: "he-IL" });
 const page = await ctx.newPage();
-await page.route("**/*", (r) => r.request().resourceType() === "document" ? r.continue() : r.abort());
-const games = await page.goto("https://www.football.org.il/team-details/team-games/?team_id=7617&season_id=28");
+let allowedFetch = null; // the exact LeagueTable URL we request ourselves
+await page.route("**/*", (route) => {
+  const r = route.request();
+  const ok =
+    (r.resourceType() === "document" && r.url().startsWith(ORIGIN)) ||
+    (r.resourceType() === "fetch" && r.url() === allowedFetch);
+  return ok ? route.continue() : route.abort();
+});
+const games = await page.goto(`${ORIGIN}team-details/team-games/?team_id=7617&season_id=28`, { waitUntil: "domcontentloaded", timeout: 30000 });
 const gamesHtml = await games.text();
-await page.goto("https://www.football.org.il/leagues/league/?league_id=62&season_id=28");
+// wait 3–5 s
+await page.goto(`${ORIGIN}leagues/league/?league_id=62&season_id=28`, { waitUntil: "domcontentloaded", timeout: 30000 });
 const round = await page.getAttribute("section.league-standing-table", "data-table-round");
-const xml = await page.evaluate(async (u) => (await fetch(u, { headers: { "x-requested-with": "XMLHttpRequest" } })).text(),
-  `/Components.asmx/LeagueTable?league_id=62&season_id=28&box=20&round_id=${round}&componentTitle=${encodeURIComponent("טבלת ליגה")}`);
+const box = await page.getAttribute("section.league-standing-table", "data-table-index");
+// wait 3–5 s
+allowedFetch = `${ORIGIN}Components.asmx/LeagueTable?league_id=62&season_id=28&box=${box}&round_id=${round}&componentTitle=${encodeURIComponent("טבלת ליגה")}`;
+const xml = await page.evaluate(async (u) => (await fetch(u, { headers: { "x-requested-with": "XMLHttpRequest" } })).text(), allowedFetch);
+await browser.close();
 ```
+
+## Verification of the recommended setup
+
+Run on 2026-10-11 with the setup above: Playwright 1.64.0, Chromium, headless; installed outside the repo and deleted afterwards. Each scrape got a fresh browser, the honest User-Agent, locale `he-IL`, and no other header changes.
+
+- **Route rule:** continue a request only if it is
+  - a `document` whose URL starts with `https://www.football.org.il/`, or
+  - a `fetch` whose URL equals, exactly, the one `LeagueTable` URL the script builds just before calling it.
+
+  Everything else was aborted: the site's scripts, stylesheets, images, fonts, its own XHRs (they never start, since its scripts don't run) and every third-party host.
+- **Steps:** the three requests in order, a random 3–5 s pause between them, timeouts 30 s / 30 s / 20 s. A block or a missing piece of data stops that scrape, with no retry.
+- **Expected data:**
+  - Games page: 34 `a.table_row` game rows.
+  - League page: `section.league-standing-table` with `data-table-round` and `data-table-index`.
+  - `LeagueTable`: 18 team rows.
+
+Results (times UTC; each cell is status / bytes; "ok" = not the block page and the expected data present):
+
+| Run | Games page | League page (round, box) | `LeagueTable` | Requests sent / aborted |
+|---|---|---|---|---|
+| 1 | 12:23:56 — 200 / 176,521, ok | 12:24:00 — 200 / 180,657, ok (6, 20) | 12:24:04 — 200 / 20,133, ok | 3 / 145 |
+| 2 | 12:25:05 — 200 / 176,521, ok | 12:25:09 — 200 / 180,657, ok (6, 20) | 12:25:12 — 200 / 20,133, ok | 3 / 144 |
+| 3 | 12:26:17 — 200 / 176,521, ok | 12:26:21 — 200 / 180,657, ok (6, 20) | 12:26:25 — 200 / 20,133, ok | 3 / 144 |
+| 4 | 12:27:28 — 200 / 176,521, ok | 12:27:34 — 200 / 249,938, ok (6, 20) | 12:27:38 — 200 / 20,133, ok | 3 / 142 |
+| 5 | 12:28:39 — 200 / 176,521, ok | 12:28:43 — 200 / 249,938, ok (6, 20) | 12:28:46 — 200 / 20,133, ok | 3 / 141 |
+| 6 | 12:29:48 — 200 / 176,521, ok | 12:29:52 — 200 / 249,938, ok (6, 20) | 12:29:56 — 200 / 20,133, ok | 3 / 141 |
+
+- **Block rate:** 0 of 6 scrapes (0 of 18 requests).
+- **Over every headless-browser scrape so far:** 1 of 11 blocked, i.e. 1 of 18 page loads (the block was inferred from an empty cookie jar, not seen directly).
+- **No extra resource was needed.** Without the site's scripts, the documents carry everything: the 34 game rows, and the placeholder with both attributes.
+- **Data unchanged since capture:** run 1's `LeagueTable` response was byte-identical to the earlier capture the fixture was trimmed from, and the games page was the same size. The fixtures stay valid.
+- **The league page's size varies** (180,657 vs 249,938 bytes) from unrelated page content; the placeholder was there every time.
+- **Requests:** 18, so 102 in total with the investigation's 84.
+- Six scrapes in one afternoon from one IP is still a small sample. KAN-67 should log every block, so the real rate is visible in use.
 
 ## Answers
 
@@ -108,6 +156,7 @@ const xml = await page.evaluate(async (u) => (await fetch(u, { headers: { "x-req
   | 11:54–11:55 | fetch / curl alternating | both | 6 × 403 block |
 
 - The two that passed came within seconds of a browser visit from the same IP; that's not a usable rule.
+- The same requests made from inside the headless browser (in-page `fetch`) passed every time in the verification: 6 of 6.
 - **No cookie or token is needed by the endpoints themselves.** The 200s above were sent without any cookie. Playwright's `context.request` (Node's HTTP stack with the browser context's cookies) also got a 200 once.
 - The pages set `ASP.NET_SessionId` (session cookie) and `__cflb` (expires after 1 hour). Neither is needed by the data endpoints.
 
@@ -115,7 +164,12 @@ const xml = await page.evaluate(async (u) => (await fetch(u, { headers: { "x-req
 
 - **Team games: yes**, but only to get past Cloudflare, not for rendering. The data is in the document.
 - **Standings: yes**, for the same reason. The data is one `GET` returning XML, called with `fetch` from inside a page on www.football.org.il so it goes out from the browser.
-- Neither needs the site's own JavaScript. My runs that captured the data let the site's scripts load. Loading the documents with scripts blocked (the recommended setup) is expected to work, since Cloudflare's decision comes before any script, but KAN-67 must confirm it.
+- Neither needs the site's own JavaScript. With every script, stylesheet, image and site XHR aborted, all 6 verification scrapes got everything:
+  - the 34 game rows in the games document,
+  - the standings placeholder's `data-table-round` / `data-table-index` in the league document,
+  - the 18 standings rows from our own in-page `fetch`.
+
+  Cloudflare let all of them through (see "Verification of the recommended setup").
 
 ### 4. Fields available
 
@@ -202,12 +256,13 @@ const xml = await page.evaluate(async (u) => (await fetch(u, { headers: { "x-req
   - Pages: `cache-control: private`, no `ETag` / `Last-Modified`, `cf-cache-status: DYNAMIC`.
   - ASMX endpoints: `cache-control: private, max-age=0`, no validators.
   - So conditional requests aren't possible. Our own 10-minute lock (KAN-68) is the cache.
-- **Protection hit:** Cloudflare (`server: cloudflare`, edge `TLV`). It blocks non-browser clients with a `403` block page (not a challenge), with no rate-limit headers and no CAPTCHA. One headless-browser page load was apparently blocked too (its cookie jar came back empty). The site also loads Google Tag Manager, the Facebook pixel and a third-party widget; we abort all of them.
-- **Proposed budget for one scrape** (one team's fixtures + its league's standings), one fresh browser context, only same-origin `document` requests and our own `fetch` allowed:
+- **Protection hit:** Cloudflare (`server: cloudflare`, edge `TLV`). It blocks non-browser clients with a `403` block page (not a challenge), with no rate-limit headers and no CAPTCHA. One headless-browser page load was apparently blocked too (its cookie jar came back empty). The verified setup then ran 6 scrapes without a block, so 1 of 11 headless-browser scrapes has been blocked so far. The site also loads Google Tag Manager, the Facebook pixel and a third-party widget; we abort all of them.
+- **Proposed budget for one scrape** (one team's fixtures + its league's standings), one fresh browser context, only same-origin `document` requests and our own `LeagueTable` fetch (matched by its exact URL) allowed, as verified:
   1. `GET /team-details/team-games/?team_id={team}&season_id={season}`, timeout 30 s.
   2. Wait 3–5 s. Then `GET /leagues/league/?league_id={league}&season_id={season}`, timeout 30 s, to read `section.league-standing-table[data-table-round]` and `data-table-index` (the `box`).
   3. Wait 3–5 s. Then in-page `fetch` `GET /Components.asmx/LeagueTable?…&box={box}&round_id={round}&componentTitle=…`, timeout 20 s.
 - That's **3 requests**, about 15 s, a 90 s overall cap. With the 10-minute lock per team and per league + season, that's at most 18 requests per club per hour.
+- The league-page request is what keeps the standings fresh: the round advances every week. No caching of `round` / `box` is recommended for v1; it would save one request per 10 minutes at most.
 - On a `403` block page: stop, report "source blocked", **no retry** until the next manual refresh. On a timeout or 5xx: one retry after 10 s at most.
 
 ### 9. Stability
@@ -292,14 +347,19 @@ Deliberately left out of v1: round number per game (not on the page), status (no
   - The system owner will need to update season and league each summer. Consider showing the configured ids' resolved names (team name from the standings) so a wrong id is visible.
 - **KAN-66 (storage and contract):**
   - Upsert games by `(season, home, away)`, not `gameId` (−1 for unscheduled games, and ids may change).
+  - **That key assumes the page lists league games only.** Today it does: 34 rows = 17 opponents × 2. But the page shows no competition. A cup game against a league opponent would collide with the league game of the same home/away pair. KAN-66 must decide how to detect or handle it, e.g. reject a scrape that contains a duplicate key instead of silently overwriting.
   - No round, competition or status data. A postponed game just moves date and loses its time; a cancelled one may disappear. Decide whether a game missing from a new scrape is deleted or kept.
   - Times are Israel local; store a local date + time or convert with `Asia/Jerusalem` explicitly.
   - Scores are stored home/away after the away-first fix in the parser.
 - **KAN-67 (scraper):**
-  - **Bot protection is the main risk.** Cloudflare blocks non-browser clients today and blocked the honest headless browser once in five loads. It may tighten at any time; nothing we may legitimately do avoids that.
+  - **Bot protection is the main risk.** Cloudflare blocks non-browser clients today. It blocked the honest headless browser on 1 of 11 scrapes, and on none of the 6 verification runs. It may tighten at any time; nothing we may legitimately do avoids that. Log every block, so the real rate shows in use.
   - The scraper needs a distinct "blocked" outcome (fixture `cloudflare-block-403.html`), and the UI (KAN-69) should show "last updated at …" with the old data.
-  - **Policy:** the site's owner protects it against automated clients; robots.txt allows everything, and the reviewed terms have no anti-scraping clause. Gal to decide whether to contact the IFA for permission or a feed before production, and to confirm the no-evasion rule (honest User-Agent, no stealth plugins, no proxies).
-  - Confirm that documents load with scripts blocked, and that `LeagueTable` works without the league page (it needs `round_id` and `box`; caching them per league + season would save a request).
+  - **Policy (decided by Gal):** we use the honest headless browser, with no evasion: honest User-Agent, no stealth plugins, no proxies. Gal is contacting the IFA for permission or a feed, which doesn't block development. On a block, the scrape fails with "source blocked" and the old data stays. Context: the site's owner protects it against automated clients; robots.txt allows everything, and the reviewed terms have no anti-scraping clause.
+  - Use the verified route rule: same-origin documents plus our own `LeagueTable` fetch matched by its exact URL. Don't widen it to all `fetch` / `xhr` requests, which would let the site's own requests through if its scripts ever load.
   - Pin both parser quirks (away-first results, against-for goals) in tests.
   - Chromium makes the service image larger and slower to start, and each scrape needs a fresh context (no shared cookies between clubs).
+- **KAN-67 / KAN-68 (fixtures depend on the standings):**
+  - Fixture team ids are resolved by name through the standings.
+  - When the standings aren't re-fetched (the per-league lock is still held), resolve the names against the **stored** standings.
+  - A name that can't be resolved keeps a `null` id: never guess, and never fail the whole scrape for it.
 - **KAN-70:** minutes and starts aren't in the league statistics; they likely need one request per game or per player, a much bigger budget than 3.
