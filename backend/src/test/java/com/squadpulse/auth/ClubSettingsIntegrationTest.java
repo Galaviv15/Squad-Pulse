@@ -190,6 +190,61 @@ class ClubSettingsIntegrationTest {
     assertThat(rawClub(id.toHexString()).toJson(CANONICAL)).isEqualTo(expected.toJson(CANONICAL));
   }
 
+  // --- football.org.il mapping (KAN-65) ---------------------------------------------------------
+
+  /**
+   * A rename is a {@code $set} of {@code name} alone, so a stored mapping comes through unchanged;
+   * neither {@code GET /clubs/me} nor {@code /me}'s {@code club} shows it (exactly {@code id},
+   * {@code name}, {@code hasLogo}).
+   */
+  @Test
+  void aRenameLeavesTheMappingAloneAndNoResponseExposesIt() throws Exception {
+    ObjectId id = new ObjectId();
+    Document original =
+        new Document("_id", id)
+            .append("name", "Sderot FC")
+            .append("createdAt", Date.from(Instant.parse("2025-01-02T03:04:05.678Z")))
+            .append(
+                "footballOrgIl",
+                new Document("teamId", 7617).append("leagueId", 62).append("seasonId", 28));
+    mongoTemplate.getCollection("clubs").insertOne(original);
+    insertUser(id.toHexString(), "manager@example.com", PermissionLevel.ADMIN);
+    String admin = accessToken(login("manager@example.com"));
+
+    String renamed =
+        perform(rename(admin, "{\"name\": \"Hapoel Sderot\"}"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    Document expected = Document.parse(original.toJson(CANONICAL)).append("name", "Hapoel Sderot");
+    assertThat(rawClub(id.toHexString()).toJson(CANONICAL)).isEqualTo(expected.toJson(CANONICAL));
+    assertThat(clubRepository.findById(id.toHexString()).orElseThrow().getFootballOrgIl())
+        .isEqualTo(new FootballOrgIlMapping(7617, 62, 28));
+    assertThat(renamed).doesNotContain("footballOrgIl", "teamId", "7617");
+    expectClub(admin, id.toHexString(), "Hapoel Sderot", false);
+  }
+
+  /** A club document from before KAN-65 (no mapping field) loads, unmapped, and answers as ever. */
+  @Test
+  void aClubStoredWithoutAMappingFieldLoadsUnmappedAndAnswersAsBefore() throws Exception {
+    ObjectId id = new ObjectId();
+    mongoTemplate
+        .getCollection("clubs")
+        .insertOne(
+            new Document("_id", id)
+                .append("name", "Hapoel Example")
+                .append("createdAt", Date.from(Instant.parse("2025-01-02T03:04:05.678Z"))));
+    insertUser(id.toHexString(), "manager@example.com", PermissionLevel.ADMIN);
+    String admin = accessToken(login("manager@example.com"));
+
+    Club club = clubRepository.findById(id.toHexString()).orElseThrow();
+    assertThat(club.getName()).isEqualTo("Hapoel Example");
+    assertThat(club.getFootballOrgIl()).isNull();
+    expectClub(admin, id.toHexString(), "Hapoel Example", false);
+  }
+
   // --- club isolation ----------------------------------------------------------------------------
 
   /**

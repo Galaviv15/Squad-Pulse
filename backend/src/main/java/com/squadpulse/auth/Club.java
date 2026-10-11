@@ -1,6 +1,7 @@
 package com.squadpulse.auth;
 
 import com.squadpulse.common.NotClubScoped;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
@@ -15,10 +16,12 @@ import org.springframework.data.mongodb.core.mapping.Document;
  * <p>Deliberately {@link NotClubScoped}: it's the tenant root, not data owned by a tenant. Clubs
  * are only ever created by the system owner, via {@link ClubBootstrapRunner}.
  *
- * <p>No {@code @Version}, deliberately: its only edit today, the name ({@link
- * ClubSettingsService}), is a targeted single-field update, never a save of the whole document.
- * Adding one later needs a backfill for the existing documents first, as {@link
- * UserVersionBackfill} did for users.
+ * <p>No {@code @Version}, deliberately: each of its edits is a targeted update of its own field,
+ * never a save of the whole document — the name by an {@code ADMIN} ({@link ClubSettingsService},
+ * {@link ClubRepository#updateNameByClubId}) and the football.org.il mapping by the system owner
+ * ({@link ClubBootstrapService}, {@link ClubRepository#updateFootballOrgIlByClubId}). Adding one
+ * later needs a backfill for the existing documents first, as {@link UserVersionBackfill} did for
+ * users.
  */
 @Document("clubs")
 @NotClubScoped
@@ -40,6 +43,15 @@ public class Club {
 
   @CreatedDate private Instant createdAt;
 
+  /**
+   * Which team, league and season this club is on football.org.il (KAN-65), or {@code null} if it
+   * isn't mapped — then scraping is unavailable for it. A document stored before KAN-65 has no such
+   * field and reads as {@code null}. Set only by the system owner through the {@code bootstrap}
+   * profile ({@link ClubBootstrapRunner}): on creation, or later by a targeted update of this field
+   * alone. Never exposed by the API ({@link ClubResponse}).
+   */
+  @Valid private FootballOrgIlMapping footballOrgIl;
+
   public String getId() {
     return id;
   }
@@ -59,5 +71,14 @@ public class Club {
 
   public Instant getCreatedAt() {
     return createdAt;
+  }
+
+  public FootballOrgIlMapping getFootballOrgIl() {
+    return footballOrgIl;
+  }
+
+  /** For a new club only: an existing club's mapping is changed by a targeted update. */
+  public void setFootballOrgIl(FootballOrgIlMapping footballOrgIl) {
+    this.footballOrgIl = footballOrgIl;
   }
 }

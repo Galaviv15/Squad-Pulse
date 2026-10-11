@@ -260,7 +260,7 @@ Authentication comes first: a request without a valid token is a `401` whatever 
 
 **Errors raised before Spring MVC** get the same JSON shape, with generic messages (KAN-35). An exception thrown in a servlet filter, such as the JWT filter, is caught by `common.UnhandledExceptionFilter`, which runs before every other filter except Boot's character-encoding one: a `500` `"An unexpected error occurred"`, logged once at `ERROR` like any other `500` (Tomcat no longer logs it). Anything that still reaches the servlet container's error page, `/error`, is rendered by `common.ApiErrorController`, which replaces Spring Boot's own (its Whitelabel HTML page is switched off too): most commonly a `400` `"The request could not be processed"` for a path Spring Security's firewall rejects (e.g. `/squad//players`), or a `5xx` a filter sent, logged at `ERROR` with its method and path. A direct request for `/error` is a `401` without a token and a `404` with one, like any unknown path. A new filter must not write its own error format. The one limit: a request so malformed that Tomcat's connector rejects it before the application sees it (a broken request line or header, or an encoded `/` (`%2F`) in the path) still gets Tomcat's own HTML error page.
 
-### Bootstrapping a new club
+### Bootstrapping and mapping a club
 
 Only the system owner can create a club, together with its initial Club Manager (`CLUB_MANAGER` / `ADMIN`) — see spec section 09. There's no endpoint for this: it's a one-off run of the backend under the `bootstrap` profile, which starts no web server (so it can run alongside the real one), creates both documents in one transaction, and exits (code `0` on success, `1` otherwise). It's gated by the owner secret, not by RBAC: you're prompted for it, and it's compared with `OWNER_BOOTSTRAP_SECRET` (which only the `bootstrap` profile loads — a normal server never binds it). With a missing or wrong secret nothing is written.
 
@@ -274,6 +274,19 @@ java -jar target/squadpulse-backend-0.1.0-SNAPSHOT.jar --spring.profiles.active=
 ```
 
 It then prompts (no echo) for the owner secret and, only if that's right, for the Club Manager's initial password, twice. Secrets are never accepted as arguments — those are visible to other local users (e.g. via `ps`) and end up in shell history — so `--owner-secret` / `--manager-password` are rejected outright. Run it directly in a terminal: prompting needs one, so it refuses to run through a pipe, `./mvnw spring-boot:run` or an IDE run configuration.
+
+**football.org.il mapping (KAN-65).** For the scraper to know what to fetch, a club needs its football.org.il team, league and season ids (`team_id`, `league_id`, `season_id` in the site's URLs). They're stored on the club document as one embedded `footballOrgIl` sub-document, always all three together; a club without one isn't mapped, and scraping is unavailable for it. They're never exposed by the API. Only the owner sets them, under the same `bootstrap` profile and owner secret:
+
+- **On creation**, optionally: add all three of `--football-team-id`, `--football-league-id` and `--football-season-id` to the command above — all three or none.
+- **On an existing club**: run with `--club-id` and all three ids. This replaces the whole mapping and changes nothing else on the club. It prompts only for the owner secret (no Club Manager password), and logs the club's previous mapping (or `none`) and the new one.
+
+```sh
+java -jar target/squadpulse-backend-0.1.0-SNAPSHOT.jar --spring.profiles.active=bootstrap \
+  --club-id=<the club's id> \
+  --football-team-id=7617 --football-league-id=62 --football-season-id=28
+```
+
+**Update it every summer:** the season id changes each season (`28` = 2026/27), and the league id on promotion or relegation (possibly every season); the team id looks stable, but that's unverified. Refused, with nothing written (exit code `1`): a wrong owner secret (checked first, before the club id is even looked up), a partial set of the three ids, an id that isn't a whole number ≥ 1, an option given twice or without a value, a `--club-id` that isn't 24 hex characters or names no club, and mixing `--club-id` with the create-only options (`--club-name`, `--manager-*`). The ids can't be checked against football.org.il here: a wrong but valid id is only noticed by the scraper. There's no way to clear a mapping yet.
 
 In production, give `OWNER_BOOTSTRAP_SECRET` only to the environment of the bootstrap run, not to the running server's. (Locally, the `.env` import puts it in every process's Spring `Environment` as an unused raw value; nothing outside the `bootstrap` profile reads it.)
 

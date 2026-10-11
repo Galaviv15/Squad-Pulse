@@ -8,6 +8,7 @@ import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import org.bson.types.ObjectId;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -15,8 +16,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Creates a new {@link Club} together with its initial Club Manager {@link User} — the system
- * owner's onboarding step (see docs/spec.md section 09). Its only caller is {@link
+ * The system owner's club operations (see docs/spec.md section 09): creating a new {@link Club}
+ * together with its initial Club Manager {@link User}, optionally with its football.org.il mapping,
+ * and replacing an existing club's mapping (KAN-65). Its only caller is {@link
  * ClubBootstrapRunner}; nothing here is reachable over the network.
  *
  * <p>Gated by the owner secret ({@code OWNER_BOOTSTRAP_SECRET}, see {@link
@@ -31,15 +33,33 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Profile(ClubBootstrapRunner.PROFILE)
 class ClubBootstrapService {
 
-  /** What the owner supplies. {@code managerDateOfBirth} is optional, like on {@link User}. */
+  /**
+   * What the owner supplies. {@code managerDateOfBirth} is optional, like on {@link User}, and so
+   * is {@code footballOrgIl} ({@code null}: the club isn't mapped).
+   */
   record NewClub(
       String clubName,
       String managerEmail,
       String managerPassword,
       String managerFullName,
-      LocalDate managerDateOfBirth) {}
+      LocalDate managerDateOfBirth,
+      FootballOrgIlMapping footballOrgIl) {
+
+    /** A club without a football.org.il mapping. */
+    NewClub(
+        String clubName,
+        String managerEmail,
+        String managerPassword,
+        String managerFullName,
+        LocalDate managerDateOfBirth) {
+      this(clubName, managerEmail, managerPassword, managerFullName, managerDateOfBirth, null);
+    }
+  }
 
   record CreatedClub(Club club, User manager) {}
+
+  /** The club's mapping before the update ({@code null}: none) and the club as stored after it. */
+  record UpdatedMapping(FootballOrgIlMapping previous, Club club) {}
 
   private final ClubRepository clubRepository;
   private final UserRepository userRepository;
@@ -92,6 +112,7 @@ class ClubBootstrapService {
 
     Club club = new Club();
     club.setName(newClub.clubName());
+    club.setFootballOrgIl(newClub.footballOrgIl());
 
     User manager = new User();
     manager.setEmail(newClub.managerEmail());
@@ -124,6 +145,61 @@ class ClubBootstrapService {
             clubContext.clear();
           }
         });
+  }
+
+  /**
+   * Replaces the football.org.il mapping of the existing club {@code clubId} — all three ids
+   * together, by a targeted update of that field alone ({@link
+   * ClubRepository#updateFootballOrgIlByClubId}); nothing else on the club changes.
+   *
+   * @throws ClubBootstrapException if the owner secret is wrong (checked first, so the club isn't
+   *     even looked up), {@code mapping} is missing or invalid, {@code clubId} isn't a club id, or
+   *     no such club exists — nothing is written
+   */
+  UpdatedMapping updateFootballOrgIl(
+      String ownerSecret, String clubId, FootballOrgIlMapping mapping) {
+    verifyOwnerSecret(ownerSecret);
+
+    if (mapping == null) {
+      throw new ClubBootstrapException("the football.org.il mapping is required");
+    }
+    validateFootballOrgIl(mapping);
+    // Clubs get ObjectId ids at creation. Anything else can't name one; said explicitly rather
+    // than as "not found", so a typo in the id is obvious.
+    if (clubId == null || !ObjectId.isValid(clubId)) {
+      throw new ClubBootstrapException("the club id must be 24 hexadecimal characters");
+    }
+
+    // Checked first: the update can't tell a missing club from an unchanged mapping (see
+    // ClubRepository#updateFootballOrgIlByClubId). Clubs are never deleted, so the club can't
+    // disappear between this read, the update and the re-read below.
+    Club before =
+        clubRepository
+            .findById(clubId)
+            .orElseThrow(() -> new ClubBootstrapException("no club with id " + clubId));
+    clubRepository.updateFootballOrgIlByClubId(clubId, mapping);
+    Club after =
+        clubRepository
+            .findById(clubId)
+            .orElseThrow(() -> new IllegalStateException("Club " + clubId + " disappeared"));
+    return new UpdatedMapping(before.getFootballOrgIl(), after);
+  }
+
+  /**
+   * Checks {@code mapping} against its own constraints, with the same messages as {@link
+   * #bootstrap}'s check of it through {@link Club}'s {@code @Valid} field — so the runner can
+   * refuse an invalid mapping before prompting for the Club Manager password, and {@link
+   * #updateFootballOrgIl} shares the one source of the messages. {@link #bootstrap} still validates
+   * the club itself, for any other caller.
+   *
+   * @throws ClubBootstrapException listing every violation
+   */
+  void validateFootballOrgIl(FootballOrgIlMapping mapping) {
+    List<String> problems = new ArrayList<>();
+    violations(mapping, "club footballOrgIl.", problems);
+    if (!problems.isEmpty()) {
+      throw new ClubBootstrapException(String.join("; ", problems));
+    }
   }
 
   /** Field and message only — never the rejected value, so nothing sensitive can leak into logs. */
