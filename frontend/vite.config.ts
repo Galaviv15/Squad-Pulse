@@ -10,7 +10,8 @@ import { DEV_CERT_DIR, devHttpsOptions } from "./devHttps.ts";
  * its own origin (no CORS). A new backend prefix must be added here. SPA routes live under
  * /app, so they never collide with these on a browser reload.
  */
-const BACKEND_PREFIXES = ["auth", "squad", "clubs", "users"];
+// Never "internal": /internal/** is service-to-service (the scraper), not for the browser.
+const BACKEND_PREFIXES = ["auth", "squad", "clubs", "users", "matches"];
 
 // A key starting with "^" is a regex tested against the request URL (path + query); a plain key
 // would be a string prefix, so "/auth" would also catch "/authors". This matches whole segments.
