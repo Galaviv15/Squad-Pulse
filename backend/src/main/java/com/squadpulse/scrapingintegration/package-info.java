@@ -7,6 +7,11 @@
  * <b>not</b> own any domain logic or domain data — the league table, fixtures, and lineups belong
  * to {@code match}.
  *
+ * <p>The scraper posts each scrape to {@code POST /internal/scrape-results} (KAN-66), authenticated
+ * by a service token in its own security chain ({@code InternalSecurityConfig}), never by a user's
+ * access token. Its request and response records are the scraper ↔ backend contract, described in
+ * docs/scraper-backend-contract.md.
+ *
  * <p>See docs/spec.md section 07 (Matches, stats &amp; scraping). Tracked in Jira under KAN-14
  * (Match &amp; Scraping Integration).
  */

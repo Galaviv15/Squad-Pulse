@@ -37,6 +37,9 @@ import tools.jackson.databind.json.JsonMapper;
  *       attaches on its own. The one cookie — the refresh token — is {@code SameSite=Strict} and
  *       scoped to {@code /auth}, so a cross-site request can't carry it to {@code /auth/refresh} or
  *       {@code /auth/logout} either.
+ *   <li>{@code /internal/**} isn't served by this chain at all: a second chain, ordered first,
+ *       claims it ({@code scrapingintegration.InternalSecurityConfig}, KAN-66). This one denies it
+ *       anyway, so a mis-ordered chain fails closed.
  * </ul>
  *
  * <p>Only in a web application: the {@code bootstrap} profile runs without a web server, where
@@ -68,6 +71,12 @@ class SecurityConfig {
   static final String[] PUBLIC_ENDPOINTS = {
     "/auth/login", "/auth/refresh", "/auth/logout", "/auth/forgot-password", "/auth/reset-password"
   };
+
+  /**
+   * Service-to-service endpoints (KAN-66), authenticated by the scraper's service token in their
+   * own chain ({@code scrapingintegration.InternalSecurityConfig}), never by a user's access token.
+   */
+  static final String INTERNAL_PATHS = "/internal/**";
 
   /**
    * {@code ADMIN > EDIT_FULL > EDIT_PARTIAL > VIEW_ONLY}, derived from {@link PermissionLevel}'s
@@ -125,6 +134,10 @@ class SecurityConfig {
                     // Lets the servlet container's error page render; it exposes nothing itself.
                     .dispatcherTypeMatchers(DispatcherType.ERROR)
                     .permitAll()
+                    // Served by scrapingintegration.InternalSecurityConfig's chain, ordered first;
+                    // denied here too, so a mis-ordered chain fails closed (KAN-66).
+                    .requestMatchers(INTERNAL_PATHS)
+                    .denyAll()
                     .requestMatchers(HttpMethod.POST, PUBLIC_ENDPOINTS)
                     .permitAll()
                     .anyRequest()

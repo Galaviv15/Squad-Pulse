@@ -56,6 +56,13 @@ class SecurityConfigTest {
     String adminOnly() {
       return "ok";
     }
+
+    /** Under /internal/**, served by this chain only because the internal chain isn't loaded. */
+    @GetMapping("/internal/probe")
+    @PreAuthorize("hasAuthority('ADMIN')")
+    String internal() {
+      return "ok";
+    }
   }
 
   @Autowired private MockMvc mockMvc;
@@ -142,6 +149,19 @@ class SecurityConfigTest {
         .andExpect(jsonPath("$.error").value("Method Not Allowed"))
         .andExpect(jsonPath("$.message").value("Method POST is not supported for this endpoint"))
         .andExpect(jsonPath("$.details[0]").value("GET"));
+  }
+
+  /**
+   * Defence in depth (KAN-66): if the internal chain were ever missing or ordered after this one,
+   * this chain still refuses {@code /internal/**} — even to an {@code ADMIN} the handler admits.
+   */
+  @Test
+  void theUserChainDeniesInternalPathsEvenToAnAdmin() throws Exception {
+    mockMvc
+        .perform(get("/internal/probe").header("Authorization", bearer(PermissionLevel.ADMIN)))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value("Access denied"));
+    mockMvc.perform(get("/internal/probe")).andExpect(status().isUnauthorized());
   }
 
   /** Security runs before routing, so an unknown path without a token is still a plain 401. */

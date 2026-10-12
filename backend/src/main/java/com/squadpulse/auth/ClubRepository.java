@@ -1,5 +1,6 @@
 package com.squadpulse.auth;
 
+import java.util.List;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.Update;
@@ -40,4 +41,28 @@ public interface ClubRepository extends MongoRepository<Club, String> {
   @Query("{ '_id': ?0 }")
   @Update("{ '$set': { 'footballOrgIl': ?1 } }")
   void updateFootballOrgIlByClubId(String clubId, FootballOrgIlMapping mapping);
+
+  /**
+   * The clubs currently mapped to exactly this football.org.il team, league and season (KAN-66),
+   * each loaded with its {@code _id} only. A lookup across all clubs, deliberately: the scraper's
+   * ingest ({@link ClubFootballMappings#clubIdsMappedTo}) has no club context, and finding which
+   * clubs a scrape belongs to is the point of the call. Safe because only clubIds go back, to a
+   * server-side caller; no tenant-owned field is ever loaded. Normally at most one club matches.
+   */
+  @Query(
+      value =
+          "{ 'footballOrgIl.teamId': ?0, 'footballOrgIl.leagueId': ?1,"
+              + " 'footballOrgIl.seasonId': ?2 }",
+      fields = "{ '_id': 1 }")
+  List<Club> findIdsByFootballOrgIl(Integer teamId, Integer leagueId, Integer seasonId);
+
+  /**
+   * Whether any club is currently mapped to this football.org.il league and season (KAN-66): the
+   * shared standings of a league are stored only then ({@link
+   * ClubFootballMappings#anyClubMappedTo}). A lookup across all clubs, deliberately, for the same
+   * reason as {@link #findIdsByFootballOrgIl}; it answers a boolean only, so nothing about any club
+   * leaves it.
+   */
+  @Query(value = "{ 'footballOrgIl.leagueId': ?0, 'footballOrgIl.seasonId': ?1 }", exists = true)
+  boolean existsByFootballOrgIlLeague(Integer leagueId, Integer seasonId);
 }

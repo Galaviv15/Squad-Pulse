@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
  * leave out {@link #BACKGROUND_DRIVER_LOGGERS}; {@link #events()} and {@link #everythingLogged()}
  * keep every event. Every read goes through one synchronized snapshot.
  */
-final class CapturedLogs {
+public final class CapturedLogs {
 
   /**
    * Logger-name prefixes of the client libraries whose background threads log into every test's
@@ -38,12 +38,12 @@ final class CapturedLogs {
   private final Logger rootLogger = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
   private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
 
-  void start() {
+  public void start() {
     appender.start();
     rootLogger.addAppender(appender);
   }
 
-  void stop() {
+  public void stop() {
     rootLogger.detachAppender(appender);
     appender.stop();
   }
@@ -53,14 +53,14 @@ final class CapturedLogs {
    * appender's monitor while it adds to the list, so copying under the same monitor never sees a
    * half-done add.
    */
-  List<ILoggingEvent> events() {
+  public List<ILoggingEvent> events() {
     synchronized (appender) {
       return List.copyOf(appender.list);
     }
   }
 
   /** ERROR events from every logger, Tomcat's included, except the background drivers'. */
-  List<ILoggingEvent> errors() {
+  public List<ILoggingEvent> errors() {
     return events().stream()
         .filter(event -> event.getLevel() == Level.ERROR)
         .filter(event -> !isBackgroundDriver(event.getLoggerName()))
@@ -68,28 +68,28 @@ final class CapturedLogs {
   }
 
   /** WARN and ERROR events from every logger, except the background drivers'. */
-  List<ILoggingEvent> warningsOrAbove() {
+  public List<ILoggingEvent> warningsOrAbove() {
     return events().stream()
         .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
         .filter(event -> !isBackgroundDriver(event.getLoggerName()))
         .toList();
   }
 
-  void assertNoErrors() {
+  public void assertNoErrors() {
     List<ILoggingEvent> errors = errors();
     assertThat(errors)
         .withFailMessage(() -> "Expected no ERROR, but got:" + describe(errors))
         .isEmpty();
   }
 
-  void assertNoWarningsOrAbove() {
+  public void assertNoWarningsOrAbove() {
     List<ILoggingEvent> warnings = warningsOrAbove();
     assertThat(warnings)
         .withFailMessage(() -> "Expected nothing at WARN or above, but got:" + describe(warnings))
         .isEmpty();
   }
 
-  ILoggingEvent theOnlyError() {
+  public ILoggingEvent theOnlyError() {
     List<ILoggingEvent> errors = errors();
     assertThat(errors)
         .withFailMessage(
@@ -99,7 +99,7 @@ final class CapturedLogs {
   }
 
   /** Every captured message with its stack trace, as a log file would hold them. Unfiltered. */
-  String everythingLogged() {
+  public String everythingLogged() {
     StringBuilder all = new StringBuilder();
     for (ILoggingEvent event : events()) {
       all.append(event.getFormattedMessage()).append('\n');
