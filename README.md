@@ -2,7 +2,7 @@
 
 A web platform for managing an adult football club's day-to-day professional operations — squad, tactics, training, and match data — from one place. Hebrew-first (RTL), multi-club from day one.
 
-**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), the club's staff list (`GET /auth/users`), deactivating and re-activating users, and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's settings (viewing and renaming it) and its optional logo — see [Club API](#club-api). An optional photo per staff user — see [Staff photo API](#staff-photo-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet. The frontend has its infrastructure (routing, theme, components, API proxy, test setup) its API client and session, the login, forgot-password and set-password / activation screens (KAN-47), the app shell around every logged-in page (KAN-48: sidebar navigation, page title, the user and logout), the squad table (KAN-49: active / released / all players, filters kept in the page URL, player photos), the player card, the add / edit player form and a per-row actions menu (KAN-50), and releasing, re-activating and permanently deleting players from the card or the row menu, plus uploading, replacing and removing a player's photo on the card (KAN-59), and a cards view of the squad next to the table (KAN-52: a list / cards toggle, the view kept in the page URL), and "back to the squad" links that return to the squad's last filters and view in this tab (KAN-61); the scraper is still a skeleton.
+**Status:** Backend core in progress. The first real endpoints exist: authentication (login / refresh / logout), forgot / reset password, inviting users (who activate their account with an emailed code), the club's staff list (`GET /auth/users`), deactivating and re-activating users, and the current user's own profile (`GET /auth/users/me`) — see [Auth API](#auth-api). The club's settings (viewing and renaming it) and its optional logo — see [Club API](#club-api). An optional photo per staff user — see [Staff photo API](#staff-photo-api). Squad: listing (with filters), viewing, adding, editing, releasing, re-activating and permanently deleting players, a squad summary (player count, average age, players per line), and an optional photo per player — see [Squad API](#squad-api). No other feature code has shipped yet. The frontend has its infrastructure (routing, theme, components, API proxy, test setup) its API client and session, the login, forgot-password and set-password / activation screens (KAN-47), the app shell around every logged-in page (KAN-48: sidebar navigation, page title, the user and logout), the squad table (KAN-49: active / released / all players, filters kept in the page URL, player photos), the player card, the add / edit player form and a per-row actions menu (KAN-50), and releasing, re-activating and permanently deleting players from the card or the row menu, plus uploading, replacing and removing a player's photo on the card (KAN-59), and a cards view of the squad next to the table (KAN-52: a list / cards toggle, the view kept in the page URL), and "back to the squad" links that return to the squad's last filters and view in this tab (KAN-61). The scraper is a small internal Node service (KAN-67): on the backend's request (`POST /scrape`, service token) it scrapes one team's fixtures and its league table from football.org.il and posts them to the backend — see [scraper/README.md](scraper/README.md); nothing triggers it automatically yet (KAN-68).
 
 **Full spec:** [SquadPulse — full technical spec](/docs/spec.md)
 
@@ -30,9 +30,9 @@ squadpulse/
 │       ├── scrapingintegration/      # Talks to the scraper worker, feeds match
 │       └── common/                   # Shared: clubId enforcement, error handling, etc.
 ├── frontend/                         # React 19 + TypeScript + Vite + Tailwind
-├── scraper/                          # Node.js worker (Playwright/Cheerio)
+├── scraper/                          # Node.js service: POST /scrape → headless Chromium as HTTP client + Cheerio → /internal/scrape-results
 ├── docs/design/ui-conventions.md     # Approved UI design: theme tokens, type scale, layout rules
-├── docs/scraper-backend-contract.md  # What the scraper posts to /internal/scrape-results, and the answers
+├── docs/scraper-backend-contract.md  # Backend ↔ scraper: the trigger (POST /scrape) and what the scraper posts to /internal/scrape-results
 ├── docker-compose.yml                # MongoDB + Redis, local dev only
 └── README.md
 ```
@@ -44,7 +44,7 @@ squadpulse/
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui (Base UI, RTL mode), React Router 8 (data router), TanStack Query, Zustand, Konva.js (tactical board), Recharts |
 | Backend | Java, Spring Boot (single modular monolith) |
 | Database | MongoDB (primary data), Redis (refresh-token families, failed-login counts, and activation / reset codes today; cache planned) |
-| Scraper | Node.js, Playwright/Cheerio |
+| Scraper | Node.js 24, Playwright (headless Chromium, as an HTTP client only) / Cheerio |
 | Auth | Stateless JWT (Access + Refresh in HttpOnly cookie), Argon2id password hashing + a pepper (env var, never committed) |
 | CI | GitHub Actions (lint, test, build on PRs to `master` and pushes to `master` — no CD yet) |
 
@@ -114,7 +114,7 @@ Dependabot's PRs (see [Security](#security)) target `master`, so they run the sa
 
 ## Local development
 
-Prerequisites: **JDK 21**, Node 22.22+ (or 24+; React Router 8 needs 22.22), Docker.
+Prerequisites: **JDK 21**, Node 22.22+ (or 24+; React Router 8 needs 22.22; the scraper needs 24+), Docker.
 
 1. `cp .env.example .env`, then replace every value with real ones (`.env` is git-ignored). Use long random values for `JWT_SECRET`, `PASSWORD_PEPPER` and `OWNER_BOOTSTRAP_SECRET` (at least 32 characters each, all different — the backend refuses to start otherwise; `OWNER_BOOTSTRAP_SECRET` is only required by the bootstrap task below). `SCRAPER_SERVICE_TOKEN` is optional: leave it empty until you run the scraper (the backend then logs one WARN at startup and answers every `/internal/**` request with `401`); if set, it must be at least 32 characters without whitespace, or the backend refuses to start.
 2. `docker compose up -d` — MongoDB + Redis. MongoDB runs as a single-node replica set (`rs0`), since MongoDB only supports multi-document transactions on a replica set; the healthcheck initiates it on first start. Keep `directConnection=true` in `MONGODB_URI`.
@@ -129,6 +129,7 @@ Prerequisites: **JDK 21**, Node 22.22+ (or 24+; React Router 8 needs 22.22), Doc
    - Squad pages: the table at `/app/squad`, a player's card at `/app/squad/{id}`, and the add / edit forms at `/app/squad/new` and `/app/squad/{id}/edit` (shown only from `EDIT_FULL` up; anyone else gets a "no permission" message there). The forms tell conflicts apart by the error's `code` (see [Conflict codes](#conflict-codes)), so they need a backend that sends it.
    - Tests (Vitest + Testing Library) never call the real backend: they mock it with [MSW](https://mswjs.io/), and a request no mock covers is blocked and fails the test that sent it, even if the test mocks `console.error` (or the file, if it lands outside a test; `src/test/unhandledRequestGuard.ts`): a test that sends one on purpose says so with `expectUnhandledRequest(method, path)`, and fails if it doesn't happen. So does an unexpected `console.error` / `console.warn` (`src/test/consoleGuard.ts`): a test that expects one mocks that method itself and asserts it.
    - Optional settings, in `frontend/.env.local` (git-ignored; see `frontend/.env.example`): `SQUADPULSE_BACKEND_URL`, where the dev proxy sends those paths (default `http://localhost:8080`; used only by `vite.config.ts`, never sent to the browser); `VITE_API_BASE_URL`, the backend's base URL as the app calls it, baked in at build time (empty by default = the app's own origin: the dev proxy, or a reverse proxy in production).
+5. Scraper (optional; only needed to fetch football.org.il data): Node 24, `cd scraper && npm install && npx playwright install chromium`, then `cp .env.example .env` in `scraper/` and set `SCRAPER_SERVICE_TOKEN` to the same value as in the root `.env` (the scraper has its own git-ignored `scraper/.env` on purpose: it must not get the root `.env`'s database credentials). `npm start` listens on `127.0.0.1:8090` and posts results to the backend on `http://localhost:8080`. Nothing triggers it automatically yet (KAN-68); see [scraper/README.md](scraper/README.md) for a manual trigger, what it requests from the site and what it logs. Checks: `npm run lint`, `npm run format:check`, `npm test`.
 
 ### Auth API
 
@@ -332,7 +333,7 @@ WebKit here is Playwright's WebKit build, not Safari on macOS: checking the app 
 Nothing is deployed yet (Phase 6+). Things the deployment must respect:
 
 - **Request body size at the reverse proxy.** A reverse proxy or load balancer in front of the app must allow request bodies of **at least 3MB** (the app's `spring.servlet.multipart.max-request-size`), or image uploads (player photos, the club logo, staff photos) fail at the proxy before they reach the app — and with the proxy's error, not the app's JSON `413`. nginx's default `client_max_body_size` is 1MB, so it must be raised (e.g. `client_max_body_size 3m;`).
-- **`/internal/**` must not be reachable from the internet.** It's for the scraper only, which should reach the backend on the internal network. Block the prefix at the reverse proxy (e.g. nginx `location /internal/ { return 404; }`) even though the service token protects it, and set `SCRAPER_SERVICE_TOKEN` (≥ 32 random characters) in both the backend's and the scraper's environment only.
+- **`/internal/**` must not be reachable from the internet.** It's for the scraper only, which should reach the backend on the internal network. Block the prefix at the reverse proxy (e.g. nginx `location /internal/ { return 404; }`) even though the service token protects it, and set `SCRAPER_SERVICE_TOKEN` (≥ 32 random characters) in both the backend's and the scraper's environment only. The scraper's own trigger endpoint (`POST /scrape`, `SCRAPER_HOST` / `SCRAPER_PORT`) must be reachable from the backend only, never from the internet or browsers.
 - **Email:** `common.LoggingEmailSender` must be replaced by a real provider first (see [Security](#security)).
 
 ## Working with Claude Code

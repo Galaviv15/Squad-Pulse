@@ -1,6 +1,55 @@
-# Scraper ↔ backend contract (KAN-66)
+# Scraper ↔ backend contract (KAN-66, KAN-67)
 
-How the scraper (`scraper/`, KAN-67) hands one scrape to the backend. The request and response records in `backend/src/main/java/com/squadpulse/scrapingintegration` (`ScrapeResultRequest`, `ScrapeResultResponse`) are the source of truth; this document describes them. Change both together.
+The two calls between the backend and the scraper service (`scraper/`):
+
+1. **Trigger, backend → scraper** (KAN-67): the backend asks the scraper to scrape one (team, league, season). See [Trigger: backend → scraper](#trigger-backend--scraper). The scraper's validation (`scraper/src/server.js`) is the source of truth for it.
+2. **Ingest, scraper → backend** (KAN-66): the scraper hands the result of that scrape to the backend, everything from [Endpoint and authentication](#endpoint-and-authentication) on. The request and response records in `backend/src/main/java/com/squadpulse/scrapingintegration` (`ScrapeResultRequest`, `ScrapeResultResponse`) are the source of truth for it; this document describes them. Change both together.
+
+Both directions use the same shared secret, `SCRAPER_SERVICE_TOKEN`.
+
+## Trigger: backend → scraper
+
+`POST /scrape` on the scraper (default `http://127.0.0.1:8090`; `SCRAPER_HOST` / `SCRAPER_PORT`), `Content-Type: application/json`, `Authorization: Bearer <SCRAPER_SERVICE_TOKEN>`. The scraper answers at once and scrapes in the background; the result arrives later, as its own request to `POST /internal/scrape-results` (below). Nothing in the `202` says how the scrape went.
+
+```
+{
+  "runId":     string | null,
+  "teamId":    int,
+  "leagueId":  int,
+  "seasonId":  int,
+  "fixtures":  boolean,
+  "standings": boolean
+}
+```
+
+| Field | Type | Rules | Meaning |
+|---|---|---|---|
+| `runId` | string or `null` | required; `null` or 1–100 characters, no control characters | Opaque. Echoed as the result's `runId` and in the scraper's log lines (KAN-68 sets it). |
+| `teamId` | int | required, 1..2147483647 | The football.org.il team whose fixtures to scrape. |
+| `leagueId` | int | required, 1..2147483647 | Its league (the standings). |
+| `seasonId` | int | required, 1..2147483647 | The season. |
+| `fixtures` | boolean | required | Scrape the team's games page. |
+| `standings` | boolean | required | Scrape the league table. |
+
+All six properties are required (`runId` may be `null`). At least one of `fixtures` / `standings` must be `true`. Unknown properties are rejected. A part that's `false` is sent to the backend as `null` (not attempted).
+
+| Status | When | Body |
+|---|---|---|
+| `202` | Accepted and queued. | `{"status": "QUEUED", "runId": <this request's runId>}` |
+| `202` | A scrape for the same `(teamId, leagueId, seasonId)` is already queued or running. Nothing is added or changed (not even its parts). | `{"status": "ALREADY_QUEUED", "runId": <the existing run's runId>}` |
+| `400` | Invalid JSON, a wrong type, a missing or out-of-range property, an unknown property, both parts `false`. | `{"error": "<fixed message>"}` |
+| `401` | No, malformed or wrong bearer token. Sent with `WWW-Authenticate: Bearer`. | `{"error": "unauthorized"}` |
+| `404` | Any other path. | `{"error": "not found"}` |
+| `405` | Any other method on `/scrape`. Sent with `Allow: POST`. | `{"error": "method not allowed"}` |
+| `413` | Body over 4 KB (4,096 bytes), with or without `Content-Length` (chunked too). | `{"error": "body over 4096 bytes"}` |
+| `415` | `Content-Type` isn't `application/json` (a `charset` parameter is fine). | `{"error": "Content-Type must be application/json"}` |
+| `503` | The queue is full (5 waiting behind the running scrape), or the scraper is shutting down. Try again later. | `{"error": "queue full"}` / `{"error": "shutting down"}` |
+
+Checked in that order: path, method, token, `Content-Type`, size, body. Error messages are fixed texts: they never repeat the request (not a property name, not a value). The token is compared in constant time (SHA-256 digests of both values, so lengths don't leak) and never logged.
+
+**Queue.** One scrape runs at a time, in-process, with a FIFO of at most 5 waiting. Dedupe is by `(teamId, leagueId, seasonId)` across waiting and running; once a scrape has finished (its result posted or dropped), the same ids can be queued again. This is a second line of defence: KAN-68's per-team and per-league locks are the primary one. The queue lives in memory: a restart drops whatever was waiting or running, with no result posted.
+
+**What one scrape does** (scraper README for the details): at most 3 requests to football.org.il (games page if `fixtures`; league page and `LeagueTable` if `standings`), 3–5 s apart, at most one retry (a timeout or a 5xx, after 10 s), 90 s overall. A block stops the scrape at once with no retry: the blocked part and every part not yet attempted are `FAILED SOURCE_BLOCKED`.
 
 ## Endpoint and authentication
 
