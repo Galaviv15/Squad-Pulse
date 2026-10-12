@@ -263,7 +263,23 @@ describe("the table tab", () => {
       within(rows[1])
         .getAllByRole("cell")
         .map((cell) => cell.textContent),
-    ).toEqual(["1", "Team 1", "6", "3", "1", "2", "10:7", "+3", "29"]);
+    ).toEqual(["1", "Team 1", "6", "3", "1", "2", "זכות 10, חובה 710:7", "+3", "29"]);
+    // Goals for, then against, as two elements in the page's direction (RTL: "for" on the right,
+    // read first). Never one "10:7" text, which a digit run would lay out left to right.
+    const goals = within(rows[1]).getAllByRole("cell")[6];
+    const goalsFor = goals.querySelector('[data-slot="goals-for"]')!;
+    const goalsAgainst = goals.querySelector('[data-slot="goals-against"]')!;
+    expect(goalsFor).toHaveTextContent(/^10$/);
+    expect(goalsAgainst).toHaveTextContent(/^7$/);
+    expect(before(goalsFor, goalsAgainst)).toBe(true);
+    expect(goals.querySelector("[dir]")).toBeNull();
+    for (const element of [goals, ...goals.querySelectorAll("*")]) {
+      for (const node of element.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          expect(node.textContent).not.toMatch(/\d\s*:\s*\d/);
+        }
+      }
+    }
     const own = rows.filter((row) => row.getAttribute("aria-current") === "true");
     expect(own).toHaveLength(1);
     expect(own[0]).toHaveTextContent(`Hapoel Sderot ${M.ownTeamMarker}`);

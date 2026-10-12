@@ -33,8 +33,32 @@ function GoalDifference({ value }: { value: number }) {
 }
 
 /**
+ * Goals for, then against: two elements in DOM order, in the page's direction, so in RTL the
+ * for-number is on the right and a Hebrew reader meets it first (as on football.org.il). Never one
+ * "12:8" string: a digit run is laid out left to right inside RTL text, which would put the
+ * against-number on the right. Screen readers get "זכות X, חובה Y" instead of the bare numbers.
+ */
+function Goals({ row }: { row: LeagueTableRow }) {
+  const { t } = useTranslation();
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <span className="sr-only">
+        {t("matches.table.goalsLabel", { goalsFor: row.goalsFor, goalsAgainst: row.goalsAgainst })}
+      </span>
+      <span aria-hidden="true" data-slot="goals-for">
+        {row.goalsFor}
+      </span>
+      <span aria-hidden="true">:</span>
+      <span aria-hidden="true" data-slot="goals-against">
+        {row.goalsAgainst}
+      </span>
+    </span>
+  );
+}
+
+/**
  * The full league table (the matches screen's table tab): position, team, played, won, drawn,
- * lost, goals for:against, goal difference, points; our row highlighted. On a narrow screen it
+ * lost, goals (for, then against, from the start side), goal difference, points; our row highlighted. On a narrow screen it
  * scrolls sideways inside its container (the shadcn table's), never the page.
  */
 export function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
@@ -77,11 +101,8 @@ export function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
               <TableCell className="text-center">{row.won}</TableCell>
               <TableCell className="text-center">{row.drawn}</TableCell>
               <TableCell className="text-center">{row.lost}</TableCell>
-              {/* Goals for, then against, as read left to right (an LTR island). */}
               <TableCell className="text-center">
-                <span dir="ltr">
-                  {row.goalsFor}:{row.goalsAgainst}
-                </span>
+                <Goals row={row} />
               </TableCell>
               <TableCell className="text-center">
                 <GoalDifference value={row.goalDifference} />

@@ -272,7 +272,8 @@
       "goals": "שערים",
       "goalDifference": "הפרש",
       "points": "נקודות",
-      "empty": "הטבלה ריקה."
+      "empty": "הטבלה ריקה.",
+      "goalsLabel": "זכות {{goalsFor}}, חובה {{goalsAgainst}}"
     },
     "refresh": {
       "button": "רענון נתונים",
