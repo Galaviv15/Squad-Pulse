@@ -72,6 +72,56 @@ jobs:
       - name: Build
         run: npm run build
 
+  # The scraper service (KAN-67): lint, format, and its node:test suite, which includes one real
+  # headless-Chromium scrape against a local server. No test ever calls football.org.il.
+  scraper-ci:
+    name: scraper-ci
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: scraper
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: scraper/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Chromium only, cached per Playwright version under its own key (the e2e job's cache also
+      # holds WebKit, and its version can differ). System packages aren't cached: installed each run.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-scraper-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Test
+        run: npm test
+
   # End-to-end tests (KAN-53): the built SPA, served over HTTPS by `vite preview`, against the
   # real backend (packaged jar) + MongoDB + Redis from docker-compose, in Chromium and WebKit. See
   # README "End-to-end tests". Not a required check.
