@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
+import { WEEKDAY_KEYS } from "@/lib/matches/labels";
 import { cn } from "@/lib/utils";
 
 /*
@@ -21,51 +22,21 @@ function PlaceholderHeader({ title }: { title: string }) {
   );
 }
 
-/** Next training, next match, league table: the row of small placeholders. */
-const CARDS = [
-  {
-    titleKey: "dashboard.placeholders.training.title",
-    bodyKey: "dashboard.placeholders.training.body",
-  },
-  { titleKey: "dashboard.placeholders.match.title", bodyKey: "dashboard.placeholders.match.body" },
-  {
-    titleKey: "dashboard.placeholders.league.title",
-    bodyKey: "dashboard.placeholders.league.body",
-  },
-] as const;
-
-export function ComingSoonCards() {
+/** Next training: a placeholder until the training module exists. */
+export function NextTrainingPlaceholder() {
   const { t } = useTranslation();
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-5">
-      {CARDS.map(({ titleKey, bodyKey }) => (
-        <div
-          key={titleKey}
-          data-slot="coming-soon"
-          className={cn(PLACEHOLDER_CLASSES, "min-h-[140px]")}
-        >
-          <PlaceholderHeader title={t(titleKey)} />
-          <p className="text-sm text-muted-foreground">{t(bodyKey)}</p>
-        </div>
-      ))}
+    <div data-slot="coming-soon" className={cn(PLACEHOLDER_CLASSES, "min-h-[140px]")}>
+      <PlaceholderHeader title={t("dashboard.placeholders.training.title")} />
+      <p className="text-sm text-muted-foreground">{t("dashboard.placeholders.training.body")}</p>
     </div>
   );
 }
 
-/** The week's days, Sunday first: the first column sits at the start side (right in RTL). */
-const DAY_KEYS = [
-  "dashboard.weekly.days.sunday",
-  "dashboard.weekly.days.monday",
-  "dashboard.weekly.days.tuesday",
-  "dashboard.weekly.days.wednesday",
-  "dashboard.weekly.days.thursday",
-  "dashboard.weekly.days.friday",
-  "dashboard.weekly.days.saturday",
-] as const;
-
 /**
- * The wide weekly-schedule placeholder: seven empty day columns. Below 7 × 90px they scroll
- * sideways inside the card, never the page.
+ * The wide weekly-schedule placeholder: seven empty day columns, Sunday first (the first column
+ * sits at the start side, right in RTL). Below 7 × 90px they scroll sideways inside the card,
+ * never the page.
  */
 export function WeeklySchedulePlaceholder() {
   const { t } = useTranslation();
@@ -74,7 +45,7 @@ export function WeeklySchedulePlaceholder() {
       <PlaceholderHeader title={t("dashboard.weekly.title")} />
       <div className="overflow-x-auto">
         <ol className="grid grid-cols-[repeat(7,minmax(90px,1fr))] gap-3">
-          {DAY_KEYS.map((key) => (
+          {WEEKDAY_KEYS.map((key) => (
             <DayColumn key={key}>{t(key)}</DayColumn>
           ))}
         </ol>

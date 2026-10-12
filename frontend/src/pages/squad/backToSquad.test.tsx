@@ -15,6 +15,7 @@ import {
   summaryReturns,
   updatePlayerReturns,
 } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { renderWithProviders } from "@/test/render";
 
 // Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
@@ -136,6 +137,7 @@ describe("'חזרה לסגל' from the player card", () => {
       http.post("/auth/logout", () => new HttpResponse(null, { status: 204 })),
       loginReturns("t2"),
       summaryReturns(),
+      ...dashboardMatchesReturn(),
     );
 
     fireEvent.click(screen.getByRole("button", { name: he.shell.logout }));
@@ -159,7 +161,7 @@ describe("the card's delete", () => {
     const { router } = renderAt(FILTERED, { entries: ["/app"] });
     await squadCardsShown();
     // Back to /app below shows the dashboard, which requests the squad summary.
-    server.use(deleteReturns("p1").handler, summaryReturns());
+    server.use(deleteReturns("p1").handler, summaryReturns(), ...dashboardMatchesReturn());
     fireEvent.click(screen.getByRole("link", { name: "Yossi Levi" }));
     await cardShown();
 
@@ -245,7 +247,7 @@ describe("the other 'back to the squad' links go to the last squad URL", () => {
 
 describe("the navigation entry points stay the bare squad", () => {
   it("the dashboard's 'לטבלת הסגל' and the sidebar's 'סגל'", async () => {
-    server.use(summaryReturns());
+    server.use(summaryReturns(), ...dashboardMatchesReturn());
     await fromFilteredSquadTo("/app");
     expect(squadReturnPath()).toBe(FILTERED);
 

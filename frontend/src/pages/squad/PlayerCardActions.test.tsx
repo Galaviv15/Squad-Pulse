@@ -26,6 +26,7 @@ import {
   releaseReturns,
   summaryReturns,
 } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { watchLiveInsertion } from "@/test/liveRegion";
 import { renderWithProviders } from "@/test/render";
 
@@ -459,7 +460,12 @@ describe("the card's permanent delete", () => {
       const { router } = await renderCard(player, { entries: ["/app"] });
       const remove = deleteReturns(player.id, answer);
       // Back to /app below shows the dashboard, which requests the squad summary.
-      server.use(remove.handler, recordedPlayers([]).handler, summaryReturns());
+      server.use(
+        remove.handler,
+        recordedPlayers([]).handler,
+        summaryReturns(),
+        ...dashboardMatchesReturn(),
+      );
       const dialog = await openDialog(he.squad.actions.delete);
       const before = sent().length;
 

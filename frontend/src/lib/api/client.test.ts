@@ -109,6 +109,14 @@ describe("apiFetch", () => {
     expect(seen).toEqual([null]);
   });
 
+  it("resolves a 202 with a JSON body to that body (POST /matches/refresh's STARTED)", async () => {
+    const session = await sessionWith("t1");
+    const started = { outcome: "STARTED", state: "RUNNING", nextRefreshAt: "2026-10-12T15:10:00Z" };
+    server.use(http.post("/matches/refresh", () => HttpResponse.json(started, { status: 202 })));
+
+    expect(await apiJson("/matches/refresh", { method: "POST" }, session)).toEqual(started);
+  });
+
   describe("public endpoints", () => {
     it("never sends the token to /auth/reset-password, so its 401 neither refreshes nor resends the code", async () => {
       const session = await sessionWith("t1");

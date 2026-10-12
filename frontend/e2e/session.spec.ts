@@ -29,10 +29,14 @@ test("the refresh cookie is stored as sent, and a reload keeps the session", asy
 });
 
 test("an expired access token is refreshed silently", async ({ page }) => {
-  // The dashboard's summary is its last request: once it's answered, nothing is in flight.
-  const summary = page.waitForResponse((r) => isCall(r, "GET", "/squad/summary"));
+  // The dashboard's three reads are its last requests: once they're answered, nothing is in flight.
+  const reads = ["/squad/summary", "/matches/fixtures", "/matches/league-table"].map((path) =>
+    page.waitForResponse((r) => isCall(r, "GET", path)),
+  );
   await logIn(page);
-  expect((await summary).status()).toBe(200);
+  for (const read of reads) {
+    expect((await read).status()).toBe(200);
+  }
 
   // Waiting on time is the point here: the access token must really expire on the server (no
   // faked 401). The margin covers the token's whole-second expiry.

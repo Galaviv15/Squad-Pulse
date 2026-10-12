@@ -24,6 +24,7 @@ import {
   summaryReturns,
   updatePlayerReturns,
 } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { combobox, errorOf, fields, input, submitButton, type } from "@/test/playerForm";
 import { renderWithProviders } from "@/test/render";
 
@@ -175,6 +176,7 @@ describe("the edit form", () => {
       playerReturns(playerBody({ fullName: "Name B", version: 2 }), { gate: fresh.promise }),
       update.handler,
       summaryReturns(),
+      ...dashboardMatchesReturn(),
     );
     const { router, queryClient } = renderWithProviders({ initialEntries: ["/app"] });
     await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
@@ -206,6 +208,7 @@ describe("the edit form", () => {
           : HttpResponse.json(playerBody({ fullName: "Name B", version: 2 })),
       ),
       summaryReturns(),
+      ...dashboardMatchesReturn(),
     );
     const { router, queryClient } = renderWithProviders({ initialEntries: ["/app"] });
     await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
