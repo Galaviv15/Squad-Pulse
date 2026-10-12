@@ -22,6 +22,7 @@ import {
 } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
 import { summaryReturns } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { renderWithProviders } from "@/test/render";
 
 // Load the lazy page's code up front: the first lazy load must not count against findBy's 1 s wait.
@@ -30,7 +31,7 @@ beforeAll(() => import("@/pages/squad/SquadPage"));
 // Most of these tests end on /app, whose dashboard requests GET /squad/summary as soon as it
 // shows: answer it everywhere, as any test landing on /app must.
 beforeEach(() => {
-  server.use(summaryReturns());
+  server.use(summaryReturns(), ...dashboardMatchesReturn());
 });
 
 /** The shell's page title at /app: what a logged-in user sees. */

@@ -24,6 +24,7 @@ import {
   recordedPlayers,
   summaryReturns,
 } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { renderWithProviders } from "@/test/render";
 
 // Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
@@ -834,6 +835,7 @@ describe("after a logout", () => {
       }),
       // The login lands on /app, whose dashboard requests the squad summary.
       summaryReturns(),
+      ...dashboardMatchesReturn(),
     );
     fireEvent.change(screen.getByLabelText(he.auth.fields.email), {
       target: { value: "coach@example.com" },

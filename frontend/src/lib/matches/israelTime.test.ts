@@ -1,8 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { formatInstant, israelToday, minutesUntil, weekdayOf } from "./israelTime";
+
+const machineZone = process.env.TZ;
+
+/** Runs the rest of the test as a browser in `zone` (Node reads TZ again when it changes). */
+function browserIn(zone: string) {
+  process.env.TZ = zone;
+}
+
+afterEach(() => {
+  process.env.TZ = machineZone;
+});
 
 describe("israelToday", () => {
   it("is Israel's date when UTC is still on the day before (23:30 UTC, summer: +3)", () => {
+    browserIn("America/New_York");
     // 23:30 UTC on 11 Oct is 02:30 on 12 Oct in Israel (IDT, UTC+3).
     expect(israelToday(new Date("2026-10-11T23:30:00Z"))).toBe("2026-10-12");
   });
@@ -13,7 +25,14 @@ describe("israelToday", () => {
     expect(israelToday(new Date("2026-10-11T20:59:00Z"))).toBe("2026-10-11");
   });
 
-  it("is not the browser's local date (the test runs in whatever zone the machine has)", () => {
+  it("is Israel's date in a browser already on the next day", () => {
+    // 12:00 UTC on 11 Oct is 15:00 on the 11th in Israel, but already 02:00 on the 12th at UTC+14.
+    browserIn("Pacific/Kiritimati");
+    expect(israelToday(new Date("2026-10-11T12:00:00Z"))).toBe("2026-10-11");
+  });
+
+  it("is not the browser's local date in winter either (UTC+2)", () => {
+    browserIn("America/Los_Angeles");
     // 22:30 UTC on 31 Dec: 00:30 on 1 Jan in Israel (IST, UTC+2), whatever the local zone says.
     expect(israelToday(new Date("2026-12-31T22:30:00Z"))).toBe("2027-01-01");
     expect(israelToday(new Date("2026-12-31T21:59:00Z"))).toBe("2026-12-31");
@@ -21,7 +40,8 @@ describe("israelToday", () => {
 });
 
 describe("formatInstant", () => {
-  it("shows an instant in Israel time as dd.MM.yyyy HH:mm", () => {
+  it("shows an instant in Israel time as dd.MM.yyyy HH:mm, whatever the browser's zone", () => {
+    browserIn("Asia/Tokyo");
     expect(formatInstant("2026-10-12T15:30:00Z")).toBe("12.10.2026 18:30");
     expect(formatInstant("2026-01-05T08:05:00Z")).toBe("05.01.2026 10:05");
   });

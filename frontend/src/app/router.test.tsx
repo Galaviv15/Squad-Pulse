@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
 import { playerBody, playerReturns, playersReturn, summaryReturns } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/render";
 
@@ -24,7 +25,7 @@ describe("routes", () => {
   });
 
   it("redirects / to /app", async () => {
-    server.use(summaryReturns());
+    server.use(summaryReturns(), ...dashboardMatchesReturn());
     const { router } = renderWithProviders({ initialEntries: ["/"] });
 
     expect(await screen.findByRole("heading", { name: he.nav.dashboard })).toBeInTheDocument();
@@ -34,7 +35,7 @@ describe("routes", () => {
   });
 
   it("renders /app inside the shell", async () => {
-    server.use(summaryReturns());
+    server.use(summaryReturns(), ...dashboardMatchesReturn());
     renderWithProviders({ initialEntries: ["/app"] });
 
     expect(
@@ -133,7 +134,7 @@ describe("routes", () => {
     // index.html sets <html lang="he" dir="rtl">, but Vitest doesn't load index.html, so set it
     // here as the page would and check that rendering the app leaves it alone.
     document.documentElement.setAttribute("dir", "rtl");
-    server.use(summaryReturns());
+    server.use(summaryReturns(), ...dashboardMatchesReturn());
     renderWithProviders({ initialEntries: ["/app"] });
 
     await screen.findByRole("heading", { name: he.nav.dashboard });

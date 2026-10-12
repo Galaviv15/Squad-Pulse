@@ -14,11 +14,16 @@ import {
 } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
 import { playerBody, playerReturns, playersReturn, summaryReturns } from "@/test/msw/squad";
+import { dashboardMatchesReturn, refreshStatusReturns } from "@/test/msw/matches";
 import { renderWithProviders } from "@/test/render";
 
 // Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
 beforeAll(() =>
-  Promise.all([import("@/pages/squad/SquadPage"), import("@/pages/squad/PlayerCardPage")]),
+  Promise.all([
+    import("@/pages/squad/SquadPage"),
+    import("@/pages/squad/PlayerCardPage"),
+    import("@/pages/matches/MatchesPage"),
+  ]),
 );
 
 const LOGO = "/clubs/me/logo";
@@ -29,7 +34,13 @@ const PHOTO = "/users/me/photo";
  * summary. Waits for the shell's <h1>.
  */
 async function renderShell(path = "/app", user: Partial<CurrentUser> = {}) {
-  server.use(refreshReturns("t1"), meReturns(user), playersReturn([]), summaryReturns());
+  server.use(
+    refreshReturns("t1"),
+    meReturns(user),
+    playersReturn([]),
+    summaryReturns(),
+    ...dashboardMatchesReturn(),
+  );
   const rendered = renderWithProviders({ initialEntries: [path] });
   await screen.findByRole("heading", { level: 1 });
   return rendered;
@@ -105,6 +116,7 @@ describe("the app shell", () => {
         return HttpResponse.json(currentUserBody());
       }),
       summaryReturns(),
+      ...dashboardMatchesReturn(),
     );
     renderWithProviders({ initialEntries: ["/app"] });
 
@@ -145,8 +157,14 @@ describe("the club logo and the user photo", () => {
       club: { id: "c1", name: "Test FC", hasLogo: false },
     });
 
-    // The dashboard's own request, and no image.
-    expect(fetchedPaths()).toEqual(["/auth/refresh", "/auth/users/me", "/squad/summary"]);
+    // The dashboard's own requests, and no image.
+    expect(fetchedPaths()).toEqual([
+      "/auth/refresh",
+      "/auth/users/me",
+      "/squad/summary",
+      "/matches/fixtures",
+      "/matches/league-table",
+    ]);
     expect(screen.getByText("TF")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("DC")).toHaveAttribute("aria-hidden", "true");
     expect(images()).toEqual([]);
@@ -289,7 +307,23 @@ describe("navigation", () => {
     ).toEqual([
       [he.nav.dashboard, "/app"],
       [he.nav.squad, "/app/squad"],
+      [he.nav.matches, "/app/matches"],
     ]);
+  });
+
+  it('opens the matches screen from "משחקים" (KAN-69)', async () => {
+    const { router } = await renderShell();
+    // An admin's matches screen asks for the refresh status too.
+    server.use(refreshStatusReturns().handler);
+
+    fireEvent.click(navLink(he.nav.matches));
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: he.nav.matches }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/app/matches");
+    expect(navLink(he.nav.matches)).toHaveAttribute("aria-current", "page");
+    expect(await screen.findAllByText(he.matches.notMapped)).not.toHaveLength(0);
   });
 });
 
@@ -298,7 +332,7 @@ describe("the coming-soon group", () => {
     .filter(([key]) => key !== "label")
     .map(([, text]) => text);
 
-  it("lists the four sections, labelled as coming soon, outside the navigation", async () => {
+  it("lists the three sections, labelled as coming soon, outside the navigation", async () => {
     await renderShell();
 
     const list = screen.getByRole("list", { name: he.shell.comingSoon.label });
@@ -309,7 +343,6 @@ describe("the coming-soon group", () => {
     ).toEqual([
       he.shell.comingSoon.schedule,
       he.shell.comingSoon.training,
-      he.shell.comingSoon.matches,
       he.shell.comingSoon.tactics,
     ]);
     expect(nav()).not.toContainElement(list);

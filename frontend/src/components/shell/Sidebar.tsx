@@ -32,13 +32,13 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: "/app", labelKey: "nav.dashboard", icon: LayoutDashboard, end: true },
   { to: "/app/squad", labelKey: "nav.squad", icon: Users },
+  { to: "/app/matches", labelKey: "nav.matches", icon: Trophy },
 ];
 
 /** Shown disabled until they exist: plain text, never links or buttons. */
 const COMING_SOON: { labelKey: string; icon: LucideIcon }[] = [
   { labelKey: "shell.comingSoon.schedule", icon: Clock },
   { labelKey: "shell.comingSoon.training", icon: CalendarDays },
-  { labelKey: "shell.comingSoon.matches", icon: Trophy },
   { labelKey: "shell.comingSoon.tactics", icon: ClipboardList },
 ];
 

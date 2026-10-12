@@ -8,6 +8,7 @@ import type { SquadSummary } from "@/lib/squad/types";
 import { deferred } from "@/test/deferred";
 import { apiError, loggedIn } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { playerBody, playersReturn, summaryBody, summaryReturns } from "@/test/msw/squad";
 import { renderWithProviders } from "@/test/render";
 
@@ -17,7 +18,11 @@ beforeAll(() => import("@/pages/squad/SquadPage"));
 /** Logged in at /app with the summary answering `answer`; waits for the shell's <h1>. */
 async function renderDashboard(answer: Parameters<typeof summaryReturns>[0] = summaryBody()) {
   const requests = { count: 0 };
-  server.use(...loggedIn(), summaryReturns(answer, { onRequest: () => requests.count++ }));
+  server.use(
+    ...loggedIn(),
+    summaryReturns(answer, { onRequest: () => requests.count++ }),
+    ...dashboardMatchesReturn(),
+  );
   const rendered = renderWithProviders({ initialEntries: ["/app"] });
   await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
   return { ...rendered, requests };
@@ -199,13 +204,17 @@ describe("the dashboard's squad cards", () => {
 describe("the dashboard's states", () => {
   it("shows a loading message in place of the squad cards, and the placeholders already", async () => {
     const gate = deferred();
-    server.use(...loggedIn(), summaryReturns(summaryBody(), { gate: gate.promise }));
+    server.use(
+      ...loggedIn(),
+      summaryReturns(summaryBody(), { gate: gate.promise }),
+      ...dashboardMatchesReturn(),
+    );
     renderWithProviders({ initialEntries: ["/app"] });
     await screen.findByRole("heading", { level: 1, name: he.nav.dashboard });
     const main = screen.getByRole("main");
 
-    expect(within(main).getByRole("status")).toHaveTextContent(he.auth.loading);
-    expect(placeholders()).toHaveLength(4);
+    expect(within(main).getByText(he.auth.loading)).toHaveAttribute("role", "status");
+    expect(placeholders()).toHaveLength(2);
     // No numbers and no ring before the data: never a 0 that isn't one.
     expect(within(main).queryByRole("heading", { name: he.dashboard.activePlayers })).toBeNull();
     expect(within(main).queryByRole("img")).toBeNull();
@@ -214,7 +223,7 @@ describe("the dashboard's states", () => {
     gate.resolve();
 
     await linesCard();
-    expect(within(main).queryByRole("status")).toBeNull();
+    expect(within(main).queryByText(he.auth.loading)).toBeNull();
   });
 
   it("shows the error with a retry in place of the squad cards; a retry loads them", async () => {
@@ -223,7 +232,7 @@ describe("the dashboard's states", () => {
     const main = screen.getByRole("main");
     expect(await within(main).findByText(he.dashboard.loadError)).toBeInTheDocument();
     expect(within(main).queryByRole("heading", { name: he.dashboard.lines.title })).toBeNull();
-    expect(placeholders()).toHaveLength(4);
+    expect(placeholders()).toHaveLength(2);
 
     fireEvent.click(within(main).getByRole("button", { name: he.squad.retry }));
 
@@ -249,20 +258,16 @@ describe("the dashboard's states", () => {
 });
 
 describe("the dashboard's placeholders", () => {
-  it("show the next training, next match, league table and weekly schedule as coming soon", async () => {
+  it("show the next training and the weekly schedule as coming soon", async () => {
     await renderDashboard();
 
     expect(placeholders().map((card) => within(card).getByRole("heading").textContent)).toEqual([
       he.dashboard.placeholders.training.title,
-      he.dashboard.placeholders.match.title,
-      he.dashboard.placeholders.league.title,
       he.dashboard.weekly.title,
     ]);
     for (const [card, body] of [
       [placeholders()[0], he.dashboard.placeholders.training.body],
-      [placeholders()[1], he.dashboard.placeholders.match.body],
-      [placeholders()[2], he.dashboard.placeholders.league.body],
-      [placeholders()[3], he.dashboard.weekly.caption],
+      [placeholders()[1], he.dashboard.weekly.caption],
     ] as const) {
       expect(within(card).getByText(body)).toBeInTheDocument();
       expect(within(card).getByText(he.dashboard.comingSoon)).toBeInTheDocument();
@@ -283,7 +288,7 @@ describe("the dashboard's placeholders", () => {
 
   it("list the week's seven days in order, Sunday first", async () => {
     await renderDashboard();
-    const weekly = placeholders()[3];
+    const weekly = placeholders()[1];
 
     expect(
       within(weekly)

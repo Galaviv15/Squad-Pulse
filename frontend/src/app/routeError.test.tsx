@@ -5,6 +5,7 @@ import he from "@/i18n/locales/he.json";
 import { loggedIn } from "@/test/msw/auth";
 import { server } from "@/test/msw/server";
 import { playersReturn, summaryReturns } from "@/test/msw/squad";
+import { dashboardMatchesReturn } from "@/test/msw/matches";
 import { renderWithProviders } from "@/test/render";
 import { routes as appRoutes } from "./router";
 
@@ -74,7 +75,7 @@ describe("a page whose code fails to load", () => {
   });
 
   it("shows the error inside the shell when navigated to", async () => {
-    server.use(summaryReturns());
+    server.use(summaryReturns(), ...dashboardMatchesReturn());
     const { router } = renderWithProviders({
       initialEntries: ["/app"],
       routes: withFailingSquadChunk(appRoutes),
@@ -107,7 +108,7 @@ describe("a page whose code fails to load", () => {
   });
 
   it("leaves the other pages working", async () => {
-    server.use(summaryReturns());
+    server.use(summaryReturns(), ...dashboardMatchesReturn());
     const { router } = renderWithProviders({
       initialEntries: ["/app/squad"],
       routes: withFailingSquadChunk(appRoutes),

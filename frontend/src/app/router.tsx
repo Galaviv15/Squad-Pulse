@@ -14,8 +14,9 @@ import { RequireAuth } from "./RequireAuth";
 import { SessionGate } from "./SessionGate";
 
 /**
- * The app's route table. Every SPA route lives under /app: the backend owns /auth, /squad, /clubs
- * and /users (proxied in dev), so a browser reload on an SPA URL must never use one of those.
+ * The app's route table. Every SPA route lives under /app: the backend owns /auth, /squad, /clubs,
+ * /users and /matches (proxied in dev), so a browser reload on an SPA URL must never use one of
+ * those.
  *
  * Everything under /app waits for the session (SessionGate). The public auth screens are under
  * PublicOnlyRoute (a logged-in user is sent on into the app); everything else is under
@@ -94,6 +95,14 @@ export const routes: RouteObject[] = [
                       Component: (await import("@/pages/squad/EditPlayerPage")).EditPlayerPage,
                     }),
                     handle: { titleKey: "squad.editPlayer" } satisfies RouteHandle,
+                  },
+                  // KAN-69: the games and the league table, its own lazy chunk too.
+                  {
+                    path: "matches",
+                    lazy: async () => ({
+                      Component: (await import("@/pages/matches/MatchesPage")).MatchesPage,
+                    }),
+                    handle: { titleKey: "nav.matches" } satisfies RouteHandle,
                   },
                   {
                     path: "*",
