@@ -11,7 +11,7 @@ What it does:
 What it doesn't do:
 
 - No database: it never touches MongoDB or Redis and has no credentials for them.
-- No scheduling (no cron), no user-facing trigger, locks or scrape status (KAN-68), no lineups or player statistics (KAN-70).
+- No scheduling (no cron), no user-facing trigger, locks or scrape status (those are the backend's, KAN-68: `POST` / `GET /matches/refresh`), no lineups or player statistics (KAN-70).
 - No team-name → id resolution, and no check that the configured team is in the table: the backend does both (`UNRESOLVED_TEAM_NAMES`, `TEAM_NOT_IN_STANDINGS`).
 - No images or logos, ever.
 

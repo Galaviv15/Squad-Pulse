@@ -89,11 +89,20 @@ squadpulse:
       max-attempts: 5
       max-requests: 5
       request-window: 24h
-  # The scraper's service token for /internal/** (KAN-66, see scrapingintegration.ScraperProperties).
-  # Optional: unset, the app starts and every /internal/** request is a 401; set, it must be at
-  # least 32 characters. Never put a real value here.
+  # The scraper (see scrapingintegration.ScraperProperties). service-token: the shared secret for
+  # /internal/** (KAN-66) and the trigger (KAN-68). Optional: unset, the app starts, every
+  # /internal/** request is a 401 and no refresh starts; set, at least 32 characters without
+  # whitespace. Never put a real value here. url: the scraper's base URL (KAN-68), optional, no
+  # default: unset, POST /matches/refresh answers SCRAPER_UNAVAILABLE; set, an http(s) URL with a
+  # host and no user-info, path, query or fragment, or the app refuses to start. The cooldown is how long
+  # the per-team / per-league locks hold once the scraper accepted a trigger (the primary limit on
+  # how often football.org.il is asked); a run without a result after run-timeout is FAILED
+  # NO_RESULT. run-timeout must not exceed refresh-cooldown.
   scraper:
     service-token: ${SCRAPER_SERVICE_TOKEN:}
+    url: ${SCRAPER_URL:}
+    refresh-cooldown: 10m
+    run-timeout: 10m
   # Uploaded images (see common.ImageProperties, common.ImageValidator): the largest accepted, the
   # limit the API promises. spring.servlet.multipart.max-file-size above must not be lower.
   images:
