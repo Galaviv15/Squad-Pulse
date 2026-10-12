@@ -10,8 +10,10 @@ import type {
 /**
  * Building blocks for the matches API's answers, for tests to put together with server.use(...).
  * Not default handlers: a test that didn't expect a request should fail on it. The bodies are
- * shaped exactly as the backend sends them (Jackson): instants as ISO-8601 UTC strings, `date`
- * yyyy-MM-dd, `kickoffTime` HH:mm, and every field present, null when empty.
+ * shaped exactly as the backend sends them (Jackson, checked against the real backend in KAN-69):
+ * instants as ISO-8601 UTC strings with milliseconds ("2026-10-12T16:25:45.635Z"; Instant.toString
+ * drops a zero fraction), `date` yyyy-MM-dd, `kickoffTime` HH:mm, and every field present, null
+ * when empty (an unset kickoffTime or venue is null, never absent).
  */
 
 /** A game of GET /matches/fixtures: an upcoming home game with a time and a venue. */
@@ -37,7 +39,7 @@ export const playedGame = (overrides: Partial<Game> = {}) =>
 export function fixturesBody(overrides: Partial<Fixtures> = {}): Fixtures {
   return {
     state: "OK",
-    lastUpdatedAt: "2026-10-12T15:30:00Z",
+    lastUpdatedAt: "2026-10-12T15:30:45.635Z",
     teamName: "Hapoel Sderot",
     mappingProblem: null,
     games: [
@@ -91,7 +93,7 @@ export function tableRow(
 export function leagueTableBody(overrides: Partial<LeagueTable> = {}): LeagueTable {
   return {
     state: "OK",
-    lastUpdatedAt: "2026-10-11T09:05:00Z",
+    lastUpdatedAt: "2026-10-11T09:05:54.188Z",
     round: 6,
     mappingProblem: null,
     rows: Array.from({ length: 14 }, (_, i) =>

@@ -52,7 +52,7 @@ const failed = (failureReason: RefreshStatus["failureReason"] = "PARSE_ERROR") =
     state: "FAILED",
     failureReason,
     startedAt: at(0),
-    finishedAt: "2026-10-12T15:00:06Z",
+    finishedAt: "2026-10-12T15:00:06.329Z",
     nextRefreshAt: at(10),
   });
 
