@@ -38,6 +38,7 @@ class InternalEndpointsDisabledTest {
   @Autowired private MockMvc mockMvc;
   @Autowired private TestAccessTokens tokens;
   @MockitoBean private ScrapeIngestService ingestService;
+  @MockitoBean private ScrapeRunStatusService statusService;
 
   @Test
   void everyInternalRequestIsA401() throws Exception {

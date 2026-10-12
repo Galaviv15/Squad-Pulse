@@ -30,8 +30,12 @@ import org.springframework.web.bind.annotation.RestController;
  * unknown properties ({@link ScrapeResultJsonConfig}), the 256 KB body limit ({@link
  * ScrapeResultBodyLimit}), and a {@code fetchedAt} at most {@link #CLOCK_SKEW} in the future here —
  * so a 400 writes nothing. A part the scraper reports as {@code FAILED} is logged at INFO with its
- * reason and the ids only ({@code detail} at DEBUG) and written nowhere; recording a scrape status
- * is KAN-68. The successful parts go to {@link ScrapeIngestService}.
+ * reason and the ids only ({@code detail} at DEBUG) and written nowhere. The successful parts go to
+ * {@link ScrapeIngestService}.
+ *
+ * <p>Once the ingest has returned normally, the outcomes it computed set the status of the run
+ * named by {@code runId} ({@link ScrapeRunStatusService#recordResult}, KAN-68): so a 400, 409 or
+ * 5xx never changes a status, and a failure to record one never changes this response.
  *
  * <p>No request body is ever logged.
  */
@@ -44,15 +48,18 @@ class ScrapeResultController {
   private static final Logger log = LoggerFactory.getLogger(ScrapeResultController.class);
 
   private final ScrapeIngestService ingestService;
+  private final ScrapeRunStatusService statusService;
   private final Clock clock;
 
   @Autowired
-  ScrapeResultController(ScrapeIngestService ingestService) {
-    this(ingestService, Clock.systemUTC());
+  ScrapeResultController(ScrapeIngestService ingestService, ScrapeRunStatusService statusService) {
+    this(ingestService, statusService, Clock.systemUTC());
   }
 
-  ScrapeResultController(ScrapeIngestService ingestService, Clock clock) {
+  ScrapeResultController(
+      ScrapeIngestService ingestService, ScrapeRunStatusService statusService, Clock clock) {
     this.ingestService = ingestService;
+    this.statusService = statusService;
     this.clock = clock;
   }
 
@@ -77,13 +84,16 @@ class ScrapeResultController {
             fixturesFailed ? null : toFixtures(request.fixtures()),
             standingsFailed ? null : toStandings(request.standings()));
 
-    return new ScrapeResultResponse(
-        fixturesFailed ? failureRecorded() : outcome(result.fixtures()),
-        standingsFailed ? failureRecorded() : outcome(result.standings()),
-        result.clubsUpdated(),
-        result.warnings().stream()
-            .map(warning -> new ScrapeResultResponse.Warning(warning.code(), warning.count()))
-            .toList());
+    ScrapeResultResponse response =
+        new ScrapeResultResponse(
+            fixturesFailed ? failureRecorded() : outcome(result.fixtures()),
+            standingsFailed ? failureRecorded() : outcome(result.standings()),
+            result.clubsUpdated(),
+            result.warnings().stream()
+                .map(warning -> new ScrapeResultResponse.Warning(warning.code(), warning.count()))
+                .toList());
+    statusService.recordResult(request, response);
+    return response;
   }
 
   private static boolean isAfter(Instant fetchedAt, Instant latest) {

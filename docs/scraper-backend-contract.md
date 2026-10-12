@@ -24,7 +24,7 @@ Both directions use the same shared secret, `SCRAPER_SERVICE_TOKEN`.
 
 | Field | Type | Rules | Meaning |
 |---|---|---|---|
-| `runId` | string or `null` | required; `null` or 1–100 characters, no control characters | Opaque. Echoed as the result's `runId` and in the scraper's log lines (KAN-68 sets it). |
+| `runId` | string or `null` | required; `null` or 1–100 characters, no control characters | Opaque. Echoed as the result's `runId` and in the scraper's log lines. The backend always sends a random UUID. |
 | `teamId` | int | required, 1..2147483647 | The football.org.il team whose fixtures to scrape. |
 | `leagueId` | int | required, 1..2147483647 | Its league (the standings). |
 | `seasonId` | int | required, 1..2147483647 | The season. |
@@ -32,6 +32,20 @@ Both directions use the same shared secret, `SCRAPER_SERVICE_TOKEN`.
 | `standings` | boolean | required | Scrape the league table. |
 
 All six properties are required (`runId` may be `null`). At least one of `fixtures` / `standings` must be `true`. Unknown properties are rejected. A part that's `false` is sent to the backend as `null` (not attempted).
+
+**What the backend sends (KAN-68).** `POST <SCRAPER_URL>/scrape` from `scrapingintegration.ScraperClient`. `SCRAPER_URL` is the scraper's origin only (`http(s)://host[:port]`, an optional trailing `/` is dropped); one with a path, user-info, a query or a fragment stops the backend from starting. It's sent only after the backend took the per-team lock (below), with a new UUID as `runId`, the club's own mapping as the ids, `fixtures: true` always, and `standings: true` only if it also took the per-league lock — otherwise `false`, because another club of the same league and season had the table scraped within the cooldown. Connect timeout 2 s, read timeout 5 s, no redirects followed, no retry. It treats the answers as follows:
+
+| Answer | Backend |
+|---|---|
+| `202 QUEUED` with its own `runId` | Started: the locks stay for the cooldown (even if the scrape later fails), the run is `RUNNING`. |
+| `202 ALREADY_QUEUED` with a `runId` of one of this club's runs | Started: that run is the club's current run; the locks stay. |
+| `202 ALREADY_QUEUED` with any other `runId`, or `null` | Started: its own run stays `RUNNING` and times out (`NO_RESULT`) unless a result with its `runId` arrives. Logged at WARN: it can only happen after Redis lost the locks, or after a manual trigger. |
+| `400`, `401`, `413`, `415` | Unavailable, locks released, logged at ERROR (a backend bug or a token mismatch). |
+| `503`, any other status, a malformed or oversize (> 1 KB) `202`, `QUEUED` with another `runId`, no connection, a timeout | Unavailable, locks released: the site was never asked. |
+
+Releasing deletes a lock only if it still holds that trigger's `runId`. The answer body is never logged.
+
+**Locks (Redis).** `scrape:lock:team:{teamId}:{leagueId}:{seasonId}` (the key the queue dedupes by) and `scrape:lock:league:{leagueId}:{seasonId}`, each `SET NX PX <cooldown>` (default 10 minutes) with the `runId`. They are the primary limit on how often football.org.il is asked.
 
 | Status | When | Body |
 |---|---|---|
@@ -47,7 +61,7 @@ All six properties are required (`runId` may be `null`). At least one of `fixtur
 
 Checked in that order: path, method, token, `Content-Type`, size, body. Error messages are fixed texts: they never repeat the request (not a property name, not a value). The token is compared in constant time (SHA-256 digests of both values, so lengths don't leak) and never logged.
 
-**Queue.** One scrape runs at a time, in-process, with a FIFO of at most 5 waiting. Dedupe is by `(teamId, leagueId, seasonId)` across waiting and running; once a scrape has finished (its result posted or dropped), the same ids can be queued again. This is a second line of defence: KAN-68's per-team and per-league locks are the primary one. The queue lives in memory: a restart drops whatever was waiting or running, with no result posted.
+**Queue.** One scrape runs at a time, in-process, with a FIFO of at most 5 waiting. Dedupe is by `(teamId, leagueId, seasonId)` across waiting and running; once a scrape has finished (its result posted or dropped), the same ids can be queued again. This is a second line of defence: the backend's per-team and per-league locks (above) are the primary one. The queue lives in memory: a restart drops whatever was waiting or running, with no result posted.
 
 **What one scrape does** (scraper README for the details): at most 3 requests to football.org.il (games page if `fixtures`; league page and `LeagueTable` if `standings`), 3–5 s apart, at most one retry (a timeout or a 5xx, after 10 s), 90 s overall. A block stops the scrape at once with no retry: the blocked part and every part not yet attempted are `FAILED SOURCE_BLOCKED`.
 
@@ -82,7 +96,7 @@ Checked in that order: path, method, token, `Content-Type`, size, body. Error me
 
 | Field | Type | Rules | Meaning |
 |---|---|---|---|
-| `runId` | string or `null` | ≤ 100 chars | Opaque. Reserved for KAN-68; ignored and not stored today. |
+| `runId` | string or `null` | ≤ 100 chars | The trigger's `runId`, echoed. Sets that run's status (see [Run status](#run-status-kan-68)); `null` or unknown → no status changes. |
 | `teamId` | int | ≥ 1, required | The football.org.il team whose fixtures were scraped. |
 | `leagueId` | int | ≥ 1, required | Its league. |
 | `seasonId` | int | ≥ 1, required | The season. |
@@ -157,8 +171,17 @@ Standings are processed first, then fixtures. The two parts are independent: one
 - **Team names → ids**: each fixture name is matched exactly against the same league's standings: this request's if it has an accepted standings part, otherwise the stored ones. A name with no match keeps a `null` id (warning `UNRESOLVED_TEAM_NAMES`). The scrape doesn't fail for it.
 - **Our team** is the standings row with the request's `teamId`. Without standings (none in the request, none stored), it's the one name that appears in every game.
 - **Staleness:** a part whose `fetchedAt` isn't newer than the stored snapshot's is ignored (`STALE`). So an old scrape arriving late, or a replayed request, never overwrites newer data.
-- **Failed parts** are logged (reason and ids) and change nothing: the last good snapshot stays. Recording a scrape status is KAN-68.
+- **Failed parts** are logged (reason and ids) and change nothing: the last good snapshot stays. They do fail the run's status (below).
 - **Validation** covers the whole request before anything is written. A `400` writes nothing.
+
+### Run status (KAN-68)
+
+After the ingest itself has succeeded, the outcomes it computed set the status of the run named by `runId` (`scrapingintegration.ScrapeRunStatusService`), shown on `GET /matches/refresh`. So a `400`, `409` or `5xx` never changes a status (the scraper's retry will).
+
+- `runId` `null` or unknown (the run record expired after 7 days, or a manual trigger): no status change. A known `runId` whose run was for other team / league / season ids: no status change, logged at WARN.
+- Only the parts the run requested count: `STORED` or `STALE` is fine; `FAILURE_RECORDED` fails the run with the scraper's reason (`TIMEOUT` → `SOURCE_TIMEOUT`); `REJECTED` → `REJECTED`; `NOT_SENT` for a requested part → `NO_RESULT`. All fine → `SUCCEEDED`; otherwise `FAILED` with the first failed part's reason, fixtures before standings. The `TEAM_NOT_IN_STANDINGS` warning doesn't fail a run.
+- The same result twice gives the same status. A result after the run timed out (`NO_RESULT`) replaces that. A result only ever changes its own run.
+- Recording the status never changes this response: if it fails (e.g. Redis is down), the `200` with the outcomes stands and a WARN is logged.
 
 ## Response
 

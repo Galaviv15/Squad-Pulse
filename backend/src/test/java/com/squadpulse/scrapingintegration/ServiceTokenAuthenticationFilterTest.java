@@ -58,7 +58,7 @@ class ServiceTokenAuthenticationFilterTest {
   @Test
   void withoutAConfiguredTokenNothingAuthenticatesAndOneWarningIsLogged() throws Exception {
     ServiceTokenAuthenticationFilter filter =
-        ServiceTokenAuthenticationFilter.create(new ScraperProperties(""));
+        ServiceTokenAuthenticationFilter.create(new ScraperProperties("", null, null, null));
 
     assertThat(authentication(filter, "Bearer " + TOKEN)).isNull();
     assertThat(authentication(filter, "Bearer ")).isNull();
@@ -82,7 +82,7 @@ class ServiceTokenAuthenticationFilterTest {
   }
 
   private static ServiceTokenAuthenticationFilter filter(String token) {
-    return ServiceTokenAuthenticationFilter.create(new ScraperProperties(token));
+    return ServiceTokenAuthenticationFilter.create(new ScraperProperties(token, null, null, null));
   }
 
   private static Authentication authentication(

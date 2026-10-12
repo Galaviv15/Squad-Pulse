@@ -33,7 +33,8 @@ import java.util.Set;
  * ScrapeResultJsonConfig}). There is deliberately no clubId: the backend finds the clubs from the
  * three ids (CLAUDE.md standing rule 4).
  *
- * @param runId opaque, reserved for KAN-68; ignored and not stored here
+ * @param runId the trigger's runId, echoed: it names the run whose status this result sets (KAN-68,
+ *     {@link ScrapeRunStatusService#recordResult}); {@code null} or unknown sets none
  * @param fixtures {@code null} / absent if not attempted
  * @param standings {@code null} / absent if not attempted
  */

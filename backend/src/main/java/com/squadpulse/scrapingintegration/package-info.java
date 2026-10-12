@@ -12,6 +12,12 @@
  * access token. Its request and response records are the scraper ↔ backend contract, described in
  * docs/scraper-backend-contract.md.
  *
+ * <p>The other direction (KAN-68): {@code POST /matches/refresh} ({@code EDIT_FULL}) asks the
+ * scraper to scrape the caller's club ({@code ScrapeTriggerService}, over {@code ScraperClient}),
+ * behind per-team and per-league Redis locks — the primary protection of football.org.il — and
+ * {@code GET /matches/refresh} shows the club's latest run, whose status the ingest and a lazy
+ * timeout set ({@code ScrapeRunStatusService}).
+ *
  * <p>See docs/spec.md section 07 (Matches, stats &amp; scraping). Tracked in Jira under KAN-14
  * (Match &amp; Scraping Integration).
  */
