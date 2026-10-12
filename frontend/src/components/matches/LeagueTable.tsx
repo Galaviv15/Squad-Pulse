@@ -62,8 +62,10 @@ export function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
+            // teamName, not position: the ingest makes names unique in a table (ScrapeResultRequest),
+            // but positions only 1..row count, so a tie can repeat one.
             <TableRow
-              key={row.position}
+              key={row.teamName}
               aria-current={row.ownTeam ? "true" : undefined}
               className={cn(row.ownTeam && OWN_ROW_CLASSES)}
             >

@@ -173,8 +173,10 @@ function CompactTable({ table }: { table: LeagueTable }) {
         </thead>
         <tbody>
           {table.rows.map((row) => (
+            // teamName, not position: the ingest makes names unique in a table (ScrapeResultRequest),
+            // but positions only 1..row count, so a tie can repeat one.
             <tr
-              key={row.position}
+              key={row.teamName}
               aria-current={row.ownTeam ? "true" : undefined}
               className={cn("border-t border-border", row.ownTeam && OWN_ROW_CLASSES)}
             >

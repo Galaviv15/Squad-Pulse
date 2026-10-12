@@ -273,6 +273,21 @@ describe("the table tab", () => {
     expect(table.parentElement).toHaveClass("overflow-x-auto");
   });
 
+  it("shows two teams tied on a position as two rows (keys are names, not positions)", async () => {
+    // A position repeats on a tie; the ingest only makes the team names unique. A duplicate React
+    // key would log an error, which fails the test (the console guard).
+    const [first, second, ...rest] = leagueTableBody().rows;
+    await renderMatches("/app/matches?tab=table", {
+      table: leagueTableBody({ rows: [first, { ...second, position: 1 }, ...rest] }),
+    });
+    const rows = within(await screen.findByRole("table")).getAllByRole("row");
+
+    expect(rows).toHaveLength(15);
+    expect(within(rows[1]).getAllByRole("cell")[1]).toHaveTextContent("Team 1");
+    expect(within(rows[2]).getAllByRole("cell")[0]).toHaveTextContent(/^1$/);
+    expect(within(rows[2]).getAllByRole("cell")[1]).toHaveTextContent("Team 2");
+  });
+
   it("shows a negative goal difference with its sign, and no round when there's none", async () => {
     await renderMatches("/app/matches?tab=table", {
       table: leagueTableBody({
