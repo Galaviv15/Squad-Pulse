@@ -203,7 +203,8 @@ function DeleteDialog({
   /*
    * The unlink never goes on to delete: removing the link and deleting the player are two explicit
    * steps by design. The user clicks the delete button again, knowing the player's stats row will
-   * show as unlinked.
+   * show as unlinked. The one exception is a 404: the player is already gone (the server checks the
+   * player first), which is what the user asked for, so it ends like a delete answered 404.
    */
   async function unlink() {
     if (unlinking.current) {
@@ -214,14 +215,56 @@ function DeleteDialog({
       await removeLink.mutateAsync({ playerId: player.id });
       remove.reset();
       setUnlinked(true);
-    } catch {
-      // Shown from removeLink.error.
+    } catch (error) {
+      if (isGone(error)) {
+        await onDeleted(player);
+      }
+      // Anything else is shown from removeLink.error.
     } finally {
       unlinking.current = false;
     }
   }
 
   const statsLinked = remove.error !== null && actionErrorMessage(remove.error).offer === "unlink";
+  // A 404 isn't shown: it's handled as deleted.
+  const unlinkError =
+    removeLink.error !== null && !isGone(removeLink.error) ? removeLink.error : null;
+
+  const unlinkButton = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="self-start"
+      disabled={pending}
+      onClick={() => void unlink()}
+    >
+      {removeLink.isPending
+        ? t("squad.dialog.statsLinked.unlinking")
+        : t("squad.dialog.statsLinked.unlink")}
+    </Button>
+  );
+
+  // One alert at a time: a failed unlink replaces the explanation, keeping the button to retry.
+  let error = null;
+  if (statsLinked && unlinkError !== null) {
+    error = <FormAlert action={unlinkButton}>{t(actionErrorMessage(unlinkError).key)}</FormAlert>;
+  } else if (statsLinked) {
+    error = (
+      <FormAlert
+        action={
+          <>
+            <p className="font-normal">{t("squad.dialog.statsLinked.text")}</p>
+            {unlinkButton}
+          </>
+        }
+      >
+        {t("squad.dialog.statsLinked.title")}
+      </FormAlert>
+    );
+  } else if (remove.error !== null) {
+    error = <ActionError error={remove.error} place={place} onClose={dialog.onClose} />;
+  }
 
   return (
     <ActionDialog
@@ -233,39 +276,7 @@ function DeleteDialog({
       confirmLabel={t("squad.actions.delete")}
       // While the unlink runs the delete button is only disabled: nothing is being deleted.
       pendingLabel={t(remove.isPending ? "squad.actions.deleting" : "squad.actions.delete")}
-      error={
-        <>
-          {remove.error &&
-            (statsLinked ? (
-              <FormAlert
-                action={
-                  <>
-                    <p className="font-normal">{t("squad.dialog.statsLinked.text")}</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="self-start"
-                      disabled={pending}
-                      onClick={() => void unlink()}
-                    >
-                      {removeLink.isPending
-                        ? t("squad.dialog.statsLinked.unlinking")
-                        : t("squad.dialog.statsLinked.unlink")}
-                    </Button>
-                  </>
-                }
-              >
-                {t("squad.dialog.statsLinked.title")}
-              </FormAlert>
-            ) : (
-              <ActionError error={remove.error} place={place} onClose={dialog.onClose} />
-            ))}
-          {removeLink.error && (
-            <ActionError error={removeLink.error} place={place} onClose={dialog.onClose} />
-          )}
-        </>
-      }
+      error={error}
       onConfirm={async () => {
         setUnlinked(false);
         removeLink.reset();
@@ -287,6 +298,11 @@ function DeleteDialog({
       </div>
     </ActionDialog>
   );
+}
+
+/** A 404 on a write to the player: it's gone. */
+function isGone(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
 }
 
 /**

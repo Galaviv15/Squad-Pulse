@@ -349,6 +349,44 @@ describe("confirming a suggestion", () => {
     expect(screen.queryByText(/^הצעה:/)).toBeNull();
   });
 
+  it("puts focus on the row's header once the list shows the link (the button is gone)", async () => {
+    const { store } = await renderStats({ level: "EDIT_FULL" });
+    await table();
+    server.use(
+      linkReturns(() => {
+        store.stats = linkedOnServer("מזרחי אבי", squadPlayers.avi);
+        return HttpResponse.json(statsRow("c", "x"));
+      }).handler,
+    );
+    const confirm = within(rowOf("מזרחי אבי")).getByRole("button", {
+      name: name(S.confirmLabel, "מזרחי אבי"),
+    });
+    confirm.focus();
+
+    fireEvent.click(confirm);
+
+    await within(rowOf("מזרחי אבי")).findByRole("link", { name: "אבי מזרחי" });
+    expect(confirm.isConnected).toBe(false);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByRole("rowheader", { name: "מזרחי אבי" }));
+  });
+
+  it("leaves focus on the button when the PUT fails", async () => {
+    await renderStats({ level: "EDIT_FULL" });
+    await table();
+    server.use(linkReturns(failure).handler);
+    const confirm = within(rowOf("מזרחי אבי")).getByRole("button", {
+      name: name(S.confirmLabel, "מזרחי אבי"),
+    });
+    confirm.focus();
+
+    fireEvent.click(confirm);
+
+    await within(rowOf("מזרחי אבי")).findByRole("alert");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(document.activeElement).toBe(confirm);
+  });
+
   it("disables the row's buttons while the PUT runs", async () => {
     await renderStats({ level: "EDIT_FULL" });
     await table();
@@ -549,6 +587,8 @@ describe("a linked row's menu", () => {
       }),
     ).toBeInTheDocument();
     expect(reads.count).toBe(2);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByRole("rowheader", { name: "כהן דניאל" }));
   });
 });
 

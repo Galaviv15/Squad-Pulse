@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, apiJson } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import { playerApiPath, SQUAD_QUERY_KEY } from "@/lib/squad/players";
+import { playerApiPath } from "@/lib/squad/players";
 import { PLAYER_STATS_ERROR_CODES } from "./playerStatsErrorCodes";
 import { MATCHES_DATA_QUERY_KEY } from "./queries";
 import type { MatchDataState } from "./types";
@@ -78,10 +78,7 @@ function linkApiPath(rowId: string) {
  * replaced the snapshot) and a 409 (the player is linked elsewhere) mean the list shown is out of
  * date, so they refetch too; any other failure changed nothing.
  */
-function useStatsWrite<V, R>(
-  mutationFn: (variables: V) => Promise<R>,
-  onOutOfDate?: (error: ApiError) => void,
-) {
+function useStatsWrite<V, R>(mutationFn: (variables: V) => Promise<R>) {
   const queryClient = useQueryClient();
   const refetch = () => void queryClient.invalidateQueries({ queryKey: PLAYER_STATS_QUERY_KEY });
   return useMutation({
@@ -90,7 +87,6 @@ function useStatsWrite<V, R>(
     onError: (error) => {
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         refetch();
-        onOutOfDate?.(error);
       }
     },
   });
@@ -120,19 +116,13 @@ export function useUnlinkStatsRow() {
 
 /**
  * DELETE /squad/players/{id}/stats-link → 204, linked or not: the way to unlink a squad player
- * whose scraped row is gone, and the delete dialog's unlink step. A 404 (the player is gone)
- * refetches the squad queries too, like the other player writes.
+ * whose scraped row is gone, and the delete dialog's unlink step. A 404 means the player is gone;
+ * the delete dialog treats that as deleted and runs its own onDeleted, which drops the player's
+ * card query before invalidating the squad queries, so this never touches them.
  */
 export function useRemovePlayerStatsLink() {
-  const queryClient = useQueryClient();
-  return useStatsWrite(
-    ({ playerId }: { playerId: string }) =>
-      apiFetch(`${playerApiPath(playerId)}/stats-link`, { method: "DELETE" }),
-    (error) => {
-      if (error.status === 404) {
-        void queryClient.invalidateQueries({ queryKey: SQUAD_QUERY_KEY });
-      }
-    },
+  return useStatsWrite(({ playerId }: { playerId: string }) =>
+    apiFetch(`${playerApiPath(playerId)}/stats-link`, { method: "DELETE" }),
   );
 }
 

@@ -1,6 +1,15 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { beforeAll, describe, expect, it } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import he from "@/i18n/locales/he.json";
 import { PLAYER_STATS_QUERY_KEY } from "@/lib/matches/playerStats";
 import type { Player } from "@/lib/squad/types";
@@ -16,6 +25,24 @@ import { renderWithProviders } from "@/test/render";
 beforeAll(() =>
   Promise.all([import("@/pages/squad/PlayerCardPage"), import("@/pages/squad/SquadPage")]),
 );
+
+let fetchSpy: MockInstance<typeof fetch>;
+
+beforeEach(() => {
+  fetchSpy = vi.spyOn(globalThis, "fetch");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** Every request sent, as "METHOD /path". */
+const sent = () =>
+  fetchSpy.mock.calls.map(([input, init]) => {
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+    const url = input instanceof Request ? input.url : String(input);
+    return `${method} ${new URL(url, "http://localhost").pathname}`;
+  });
 
 const D = he.squad.dialog;
 const L = D.statsLinked;
@@ -127,19 +154,27 @@ describe.each(["card", "table"] as const)("deleting a linked player from the %s"
     expect(deleteButton(dialog)).toBeEnabled();
   });
 
-  it("shows a player that's gone (404 on the unlink) as not found", async () => {
-    const { dialog } = await refusedDelete(host);
+  it("treats a 404 on the unlink as already gone: the deleted flow, and no GET of the player", async () => {
+    const { dialog, squad, router } = await refusedDelete(host);
     server.use(
-      removeStatsLinkReturns(player.id, () => apiError(404, "Not Found", "Player not found"))
-        .handler,
+      removeStatsLinkReturns(player.id, () => {
+        squad.players = [other];
+        return apiError(404, "Not Found", "Player not found");
+      }).handler,
     );
+    const before = sent().length;
 
     fireEvent.click(unlinkButton(dialog));
 
-    expect(await within(dialog).findByText(he.squad.player.notFound)).toBeInTheDocument();
+    expect(await screen.findByText(deletedNotice)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/app/squad");
+    await waitFor(() => expect(screen.queryByRole("link", { name: player.fullName })).toBeNull());
+    expect(screen.queryByText(he.squad.player.notFound)).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent().slice(before)).not.toContain(`GET /squad/players/${player.id}`);
   });
 
-  it("shows a failed unlink (500) as the generic failure, the delete still possible", async () => {
+  it("shows a failed unlink (500) as the only alert, with the unlink and the delete still possible", async () => {
     const { dialog } = await refusedDelete(host);
     server.use(
       removeStatsLinkReturns(player.id, () =>
@@ -150,8 +185,10 @@ describe.each(["card", "table"] as const)("deleting a linked player from the %s"
     fireEvent.click(unlinkButton(dialog));
 
     expect(await within(dialog).findByText(D.failed)).toBeInTheDocument();
-    expect(deleteButton(dialog)).toBeEnabled();
+    expect(within(dialog).getAllByRole("alert")).toHaveLength(1);
+    expect(within(dialog).queryByText(L.title)).toBeNull();
     expect(unlinkButton(dialog)).toBeEnabled();
+    expect(deleteButton(dialog)).toBeEnabled();
   });
 
   it("marks the cached player stats out of date after the unlink", async () => {

@@ -59,17 +59,27 @@ function StatsContent({ rows, canEdit }: { rows: PlayerStatsRow[]; canEdit: bool
   const pickerLinked = useRef(false);
 
   /*
-   * After a write the control that had focus is replaced (the row changes state once the list is
-   * refetched), so focus goes to the row's header cell, if it was in that row or lost.
+   * After a successful link write the control the user acted on goes away once the list is
+   * refetched ("אישור" and "אחר…" on a link, the "⋯" menu's trigger on an unlink, the picker's
+   * opener), so focus goes to the row's header cell (tabIndex -1), which stays. The one mechanism
+   * for all three: the row writes call focusRow; the picker's finalFocus returns rowHeader.
    */
-  const focusRow = useCallback((rowId: string) => {
+  const rowHeader = useCallback((rowId: string) => {
     const header = rowHeaders.current.get(rowId);
-    const active = document.activeElement;
-    const inRow = header?.closest("tr")?.contains(active) ?? false;
-    if (header !== undefined && (inRow || active === null || active === document.body)) {
-      header.focus();
-    }
+    return header?.isConnected ? header : undefined;
   }, []);
+  const focusRow = useCallback(
+    (rowId: string) => {
+      const header = rowHeader(rowId);
+      const active = document.activeElement;
+      const inRow = header?.closest("tr")?.contains(active) ?? false;
+      // Only if focus was in that row or lost: never steal it from where the user has moved on.
+      if (header !== undefined && (inRow || active === null || active === document.body)) {
+        header.focus();
+      }
+    },
+    [rowHeader],
+  );
 
   const writes = useRowWrites(
     useCallback(
@@ -133,9 +143,9 @@ function StatsContent({ rows, canEdit }: { rows: PlayerStatsRow[]; canEdit: bool
             writes.clearError(row.id);
             pickerLinked.current = false;
             picker.openDialog(row, () => {
-              const header = rowHeaders.current.get(row.id);
               // Linked: the opener is about to be replaced, so focus the row instead.
-              return pickerLinked.current && header?.isConnected ? header : focusBack(opener)();
+              const header = pickerLinked.current ? rowHeader(row.id) : undefined;
+              return header ?? focusBack(opener)();
             });
           }}
           onUnlink={(row) => {
