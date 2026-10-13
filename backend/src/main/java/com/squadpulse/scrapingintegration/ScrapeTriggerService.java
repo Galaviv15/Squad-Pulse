@@ -119,9 +119,11 @@ public class ScrapeTriggerService {
    * Whether a trigger asks for the team's player statistics (KAN-72). {@code true} since KAN-73,
    * which taught the scraper the property in the same change: every refresh asks for them, and the
    * run counts the part, so a refresh succeeds only if the stats are stored (or already up to date)
-   * too. The scraper treats the property as optional (absent = {@code false}), so either value is
-   * safe whatever the deploy order. The stats share the per-team lock; the league lock doesn't
-   * concern them.
+   * too. The scraper accepts the property as optional (absent = {@code false}), but the backend now
+   * always sends it as {@code true}, and a scraper without KAN-73 rejects it as unknown (a 400, so
+   * every refresh is {@code SCRAPER_UNAVAILABLE}): a backend with this change needs a scraper with
+   * it. Deploy the scraper first, or together with the backend. The stats share the per-team lock;
+   * the league lock doesn't concern them.
    */
   static final boolean REQUEST_PLAYER_STATS = true;
 

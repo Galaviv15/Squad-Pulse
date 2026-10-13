@@ -69,6 +69,8 @@ There's no container for it yet (Phase 6): the backend runs on the host in devel
 
 `POST /scrape` with `{"runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats"}` (the first six required, `runId` may be `null`; `playerStats` optional, absent = `false`; at least one of the three parts `true`) → `202 {"status": "QUEUED" | "ALREADY_QUEUED", "runId"}`. `400` invalid body, `401` token, `413` over 4 KB, `415` not JSON, `503` queue full, `404` / `405` otherwise. Full table: [contract, "Trigger"](../docs/scraper-backend-contract.md#trigger-backend--scraper).
 
+**Deploy order (KAN-73).** The backend now always sends `"playerStats": true`, and a scraper older than KAN-73 rejects it as an unknown property (`400`, so every refresh is `SCRAPER_UNAVAILABLE`). Deploy the scraper first, or together with the backend.
+
 ## How it talks to football.org.il
 
 Exactly the setup verified in KAN-64 ([findings](docs/KAN-64-findings.md), "Verification of the recommended setup" and section 8). The site is behind Cloudflare, which blocks plain HTTP clients; headless Chromium is let through, so it's used **as an HTTP client only**:
