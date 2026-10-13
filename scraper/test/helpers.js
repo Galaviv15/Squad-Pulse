@@ -8,6 +8,7 @@ export const fixture = (name) => readFileSync(here(`fixtures/${name}`), "utf8");
 export const GAMES_HTML = fixture("team-games-7617-s28.html");
 export const TABLE_XML = fixture("league-62-s28-table-round6.xml");
 export const BLOCK_HTML = fixture("cloudflare-block-403.html");
+export const STATS_XML = fixture("team-players-stats-7617-s28.xml");
 
 /** A minimal league page: the standings placeholder only. `null` leaves an attribute out. */
 export function leaguePage({ round = "6", box = "20", title = "טבלת ליגה" } = {}) {
