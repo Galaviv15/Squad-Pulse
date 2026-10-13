@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  ChartColumn,
   ClipboardList,
   Clock,
   LayoutDashboard,
@@ -33,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/app", labelKey: "nav.dashboard", icon: LayoutDashboard, end: true },
   { to: "/app/squad", labelKey: "nav.squad", icon: Users },
   { to: "/app/matches", labelKey: "nav.matches", icon: Trophy },
+  { to: "/app/stats", labelKey: "nav.stats", icon: ChartColumn },
 ];
 
 /** Shown disabled until they exist: plain text, never links or buttons. */
