@@ -98,6 +98,7 @@ class PlayerApiIntegrationTest {
   @Autowired private PlayerRepository playerRepository;
   @Autowired private ClubContext clubContext;
   @Autowired private ImageStorage imageStorage;
+  @Autowired private PlayerStatsLinks statsLinks;
   @Autowired private TestAccessTokens tokens;
   @Autowired private PlayerLoadHook loadHook;
   @Autowired private PlayerInsertBarrier insertBarrier;
@@ -295,7 +296,8 @@ class PlayerApiIntegrationTest {
     assertThat(PlayerService.violatedIndex(idClash)).contains("_id_");
     PlayerRepository failingRepository = mock(PlayerRepository.class);
     when(failingRepository.insert(any(Player.class))).thenThrow(idClash);
-    PlayerService service = new PlayerService(failingRepository, clubContext, imageStorage);
+    PlayerService service =
+        new PlayerService(failingRepository, clubContext, imageStorage, statsLinks);
     assertThatThrownBy(() -> service.create(createRequest("Same Id", Position.CB, 8)))
         .isSameAs(idClash);
   }
@@ -1119,7 +1121,7 @@ class PlayerApiIntegrationTest {
 
   private PlayerService serviceOn(LocalDate today) {
     Clock clock = Clock.fixed(today.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
-    return new PlayerService(playerRepository, clubContext, imageStorage, clock);
+    return new PlayerService(playerRepository, clubContext, imageStorage, statsLinks, clock);
   }
 
   private Player saveAs(String clubId, Player player) {
