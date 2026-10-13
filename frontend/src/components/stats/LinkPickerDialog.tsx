@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Search, User } from "lucide-react";
+import { Plus, Search, User } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router";
 import { FormAlert } from "@/components/form/FormMessage";
 import { ImageOrInitials } from "@/components/ImageOrInitials";
 import { MatchDataError } from "@/components/matches/MatchDataStates";
@@ -11,6 +12,7 @@ import type { FinalFocus } from "@/components/squad/playerDialogs";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { linkErrorKey, useLinkStatsPlayer, type PlayerStatsRow } from "@/lib/matches/playerStats";
+import { useNewPlayerFromStatsPath } from "@/lib/matches/statsReturn";
 import { squadPlayersQuery } from "@/lib/squad/players";
 import type { Player } from "@/lib/squad/types";
 
@@ -44,9 +46,15 @@ export interface LinkPickerDialogProps {
  * The disabled options come from the stats shown, which can't know a player linked to a scraped
  * player absent from the current snapshot (a link survives a player's absence from a scrape), so
  * a PUT can still answer 409 PLAYER_ALREADY_LINKED: shown here, and the list is refetched.
+ *
+ * For an unlinked row (KAN-77) a link below the list opens the create-player form for it instead.
+ * Never for a linked row ("שינוי קישור"): creating a player from a linked row is refused. Following
+ * it leaves the stats screen, which unmounts the dialog with it: no close, so no focus return.
  */
 export function LinkPickerDialog({ row, rows, onLinked, ...dialog }: LinkPickerDialogProps) {
   const { t } = useTranslation();
+  const newPlayerPath = useNewPlayerFromStatsPath();
+  const canCreate = row.linkedPlayer === null;
   const squad = useQuery(ALL_PLAYERS);
   const link = useLinkStatsPlayer();
   const [search, setSearch] = useState("");
@@ -84,7 +92,11 @@ export function LinkPickerDialog({ row, rows, onLinked, ...dialog }: LinkPickerD
       </p>
     );
   } else if (players.length === 0) {
-    list = <p className="text-sm text-muted-foreground">{t("stats.picker.empty")}</p>;
+    list = (
+      <p className="text-sm text-muted-foreground">
+        {t(canCreate ? "stats.picker.emptyCanCreate" : "stats.picker.empty")}
+      </p>
+    );
   } else {
     list = (
       <fieldset className="min-w-0">
@@ -153,6 +165,15 @@ export function LinkPickerDialog({ row, rows, onLinked, ...dialog }: LinkPickerD
         </div>
       </div>
       {list}
+      {canCreate && (
+        <Link
+          to={newPlayerPath(row.id)}
+          className="inline-flex w-fit items-center gap-1.5 rounded-sm text-[0.8125rem] font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <Plus aria-hidden="true" className="size-4" />
+          {t("stats.createPlayer.pickerLink")}
+        </Link>
+      )}
     </ActionDialog>
   );
 }

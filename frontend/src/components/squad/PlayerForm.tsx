@@ -58,6 +58,14 @@ interface PlayerFormProps {
    * and remounts the form with its values. Resolves false if the reload failed.
    */
   onReloadLatest?: () => Promise<boolean>;
+  /**
+   * A host's own save errors (KAN-77: creating a player from a stats row). Consulted first: an
+   * alert to show in place of the form's own, or null to let the form map the error as usual.
+   * Hosts that don't pass it (the squad's add and edit pages) get exactly the mapping below.
+   */
+  saveErrorAlert?: (error: unknown) => ReactNode | null;
+  /** History state for "ביטול" (KAN-77: which row the stats screen focuses). */
+  cancelState?: unknown;
 }
 
 /** A field's control id, from the form's own id. */
@@ -84,6 +92,8 @@ export function PlayerForm({
   cancelTo,
   playerId,
   onReloadLatest,
+  saveErrorAlert,
+  cancelState,
 }: PlayerFormProps) {
   const { t } = useTranslation();
   const formId = useId();
@@ -92,6 +102,7 @@ export function PlayerForm({
   const [submitted, setSubmitted] = useState(false);
   const [serverErrors, setServerErrors] = useState<PlayerFormErrors>({});
   const [alert, setAlert] = useState<SaveAlert | null>(null);
+  const [hostAlert, setHostAlert] = useState<ReactNode>(null);
   const [pending, setPending] = useState(false);
   const [reloading, setReloading] = useState(false);
   const submitting = useRef(false);
@@ -136,6 +147,7 @@ export function PlayerForm({
     submitting.current = true;
     setPending(true);
     setAlert(null);
+    setHostAlert(null);
     setServerErrors({});
     let saved: Player;
     try {
@@ -151,6 +163,11 @@ export function PlayerForm({
   }
 
   function showSaveError(error: unknown) {
+    const fromHost = saveErrorAlert?.(error) ?? null;
+    if (fromHost !== null) {
+      setHostAlert(fromHost);
+      return;
+    }
     if (!(error instanceof ApiError)) {
       setAlert("failed");
       return;
@@ -249,6 +266,7 @@ export function PlayerForm({
       onSubmit={(event) => void submit(event)}
       className="flex flex-col gap-5 rounded-lg border border-border bg-card p-5 md:p-6"
     >
+      {hostAlert}
       {alert !== null && (
         <SaveAlertMessage
           alert={alert}
@@ -340,7 +358,7 @@ export function PlayerForm({
             ? t("squad.form.saving")
             : t(mode === "create" ? "squad.form.submitCreate" : "squad.form.submitEdit")}
         </Button>
-        <Link to={cancelTo} className={buttonVariants({ variant: "outline" })}>
+        <Link to={cancelTo} state={cancelState} className={buttonVariants({ variant: "outline" })}>
           {t("squad.form.cancel")}
         </Link>
       </div>

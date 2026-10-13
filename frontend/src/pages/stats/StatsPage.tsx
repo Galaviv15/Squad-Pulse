@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation, useNavigate } from "react-router";
 import { FormAlert } from "@/components/form/FormMessage";
 import { LastUpdated, QueryContent } from "@/components/matches/MatchDataStates";
 import { RefreshControl } from "@/components/matches/RefreshControl";
@@ -12,6 +13,7 @@ import { useCurrentUser } from "@/lib/auth/currentUser";
 import { hasPermission } from "@/lib/auth/permissions";
 import { usePlayerStats, type PlayerStats, type PlayerStatsRow } from "@/lib/matches/playerStats";
 import { filterStatsRows, useStatsFilter } from "@/lib/matches/statsFilter";
+import { statsReturnFromState } from "@/lib/matches/statsReturn";
 
 /**
  * /app/stats (KAN-74): the club's scraped player season statistics, all competitions together, and
@@ -25,6 +27,7 @@ export function StatsPage() {
   const { permissionLevel } = useCurrentUser();
   const canEdit = hasPermission(permissionLevel, "EDIT_FULL");
   const stats = usePlayerStats();
+  const [arrival, clearArrival] = useArrival();
 
   return (
     <div className="flex flex-col gap-5">
@@ -38,7 +41,12 @@ export function StatsPage() {
       <QueryContent query={stats} errorMessage={t("stats.loadError")}>
         {(data: PlayerStats) =>
           data.state === "OK" ? (
-            <StatsContent rows={data.players} canEdit={canEdit} />
+            <StatsContent
+              rows={data.players}
+              canEdit={canEdit}
+              arrival={arrival}
+              onArrivalHandled={clearArrival}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">
               {t(data.state === "NOT_MAPPED" ? "matches.notMapped" : "stats.noData")}
@@ -50,7 +58,42 @@ export function StatsPage() {
   );
 }
 
-function StatsContent({ rows, canEdit }: { rows: PlayerStatsRow[]; canEdit: boolean }) {
+type Arrival = ReturnType<typeof statsReturnFromState>;
+
+/**
+ * Coming back from the create-player form (KAN-77): the row to focus and, after a save, the
+ * created player's name to announce. Read from history state once, then removed from the entry (a
+ * replace to the same URL without state), so neither a reload nor Back repeats it; handled once,
+ * by StatsContent, then forgotten.
+ */
+function useArrival() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const fromState = statsReturnFromState(location.state);
+  const [arrival, setArrival] = useState<Arrival>(fromState);
+
+  const { pathname, search, hash } = location;
+  const hasState = fromState !== null;
+  useEffect(() => {
+    if (hasState) {
+      void navigate({ pathname, search, hash }, { replace: true, state: null });
+    }
+  }, [hasState, pathname, search, hash, navigate]);
+
+  return [arrival, useCallback(() => setArrival(null), [])] as const;
+}
+
+function StatsContent({
+  rows,
+  canEdit,
+  arrival,
+  onArrivalHandled,
+}: {
+  rows: PlayerStatsRow[];
+  canEdit: boolean;
+  arrival: Arrival;
+  onArrivalHandled(): void;
+}) {
   const { t } = useTranslation();
   const { filter, setFilter } = useStatsFilter();
   const picker = useDialogHost<PlayerStatsRow>();
@@ -81,6 +124,29 @@ function StatsContent({ rows, canEdit }: { rows: PlayerStatsRow[]; canEdit: bool
     [rowHeader],
   );
 
+  // Back from the create-player form: focus the row (it can be filtered out once the refetched
+  // list shows it linked); after a save, the notice goes in a tick after mounting, into the live
+  // region that's already there, so it's announced. Handling it clears `arrival` (so it runs once);
+  // the timer is cleared only on unmount, not by that re-run.
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+  useEffect(() => {
+    if (arrival === null) {
+      return;
+    }
+    onArrivalHandled();
+    rowHeader(arrival.rowId)?.focus();
+    const name = arrival.createdPlayerName;
+    if (name !== null) {
+      noticeTimer.current = setTimeout(() =>
+        setNotice((previous) => ({
+          text: t("stats.createPlayer.created", { name }),
+          key: (previous?.key ?? 0) + 1,
+        })),
+      );
+    }
+  }, [arrival, onArrivalHandled, rowHeader, t]);
+
   const writes = useRowWrites(
     useCallback(
       (row: PlayerStatsRow, kind: "linked" | "unlinked") => {
@@ -108,7 +174,8 @@ function StatsContent({ rows, canEdit }: { rows: PlayerStatsRow[]; canEdit: bool
   return (
     <div className="flex flex-col gap-4">
       {canEdit && <StatsFilterControl rows={rows} value={filter} onChange={setFilter} />}
-      {/* The unlink notice's live region, always there so the text is announced as it goes in. */}
+      {/* The notices' live region (unlinked; created and linked, KAN-77), always there so the text
+          is announced as it goes in. */}
       <div role="status" className="empty:-mb-4">
         {notice !== null && (
           <span key={notice.key} className="text-[0.8125rem] font-medium text-success">

@@ -113,6 +113,16 @@ export const routes: RouteObject[] = [
                     }),
                     handle: { titleKey: "nav.stats" } satisfies RouteHandle,
                   },
+                  // KAN-77: a squad player created from a scraped row, linked in the same request.
+                  // `:id` is the row's opaque id; EDIT_FULL and up (RequireEditFull in the page).
+                  {
+                    path: "stats/:id/new-player",
+                    lazy: async () => ({
+                      Component: (await import("@/pages/stats/NewPlayerFromStatsPage"))
+                        .NewPlayerFromStatsPage,
+                    }),
+                    handle: { titleKey: "stats.createPlayer.title" } satisfies RouteHandle,
+                  },
                   {
                     path: "*",
                     element: <NotFoundInShellPage />,

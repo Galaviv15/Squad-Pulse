@@ -33,7 +33,11 @@ import { renderWithProviders } from "@/test/render";
 
 // Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
 beforeAll(() =>
-  Promise.all([import("@/pages/stats/StatsPage"), import("@/pages/matches/MatchesPage")]),
+  Promise.all([
+    import("@/pages/stats/StatsPage"),
+    import("@/pages/matches/MatchesPage"),
+    import("@/pages/stats/NewPlayerFromStatsPage"),
+  ]),
 );
 
 const S = he.stats;
@@ -507,7 +511,12 @@ describe("the picker", () => {
 
     const dialog = await openPicker(S.linkToLabel, "פרץ עומר");
 
-    expect(await within(dialog).findByText(S.picker.empty)).toBeInTheDocument();
+    // KAN-77: for an unlinked row it says a player can be created from it, and links there.
+    expect(await within(dialog).findByText(S.picker.emptyCanCreate)).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: S.createPlayer.pickerLink })).toHaveAttribute(
+      "href",
+      "/app/stats/stats-row-d/new-player",
+    );
   });
 
   it("shows a 409 PLAYER_ALREADY_LINKED it couldn't foresee (linked to a row not in the snapshot), and refetches", async () => {
@@ -687,5 +696,99 @@ describe("the filter", () => {
     expect(await screen.findByText(S.filter.allLinked)).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByText("1 מקושר · 0 עם הצעה · 0 ללא קישור")).toBeInTheDocument();
+  });
+});
+
+describe("creating a squad player from a row (KAN-77)", () => {
+  const createName = (rowName: string) => name(S.createPlayer.actionLabel, rowName);
+
+  it.each(["EDIT_FULL", "ADMIN"] as PermissionLevel[])(
+    "offers %s a link to the form beside קישור לשחקן…, named with the scraped name, keeping the filter",
+    async (level) => {
+      await renderStats({ level, path: "/app/stats?filter=unlinked" });
+      await table();
+
+      const link = within(rowOf("פרץ עומר")).getByRole("link", { name: createName("פרץ עומר") });
+      expect(link).toHaveAttribute("href", "/app/stats/stats-row-d/new-player?filter=unlinked");
+      expect(link).toHaveTextContent(S.createPlayer.action);
+      expect(
+        within(rowOf("פרץ עומר")).getByRole("button", { name: name(S.linkToLabel, "פרץ עומר") }),
+      ).toBeInTheDocument();
+      // One per unlinked row without a suggestion, each told apart by its name.
+      expect(screen.getAllByRole("link", { name: /^יצירת שחקן בסגל עבור/ })).toHaveLength(3);
+    },
+  );
+
+  it("leaves the suggestion state and the linked rows as they were", async () => {
+    await renderStats({ level: "ADMIN" });
+    await table();
+
+    const suggested = within(rowOf("מזרחי אבי"));
+    expect(suggested.queryByRole("link", { name: createName("מזרחי אבי") })).toBeNull();
+    expect(
+      suggested.getAllByRole("button").map((button) => button.getAttribute("aria-label")),
+    ).toEqual([name(S.confirmLabel, "מזרחי אבי"), name(S.otherLabel, "מזרחי אבי")]);
+    expect(
+      within(rowOf("כהן דניאל")).queryByRole("link", { name: createName("כהן דניאל") }),
+    ).toBeNull();
+  });
+
+  it.each(["VIEW_ONLY", "EDIT_PARTIAL"] as PermissionLevel[])(
+    "shows %s no create action",
+    async (level) => {
+      await renderStats({ level });
+      await table();
+
+      expect(screen.queryByRole("link", { name: /^יצירת שחקן בסגל/ })).toBeNull();
+      expect(screen.queryByText(S.createPlayer.action)).toBeNull();
+    },
+  );
+
+  async function openPicker(label: string, rowName: string) {
+    fireEvent.click(within(rowOf(rowName)).getByRole("button", { name: name(label, rowName) }));
+    return screen.findByRole("alertdialog", { name: name(S.picker.title, rowName) });
+  }
+
+  it.each([
+    ["without a suggestion", S.linkToLabel, "פרץ עומר", "stats-row-d"],
+    ["with a suggestion (אחר…)", S.otherLabel, "מזרחי אבי", "stats-row-c"],
+  ])(
+    "puts the create link below the picker's list for an unlinked row %s",
+    async (_n, label, rowName, id) => {
+      server.use(recordedPlayers(allSquadPlayers()).handler);
+      const { router } = await renderStats({ level: "EDIT_FULL" });
+      await table();
+
+      const dialog = await openPicker(label, rowName);
+      await within(dialog).findAllByRole("radio");
+      const link = within(dialog).getByRole("link", { name: S.createPlayer.pickerLink });
+      expect(link).toHaveAttribute("href", `/app/stats/${id}/new-player`);
+
+      // Following it leaves the screen, the dialog with it, with nothing logged.
+      fireEvent.click(link);
+      expect(
+        await screen.findByRole("heading", { level: 1, name: S.createPlayer.title }),
+      ).toBeVisible();
+      expect(router.state.location.pathname).toBe(`/app/stats/${id}/new-player`);
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    },
+  );
+
+  it("has no create link when changing a linked row's link", async () => {
+    server.use(recordedPlayers(allSquadPlayers()).handler);
+    await renderStats({ level: "EDIT_FULL" });
+    await table();
+
+    fireEvent.click(
+      within(rowOf("כהן דניאל")).getByRole("button", { name: name(S.menu, "כהן דניאל") }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: S.change }));
+    const dialog = await screen.findByRole("alertdialog", {
+      name: name(S.picker.title, "כהן דניאל"),
+    });
+    await within(dialog).findAllByRole("radio");
+
+    expect(within(dialog).queryByRole("link", { name: S.createPlayer.pickerLink })).toBeNull();
+    expect(within(dialog).queryByText(S.createPlayer.pickerLink)).toBeNull();
   });
 });

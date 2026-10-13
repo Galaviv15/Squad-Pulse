@@ -1,9 +1,9 @@
-import { EllipsisVertical, Link2 } from "lucide-react";
+import { EllipsisVertical, Link2, UserPlus } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { ReleasedBadge } from "@/components/squad/PlayerBadges";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { PlayerStatsRow, StatsPlayerRef } from "@/lib/matches/playerStats";
+import { useNewPlayerFromStatsPath } from "@/lib/matches/statsReturn";
 import { playerPath } from "@/lib/squad/paths";
 
 export interface SquadPlayerCellProps {
@@ -33,11 +34,9 @@ export interface SquadPlayerCellProps {
  * The stats table's "שחקן בסגל" cell. Below EDIT_FULL: the linked squad player as a link to the
  * card, or a muted "—" ("לא מקושר"); never a suggestion or an action. From EDIT_FULL up, by the
  * row: linked → the name, the released badge and a "⋯" menu (change, unlink); a suggestion → the
- * dashed chip with "אישור" and "אחר…"; neither → "קישור לשחקן…". The backend's suggestion is
- * only a suggestion: nothing links without a click on "אישור".
- *
- * The unlinked states keep their buttons in one row (UnlinkedActions), where another action
- * (KAN-77's "create a squad player from this row") fits.
+ * dashed chip with "אישור" and "אחר…"; neither → "קישור לשחקן…" and (KAN-77) "יצירת שחקן בסגל",
+ * a link to the create-player form for this row (navigation, so a link, styled as a button). The
+ * backend's suggestion is only a suggestion: nothing links without a click on "אישור".
  */
 export function SquadPlayerCell({
   row,
@@ -49,6 +48,7 @@ export function SquadPlayerCell({
   onUnlink,
 }: SquadPlayerCellProps) {
   const { t } = useTranslation();
+  const newPlayerPath = useNewPlayerFromStatsPath();
   const { linkedPlayer, suggestedPlayer } = row;
 
   let content;
@@ -111,6 +111,15 @@ export function SquadPlayerCell({
           <Link2 aria-hidden="true" />
           {t("stats.linkTo")}
         </Button>
+        {/* Named with the scraped player too: one per unlinked row. */}
+        <Link
+          to={newPlayerPath(row.id)}
+          aria-label={t("stats.createPlayer.actionLabel", { name: row.name })}
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          <UserPlus aria-hidden="true" />
+          {t("stats.createPlayer.action")}
+        </Link>
       </UnlinkedActions>
     );
   }
