@@ -39,6 +39,7 @@ class PlayerServiceSummaryTest {
           playerRepository,
           clubContext,
           mock(ImageStorage.class),
+          mock(PlayerStatsLinks.class),
           Clock.fixed(TODAY.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
 
   @BeforeEach

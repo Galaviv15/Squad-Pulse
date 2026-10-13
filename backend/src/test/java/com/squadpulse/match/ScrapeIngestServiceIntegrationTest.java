@@ -71,6 +71,7 @@ class ScrapeIngestServiceIntegrationTest {
   @Autowired private MatchReadService readService;
   @Autowired private LeagueStandingsSnapshotRepository standingsRepository;
   @Autowired private LeagueFixturesSnapshotRepository fixturesRepository;
+  @Autowired private PlayerSeasonStatsSnapshotRepository playerStatsRepository;
   @Autowired private ClubFootballMappings mappings;
   @Autowired private ClubContext clubContext;
   @Autowired private MongoTemplate mongoTemplate;
@@ -120,7 +121,8 @@ class ScrapeIngestServiceIntegrationTest {
   void aNewerScrapeWinsAFirstInsertRace() {
     ScrapeIngestService racing = racingStandings(T0.plusSeconds(10));
 
-    IngestResult result = racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)));
+    IngestResult result =
+        racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)), null);
 
     assertThat(result.standings().outcome()).isEqualTo(Outcome.STORED);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(20));
@@ -130,7 +132,8 @@ class ScrapeIngestServiceIntegrationTest {
   void anOlderScrapeLosingAFirstInsertRaceIsStale() {
     ScrapeIngestService racing = racingStandings(T0.plusSeconds(20));
 
-    IngestResult result = racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(10)));
+    IngestResult result =
+        racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(10)), null);
 
     assertThat(result.standings().outcome()).isEqualTo(Outcome.STALE);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(20));
@@ -142,13 +145,13 @@ class ScrapeIngestServiceIntegrationTest {
 
     IngestResult newer =
         racingStandings(T0.plusSeconds(10))
-            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)));
+            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)), null);
     assertThat(newer.standings().outcome()).isEqualTo(Outcome.STORED);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(20));
 
     IngestResult older =
         racingStandings(T0.plusSeconds(40))
-            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(30)));
+            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(30)), null);
     assertThat(older.standings().outcome()).isEqualTo(Outcome.STALE);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(40));
   }
@@ -162,9 +165,11 @@ class ScrapeIngestServiceIntegrationTest {
             "findByClubIdAndTeamIdAndSeasonId",
             () -> fixturesRepository.save(fixturesSnapshot(T0.plusSeconds(20))));
     ScrapeIngestService racing =
-        new ScrapeIngestService(standingsRepository, racingRepository, mappings, clubContext);
+        new ScrapeIngestService(
+            standingsRepository, racingRepository, playerStatsRepository, mappings, clubContext);
 
-    IngestResult result = racing.ingest(TEAM, LEAGUE, SEASON, fixtures(T0.plusSeconds(10)), null);
+    IngestResult result =
+        racing.ingest(TEAM, LEAGUE, SEASON, fixtures(T0.plusSeconds(10)), null, null);
 
     assertThat(result.fixtures().outcome()).isEqualTo(Outcome.STALE);
     assertThat(result.clubsUpdated()).isZero();
@@ -193,7 +198,7 @@ class ScrapeIngestServiceIntegrationTest {
                   () -> {
                     start.await();
                     return service.ingest(
-                        TEAM, LEAGUE, SEASON, fixtures(fetchedAt), standings(fetchedAt));
+                        TEAM, LEAGUE, SEASON, fixtures(fetchedAt), standings(fetchedAt), null);
                   }));
         }
         start.countDown();
@@ -231,7 +236,7 @@ class ScrapeIngestServiceIntegrationTest {
       assertThat(mongoTemplate.getConverter().convertToMongoType(LocalDate.of(2026, 9, 5)))
           .isEqualTo(java.util.Date.from(Instant.parse("2026-09-05T04:00:00Z")));
 
-      service.ingest(TEAM, LEAGUE, SEASON, fixtures(T0), null);
+      service.ingest(TEAM, LEAGUE, SEASON, fixtures(T0), null, null);
 
       Document stored = mongoTemplate.getCollection("league_fixtures").find().first();
       Document game = stored.getList("games", Document.class).get(0);
@@ -264,7 +269,8 @@ class ScrapeIngestServiceIntegrationTest {
               competitor.setFetchedAt(competitorFetchedAt);
               standingsRepository.save(competitor);
             });
-    return new ScrapeIngestService(racingRepository, fixturesRepository, mappings, clubContext);
+    return new ScrapeIngestService(
+        racingRepository, fixturesRepository, playerStatsRepository, mappings, clubContext);
   }
 
   private static <R> R afterFirstLoad(

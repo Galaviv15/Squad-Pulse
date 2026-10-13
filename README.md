@@ -54,7 +54,7 @@ Pool model: shared collections across all clubs, every document tagged with `clu
 
 Custom repository methods bypass that layer, so an ArchUnit test fails the build unless each one has `ClubId` in its name. The only exception is a method explicitly annotated `@GloballyScoped` — reserved for lookups by a system-wide unique value that must run before any club context exists (today: `UserRepository.findByEmail`, for login). Each use should be reviewed on its own merits.
 
-Every repository's entity must either extend `ClubScopedEntity` or be explicitly annotated `@NotClubScoped` — the app refuses to start otherwise, so forgetting the base class on tenant data fails loudly. `@NotClubScoped` is only for data no club owns; today that's `Club` itself, the tenant root.
+Every repository's entity must either extend `ClubScopedEntity` or be explicitly annotated `@NotClubScoped` — the app refuses to start otherwise, so forgetting the base class on tenant data fails loudly. `@NotClubScoped` is only for data no club owns; today that's `Club` itself, the tenant root, and a league's shared standings (`league_standings`, KAN-66). The scraped player statistics (`player_season_stats`, one snapshot per club, team and season, unique on `(clubId, teamId, seasonId)`) and the club's links from scraped players to its own players (`player_stats_links`, unique on `(clubId, sourcePlayerId)` and on `(clubId, playerId)`) are ordinary club-scoped collections (KAN-72); their unique indexes are created at startup by `auto-index-creation`.
 
 A `Player` (`players` collection) is a roster record owned by one club, not a global person: the same person in two clubs is two independent records with no link between them. Leaving the club sets `active: false` rather than deleting the document. Jersey numbers are unique among a club's **active** players, enforced by the partial unique index `clubId_jerseyNumber_active_unique` (only documents where `jerseyNumber` is a number and `active` is `true`), created at startup by `auto-index-creation` like the `users` email index. A write that breaks it fails with `DuplicateKeyException`, which the squad API turns into a `409` only when it names that index. Like `User`, `Player` uses optimistic locking (`@Version`). The list filters run in memory on the club's players, loaded through the club-scoped repository, never through a hand-built `MongoTemplate` query, which would bypass the `clubId` filter.
 
@@ -197,7 +197,8 @@ Every endpoint works on the caller's own club only (the `clubId` comes from the 
 | `PUT /squad/players/{id}` | `EDIT_FULL` | The same fields plus `"version"`, with `medicalStatus` required → `200` with the updated player. A **full replacement**: an optional field that's missing or `null` is cleared |
 | `POST /squad/players/{id}/release` | `EDIT_FULL` | `{ "version" }` → `200` with the player, now `"active": false`. The player leaves the club but stays on record; their `jerseyNumber` is kept as history and is free for another player |
 | `POST /squad/players/{id}/reactivate` | `EDIT_FULL` | `{ "version", "jerseyNumber"? }` → `200` with the player, `"active": true`, wearing exactly the `jerseyNumber` sent: missing or `null` means **no number** (not "keep the old one"). The client should pre-fill the old number; if it has been taken, pick another or none |
-| `DELETE /squad/players/{id}` | `ADMIN` | Permanently deletes a player, active or released, **and their photo** → `204`, no body. Only for records created by mistake — leaving the club is a release. **Not version-checked**: it wins over a concurrent edit |
+| `DELETE /squad/players/{id}` | `ADMIN` | Permanently deletes a player, active or released, **and their photo** → `204`, no body. Only for records created by mistake — leaving the club is a release. **Not version-checked**: it wins over a concurrent edit. `409` `PLAYER_STATS_LINKED` while the player is linked to scraped statistics (see [Matches API](#matches-api)); nothing is deleted, not even the photo — unlink first |
+| `DELETE /squad/players/{id}/stats-link` | `EDIT_FULL` | Removes the player's link to a scraped player's statistics (KAN-72) → `204`, also when there was none, and whether or not that scraped player is still in the current statistics. Works for released players too. `404` if there's no such player in the caller's club |
 | `PUT /squad/players/{id}/photo` | `EDIT_FULL` | `multipart/form-data` with the image in the part named `file` → `204`. Replaces any existing photo (see below) |
 | `GET /squad/players/{id}/photo` | `VIEW_ONLY` | `200` with the image bytes, `Content-Type` = the detected type, `Content-Length`, `X-Content-Type-Options: nosniff`. `404` if the player has no photo. Works for released players too |
 | `DELETE /squad/players/{id}/photo` | `EDIT_FULL` | Removes the photo → `204`, also when there was none |
@@ -219,6 +220,7 @@ A player's response carries `id`, every field, `active`, `version`, `createdAt`,
 - **Stale edit** (`STALE_VERSION`): `PUT`, `release` and `reactivate` must send the `version` the client loaded. If the player has been saved since, the request is refused ("reload it and apply your changes again") and nothing is written. The client should reload and re-apply; it's never retried automatically. A save that loses a race right after that check gets the same `409` and message. `DELETE` has no version check.
 - **Released player** (`PLAYER_RELEASED`): a released player can be read but not edited — nor their photo replaced or removed — until they're re-activated.
 - **Already released / already active** (`PLAYER_ALREADY_RELEASED` / `PLAYER_ALREADY_ACTIVE`): releasing a released player ("This player has already been released") or re-activating an active one ("This player is already active").
+- **Linked to scraped statistics** (`PLAYER_STATS_LINKED`): permanently deleting a player who is linked to a scraped player ("This player is linked to scraped statistics; remove the link before deleting"). Remove the link (`DELETE /squad/players/{id}/stats-link`), then delete.
 
 ### Matches API
 
@@ -251,6 +253,20 @@ Both answer `{ "outcome", "state", "failureReason", "startedAt", "finishedAt", "
 - `startedAt` / `finishedAt`: when the run started, and when the backend recorded its end (result received, or timed out); `null` when not applicable. `nextRefreshAt`: when a `POST` may next start a scrape, `null` if it may now.
 - No response contains an id, the scraper's URL or the scraper's error text. A club whose league another club just refreshed gets its fixtures scraped without the shared table, and can't tell.
 - Tuning: `squadpulse.scraper.refresh-cooldown` (default `10m`, how long the per-team and per-league locks hold once the scraper accepted a trigger) and `squadpulse.scraper.run-timeout` (default `10m`, must not exceed the cooldown, or the backend refuses to start).
+
+**Player statistics and links (KAN-72).** The team's season totals per registered player, as football.org.il publishes them (**all competitions together**: league, State Cup, Toto Cup), and the club's links from each scraped player to one of its own players. The data arrives through the ingest's `playerStats` part; the refresh doesn't request it yet (KAN-73), so until then nothing fills it.
+
+| Endpoint | Access | What it does |
+|---|---|---|
+| `GET /matches/player-stats` | `VIEW_ONLY` | `{ "state", "lastUpdatedAt", "players": [ { "id", "name", "games", "goals", "yellowCardsLeagueAndCup", "yellowCardsToto", "redCards", "starts", "cameOnAsSub", "subbedOff", "minutes", "linkedPlayer", "suggestedPlayer" } ] }` |
+| `PUT /matches/player-stats/{id}/link` | `EDIT_FULL` | `{ "playerId" }` (one of the club's own players, active or released) → `200` with the row, as in the `GET`. Sets or replaces this scraped player's link; linking the same pair again changes nothing. `400` for a blank / missing `playerId`; `404` if `{id}` isn't in the club's current statistics (or the club isn't mapped / has no data) or the player isn't in the caller's club; `409` `PLAYER_ALREADY_LINKED` if that player is linked to another scraped player |
+| `DELETE /matches/player-stats/{id}/link` | `EDIT_FULL` | Removes this scraped player's link → `204`, also when there was none. `404` for an unknown `{id}` |
+
+- `state` and `lastUpdatedAt` as above (`lastUpdatedAt` = when the shown statistics were scraped). Team and season come only from the club's mapping.
+- `players`: every registered player in the site's table, also those with 0 games, in the site's order (no sorting). `name` as the site shows it (surname first). `games` = `starts` + `cameOnAsSub`.
+- `id` is the backend's own opaque id for the scraped player, stable for as long as they stay in the table: no football.org.il id (player, team, league or season) is ever in a response. Each club has its own ids, even two clubs mapped to the same team.
+- `linkedPlayer`: `{ "id", "fullName", "active" }` of the club's player it's linked to, or `null`. At most one link per scraped player and per club player. A link outlives the scraped player's absence from a scrape (it shows again when they return) and a season change; a link whose player no longer exists counts as no link.
+- `suggestedPlayer`: same shape, only while not linked: a likely match by name (word order, punctuation look-alikes and spacing ignored), offered only when it's unambiguous on both sides. A suggestion only; nothing links by itself.
 
 How the data gets there: [docs/scraper-backend-contract.md](docs/scraper-backend-contract.md).
 
@@ -288,11 +304,13 @@ Every `409` carries a `code`. Codes are stable: new ones may be added, but a shi
 | `PLAYER_RELEASED` | The player is released, so it can't be edited | `PUT /squad/players/{id}`, `PUT` / `DELETE /squad/players/{id}/photo` |
 | `PLAYER_ALREADY_RELEASED` | Releasing a released player | `POST /squad/players/{id}/release` |
 | `PLAYER_ALREADY_ACTIVE` | Re-activating an active player | `POST /squad/players/{id}/reactivate` |
+| `PLAYER_STATS_LINKED` | The player is linked to scraped statistics, so it can't be deleted; unlink first | `DELETE /squad/players/{id}` |
+| `PLAYER_ALREADY_LINKED` | The player is already linked to another scraped player | `PUT /matches/player-stats/{id}/link` |
 | `EMAIL_ALREADY_REGISTERED` | The email belongs to a user already (in any club) | `POST /auth/users/invite` |
 | `CANNOT_CHANGE_OWN_PERMISSION_LEVEL` | The caller tried to change their own level | `PATCH /auth/users/{id}/permission-level` |
 | `CANNOT_CHANGE_OWN_ACTIVE_STATUS` | The caller tried to deactivate or re-activate themselves | `POST /auth/users/{id}/deactivate`, `/reactivate` |
 | `USER_DEACTIVATED` | The user is deactivated, so their profile can't be changed | `PUT` / `DELETE /users/me/photo` and `/users/{id}/photo` |
-| `CONCURRENT_MODIFICATION` | A concurrent write to a user that a retry didn't resolve (generic; retry the request) | `POST /auth/reset-password`, the user-management writes |
+| `CONCURRENT_MODIFICATION` | A concurrent write that a retry didn't resolve (generic; retry the request) | `POST /auth/reset-password`, the user-management writes, `PUT /matches/player-stats/{id}/link` (two first links of the same scraped player at once) |
 
 Authentication comes first: a request without a valid token is a `401` whatever else is wrong with it — except a path the security firewall rejects, which is a `400` before authentication is looked at. After that, the request's form is checked before the permission level, so a malformed request from a caller who couldn't make it anyway gets a `400` / `415` rather than a `403` (nothing is read or changed either way). Any other status Spring itself raises is passed on with a generic message (`"The request could not be processed"`, or `"An unexpected error occurred"` for a 5xx).
 

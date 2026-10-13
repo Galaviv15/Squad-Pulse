@@ -72,8 +72,8 @@ public class ScrapeTriggerService {
 
   /**
    * KEYS: team lock, league lock, run key. ARGV: runId, cooldown ms, run TTL ms, clubId, teamId,
-   * leagueId, seasonId, source, startedAt ms. Returns {@code [HELD, holder runId]} or {@code
-   * [ACQUIRED, "1" if the league lock was taken too, else "0"]}.
+   * leagueId, seasonId, source, startedAt ms, playerStats ("1" / "0"). Returns {@code [HELD, holder
+   * runId]} or {@code [ACQUIRED, "1" if the league lock was taken too, else "0"]}.
    */
   @SuppressWarnings("rawtypes")
   static final RedisScript<List> ACQUIRE_SCRIPT =
@@ -88,8 +88,8 @@ public class ScrapeTriggerService {
           end
           redis.call('HSET', KEYS[3], 'clubId', ARGV[4], 'teamId', ARGV[5], 'leagueId', ARGV[6],
                      'seasonId', ARGV[7], 'fixtures', '1', 'standings', standings,
-                     'source', ARGV[8], 'state', 'PENDING', 'startedAt', ARGV[9],
-                     'failureReason', '')
+                     'playerStats', ARGV[10], 'source', ARGV[8], 'state', 'PENDING',
+                     'startedAt', ARGV[9], 'failureReason', '')
           redis.call('PEXPIRE', KEYS[3], ARGV[3])
           return {'ACQUIRED', standings}
           """,
@@ -114,6 +114,16 @@ public class ScrapeTriggerService {
           return released
           """,
           Long.class);
+
+  /**
+   * Whether a trigger asks for the team's player statistics (KAN-72). {@code false} until the
+   * scraper accepts the property (KAN-73 flips it in the same change that teaches the scraper): the
+   * scraper rejects an unknown property with a 400, which would make every refresh {@code
+   * SCRAPER_UNAVAILABLE}. While {@code false}, the property is left out of the trigger body and the
+   * run doesn't count the part. The stats share the per-team lock; the league lock doesn't concern
+   * them.
+   */
+  static final boolean REQUEST_PLAYER_STATS = false;
 
   private static final Logger log = LoggerFactory.getLogger(ScrapeTriggerService.class);
 
@@ -191,7 +201,8 @@ public class ScrapeTriggerService {
             String.valueOf(ids.leagueId()),
             String.valueOf(ids.seasonId()),
             source.name(),
-            String.valueOf(startedAt.toEpochMilli()));
+            String.valueOf(startedAt.toEpochMilli()),
+            REQUEST_PLAYER_STATS ? "1" : "0");
     if (acquired == null || acquired.isEmpty()) {
       throw new IllegalStateException("The scrape lock script returned nothing");
     }
@@ -203,7 +214,13 @@ public class ScrapeTriggerService {
     Answer answer =
         scraperClient.trigger(
             new ScraperClient.TriggerRequest(
-                runId, ids.teamId(), ids.leagueId(), ids.seasonId(), true, standings));
+                runId,
+                ids.teamId(),
+                ids.leagueId(),
+                ids.seasonId(),
+                true,
+                standings,
+                REQUEST_PLAYER_STATS));
     return switch (answer) {
       case Answer.Queued queued when runId.equals(queued.runId()) -> {
         statusService.markAccepted(clubId, runId);

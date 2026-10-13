@@ -90,6 +90,7 @@ class PlayerService {
   private final PlayerRepository playerRepository;
   private final ClubContext clubContext;
   private final ImageStorage imageStorage;
+  private final PlayerStatsLinks statsLinks;
   private final Clock clock;
 
   /**
@@ -99,8 +100,11 @@ class PlayerService {
    */
   @Autowired
   PlayerService(
-      PlayerRepository playerRepository, ClubContext clubContext, ImageStorage imageStorage) {
-    this(playerRepository, clubContext, imageStorage, Clock.systemDefaultZone());
+      PlayerRepository playerRepository,
+      ClubContext clubContext,
+      ImageStorage imageStorage,
+      PlayerStatsLinks statsLinks) {
+    this(playerRepository, clubContext, imageStorage, statsLinks, Clock.systemDefaultZone());
   }
 
   /** For tests: {@code clock} decides "today" for the age filters and the average age. */
@@ -108,10 +112,12 @@ class PlayerService {
       PlayerRepository playerRepository,
       ClubContext clubContext,
       ImageStorage imageStorage,
+      PlayerStatsLinks statsLinks,
       Clock clock) {
     this.playerRepository = playerRepository;
     this.clubContext = clubContext;
     this.imageStorage = imageStorage;
+    this.statsLinks = statsLinks;
     this.clock = clock;
   }
 
@@ -281,15 +287,36 @@ class PlayerService {
    * the photo is already gone by the time of the delete (a concurrent delete), nothing is removed
    * and no error is raised.
    *
-   * <p>Nothing references players yet. Once training sessions or lineups do, deleting a referenced
-   * player must be refused with a 409 here — the reason releasing exists at all.
+   * <p><b>A referenced player can't be deleted</b> — the reason releasing exists at all. Today the
+   * one reference is a link to a scraped player's statistics (KAN-72): checked <b>before</b>
+   * anything is removed, so a refused delete changes nothing. The check and the delete aren't
+   * atomic, and a link made in between would point at a deleted player; the links treat such a
+   * dangling link as no link at all ({@code match.PlayerStatsLinkService}). Once training sessions
+   * or lineups reference players too, they're refused here the same way.
    *
    * @throws NotFoundException if there's no such player in the caller's club
+   * @throws PlayerStatsLinkedException if the player is linked to scraped statistics
    */
   void delete(String id) {
     Player player = get(id);
+    if (statsLinks.isLinked(id)) {
+      throw new PlayerStatsLinkedException();
+    }
     imageStorage.delete(photoOf(id));
     playerRepository.delete(player);
+  }
+
+  /**
+   * Removes the player's link to a scraped player's statistics (KAN-72), whether or not that
+   * scraped player is still in the current statistics — otherwise a linked player who left the
+   * site's table could never be unlinked, and so never deleted. Idempotent; works for a released
+   * player too (it's not an edit of the player).
+   *
+   * @throws NotFoundException if there's no such player in the caller's club
+   */
+  void removeStatsLink(String id) {
+    get(id);
+    statsLinks.removeLinkOf(id);
   }
 
   /**

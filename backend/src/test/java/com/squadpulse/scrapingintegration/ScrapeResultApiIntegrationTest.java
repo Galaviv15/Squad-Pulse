@@ -624,7 +624,7 @@ class ScrapeResultApiIntegrationTest {
             + " null");
     expect400(
         request(SDEROT, LEAGUE, SEASON, null, null),
-        "anyPartPresent: fixtures or standings must be present");
+        "anyPartPresent: fixtures, standings or playerStats must be present");
     expect400(
         request(SDEROT, LEAGUE, SEASON, ScrapePayloads.failed(null, "x"), null),
         "fixtures.consistentWithStatus: status OK needs fetchedAt and games and no reason or"

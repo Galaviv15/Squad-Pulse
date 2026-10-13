@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
  * ScrapeIngestService} calls the standings repository at all besides {@link MatchReadService}'s
  * read, and only the service-token ingest controller calls {@link ScrapeIngestService}. The
  * repository is package-private, so nothing outside {@code match} can reach it in the first place.
+ * Likewise for the club-scoped player statistics snapshots (KAN-72).
  */
 class StandingsWritePathTest {
 
@@ -36,6 +37,27 @@ class StandingsWritePathTest {
         .check(MAIN_CLASSES);
   }
 
+  /**
+   * The player statistics snapshots (KAN-72) are club-scoped, but they too are written only by the
+   * ingest: no user-facing path may change scraped data. The repository is package-private, so only
+   * {@code match} could call it.
+   */
+  @Test
+  void onlyTheIngestServiceWritesThePlayerStats() {
+    noClasses()
+        .that()
+        .doNotHaveFullyQualifiedName(ScrapeIngestService.class.getName())
+        .should()
+        .callMethodWhere(
+            com.tngtech.archunit.base.DescribedPredicate.describe(
+                "a write to the player statistics repository",
+                call ->
+                    call.getTargetOwner().isAssignableTo(PlayerSeasonStatsSnapshotRepository.class)
+                        && !call.getName().startsWith("find")))
+        .because("scraped player statistics are written only by the scraper's ingest")
+        .check(MAIN_CLASSES);
+  }
+
   @Test
   void onlyTheServiceTokenIngestEndpointCallsTheIngestService() {
     noClasses()
@@ -51,7 +73,8 @@ class StandingsWritePathTest {
             int.class,
             int.class,
             ScrapedFixtures.class,
-            ScrapedStandings.class)
+            ScrapedStandings.class,
+            ScrapedPlayerStats.class)
         .because("no user-facing endpoint may reach the standings' write path")
         .check(MAIN_CLASSES);
   }

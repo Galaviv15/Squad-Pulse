@@ -1,5 +1,6 @@
 package com.squadpulse.scrapingintegration;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -35,9 +36,21 @@ class ScraperClient {
 
   private static final Logger log = LoggerFactory.getLogger(ScraperClient.class);
 
-  /** The trigger body; all six properties, always (the scraper rejects a missing one). */
+  /**
+   * The trigger body: the six properties the scraper requires, always (it rejects a missing one),
+   * and {@code playerStats} (KAN-72) only when {@code true}. The scraper doesn't know that property
+   * yet and rejects an unknown one with a 400, so a {@code false} is left out of the JSON
+   * altogether; {@link ScrapeTriggerService#REQUEST_PLAYER_STATS} is {@code false} until the
+   * scraper accepts it (KAN-73).
+   */
   record TriggerRequest(
-      String runId, int teamId, int leagueId, int seasonId, boolean fixtures, boolean standings) {}
+      String runId,
+      int teamId,
+      int leagueId,
+      int seasonId,
+      boolean fixtures,
+      boolean standings,
+      @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean playerStats) {}
 
   /** What the scraper answered. */
   sealed interface Answer {

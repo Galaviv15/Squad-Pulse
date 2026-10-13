@@ -30,8 +30,9 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 /**
  * The club's roster (see {@link PlayerService}). Reading needs {@code VIEW_ONLY}; creating,
- * editing, releasing and re-activating, and changing a photo {@code EDIT_FULL}; permanently
- * deleting {@code ADMIN}. Always the caller's own club: no clubId is ever read from the request.
+ * editing, releasing and re-activating, changing a photo and removing a statistics link {@code
+ * EDIT_FULL}; permanently deleting {@code ADMIN}. Always the caller's own club: no clubId is ever
+ * read from the request.
  *
  * <p>Every player in a response carries {@code hasPhoto}; the photo itself is served on its own
  * URL, with the access token like any other endpoint.
@@ -135,13 +136,25 @@ class PlayerController {
   }
 
   /**
-   * Permanently deletes a player created by mistake, active or released: 204. Not version-checked
-   * (see {@link PlayerService#delete}). Leaving the club is a release, not this.
+   * Permanently deletes a player created by mistake, active or released: 204; 409 {@code
+   * PLAYER_STATS_LINKED} while the player is linked to scraped statistics (KAN-72). Not
+   * version-checked (see {@link PlayerService#delete}). Leaving the club is a release, not this.
    */
   @DeleteMapping("/{id}")
   @PreAuthorize("hasAuthority('ADMIN')")
   ResponseEntity<Void> delete(@PathVariable String id) {
     playerService.delete(id);
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Removes the player's link to scraped statistics (KAN-72); {@code 204} whether or not there was
+   * one.
+   */
+  @DeleteMapping("/{id}/stats-link")
+  @PreAuthorize("hasAuthority('EDIT_FULL')")
+  ResponseEntity<Void> removeStatsLink(@PathVariable String id) {
+    playerService.removeStatsLink(id);
     return ResponseEntity.noContent().build();
   }
 
