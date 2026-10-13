@@ -1,10 +1,16 @@
-// One scrape: at most 3 requests (+ one retry), paced, capped at 90 s, stopped at once on a block.
+// One scrape: at most 4 requests (+ one retry), paced, capped at 90 s, stopped at once on a block.
 // Builds the result payload for the backend (docs/scraper-backend-contract.md).
+//
+// Order: team games page → player statistics (an in-page fetch from that page) → league page →
+// LeagueTable (KAN-70 findings section 3). The team games page is loaded if `fixtures` or
+// `playerStats` is requested; the stats are fetched only from a page that loaded, never by
+// navigating again.
 
 import { isBlocked } from "./block.js";
 import { realClock } from "./clock.js";
 import { enforceContract, failedPart } from "./contract.js";
 import { parseGamesPage } from "./parseFixtures.js";
+import { parsePlayerStats } from "./parsePlayerStats.js";
 import { parseLeaguePage, parseLeagueTable } from "./parseStandings.js";
 import { SourceNetworkError, SourceTimeoutError } from "./sourceErrors.js";
 import { ParseError } from "./text.js";
@@ -21,7 +27,8 @@ export const SCRAPE_DEFAULTS = {
 const NOT_ATTEMPTED_BLOCKED = "not attempted: an earlier request was blocked";
 
 /**
- * @param job {runId, teamId, leagueId, seasonId, fixtures, standings}, already validated
+ * @param job {runId, teamId, leagueId, seasonId, fixtures, standings, playerStats?}, already
+ *   validated; a missing `playerStats` means `false`
  * @param deps {source, log, clock?, random?, signal?, ...SCRAPE_DEFAULTS overrides}
  */
 export async function runScrape(job, deps) {
@@ -107,12 +114,48 @@ export async function runScrape(job, deps) {
 
   const ids = (params) => new URLSearchParams(params).toString();
 
-  async function scrapeFixtures() {
+  /** The team games page, then (from that page) the stats. Sets `fixtures` and `playerStats`. */
+  async function scrapeTeamParts() {
     const url = `${origin}team-details/team-games/?${ids({ team_id: job.teamId, season_id: job.seasonId })}`;
     const { response, failure } = await request("document", url, options.navigationTimeoutMs);
-    if (failure) return failure;
+    if (failure) {
+      if (job.fixtures) payload.fixtures = failure;
+      if (job.playerStats) {
+        payload.playerStats = blocked
+          ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
+          : failedPart(
+              failure.reason,
+              `not attempted: the team games page didn't load (${failure.detail ?? failure.reason})`,
+            );
+      }
+      return;
+    }
+    if (job.fixtures) {
+      const at = fetchedAt();
+      payload.fixtures = parsed(() => ({
+        status: "OK",
+        fetchedAt: at,
+        games: parseGamesPage(response.body),
+      }));
+    }
+    // A fixtures parse failure doesn't stop the stats: the page is loaded, and that's all they need.
+    if (job.playerStats) payload.playerStats = await scrapePlayerStats();
+  }
+
+  async function scrapePlayerStats() {
+    // camelCase ids, unlike LeagueTable; isFemale is the JSON string "False": men's teams only.
+    // Serialized by URL so it equals, character for character, the URL the browser reports.
+    const url = new URL(
+      `${origin}Components.asmx/GetTeamPlayersStatisticsList?teamId=${job.teamId}&seasonId=${job.seasonId}&isFemale=${encodeURIComponent('"False"')}`,
+    ).href;
+    const stats = await request("fetch", url, options.fetchTimeoutMs);
+    if (stats.failure) return stats.failure;
     const at = fetchedAt();
-    return parsed(() => ({ status: "OK", fetchedAt: at, games: parseGamesPage(response.body) }));
+    return parsed(() => ({
+      status: "OK",
+      fetchedAt: at,
+      players: parsePlayerStats(stats.response.body),
+    }));
   }
 
   async function scrapeStandings() {
@@ -154,6 +197,7 @@ export async function runScrape(job, deps) {
     seasonId: job.seasonId,
     fixtures: null,
     standings: null,
+    playerStats: null,
   };
 
   try {
@@ -164,10 +208,11 @@ export async function runScrape(job, deps) {
     const failure = failedPart("SOURCE_ERROR", "browser failed to start");
     if (job.fixtures) payload.fixtures = failure;
     if (job.standings) payload.standings = failure;
+    if (job.playerStats) payload.playerStats = failure;
     return enforceContract(payload);
   }
   try {
-    if (job.fixtures) payload.fixtures = await scrapeFixtures();
+    if (job.fixtures || job.playerStats) await scrapeTeamParts();
     if (job.standings) {
       payload.standings = blocked
         ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)

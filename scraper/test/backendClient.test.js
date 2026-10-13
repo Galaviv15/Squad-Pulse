@@ -3,7 +3,16 @@ import { createServer } from "node:http";
 import { after, before, beforeEach, test } from "node:test";
 import { postScrapeResult } from "../src/backendClient.js";
 import { createMemoryLogger } from "../src/log.js";
-import { contractExample, fakeClock } from "./helpers.js";
+import { runScrape } from "../src/scrape.js";
+import { parsePlayerStats } from "../src/parsePlayerStats.js";
+import {
+  JOB_ALL,
+  OK_SCRIPT,
+  STATS_XML,
+  contractExample,
+  fakeClock,
+  fakeSource,
+} from "./helpers.js";
 
 const TOKEN = "backend-token-for-tests-0123456789abcdef";
 let server;
@@ -40,6 +49,7 @@ beforeEach(() => {
 const STORED = {
   fixtures: { outcome: "STORED", reason: null },
   standings: { outcome: "REJECTED", reason: "NOT_MAPPED" },
+  playerStats: { outcome: "STORED", reason: null },
   clubsUpdated: 1,
   warnings: [
     { code: "TEAM_NOT_IN_STANDINGS", count: null },
@@ -77,6 +87,7 @@ test("200: outcomes logged; REJECTED and TEAM_NOT_IN_STANDINGS at WARN, other wa
       String(pattern),
     );
   has(/ INFO run=\S+ backend outcome part=fixtures outcome=STORED$/);
+  has(/ INFO run=\S+ backend outcome part=playerStats outcome=STORED$/);
   has(/ WARN run=\S+ backend outcome part=standings outcome=REJECTED reason=NOT_MAPPED$/);
   has(/ WARN run=\S+ backend warning code=TEAM_NOT_IN_STANDINGS$/);
   has(/ INFO run=\S+ backend warning code=UNRESOLVED_TEAM_NAMES count=2$/);
@@ -148,4 +159,39 @@ test("never logs the token, team names or the payload", async () => {
   const all = log.lines.join("\n");
   assert.ok(!all.includes(TOKEN));
   assert.ok(!all.includes("שדרות"));
+});
+
+test("a REJECTED playerStats outcome is logged at WARN with its reason", async () => {
+  const answer = { ...STORED, playerStats: { outcome: "REJECTED", reason: "NOT_MAPPED" } };
+  const { log } = await send([{ status: 200, body: answer }]);
+  assert.ok(
+    log.lines.some((l) =>
+      / WARN run=\S+ backend outcome part=playerStats outcome=REJECTED reason=NOT_MAPPED$/.test(l),
+    ),
+  );
+});
+
+test("a full scrape and post from the fixtures logs no player name or player_id", async () => {
+  const log = createMemoryLogger();
+  const clock = fakeClock();
+  const payload = await runScrape(JOB_ALL, {
+    source: fakeSource(clock, OK_SCRIPT()),
+    clock,
+    log,
+    random: () => 0.5,
+  });
+  assert.equal(payload.playerStats.status, "OK");
+  answers = [{ status: 200, body: STORED }];
+  await postScrapeResult(payload, { backendUrl, token: TOKEN, log, clock });
+  assert.equal(received.length, 1);
+  assert.equal(received[0].body.playerStats.players.length, 34);
+
+  const players = parsePlayerStats(STATS_XML);
+  const all = log.lines.join("\n");
+  assert.ok(log.lines.some((l) => / backend outcome part=playerStats outcome=STORED$/.test(l)));
+  for (const { name, playerId } of players) {
+    assert.ok(!all.includes(name), "a player name was logged");
+    // Ids are 5–6 digits; as a whole token, so a duration in ms can't match by chance.
+    assert.ok(!new RegExp(`\\b${playerId}\\b`).test(all), "a player_id was logged");
+  }
 });

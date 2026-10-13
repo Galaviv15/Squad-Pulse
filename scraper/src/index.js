@@ -4,6 +4,7 @@
 import { postScrapeResult } from "./backendClient.js";
 import { createBrowserSource } from "./browserSource.js";
 import { ConfigError, loadConfig } from "./config.js";
+import { PARTS } from "./contract.js";
 import { createLogger } from "./log.js";
 import { ScrapeQueue } from "./queue.js";
 import { runScrape } from "./scrape.js";
@@ -29,7 +30,7 @@ async function runJob(job, signal) {
     seasonId: job.seasonId,
   });
   const payload = await runScrape(job, { source, log, signal });
-  for (const part of ["fixtures", "standings"]) {
+  for (const part of PARTS) {
     if (payload[part] !== null) {
       log.info(job.runId, "part result", {
         part,

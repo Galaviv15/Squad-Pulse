@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { after, before, beforeEach, describe, test } from "node:test";
 import { createMemoryLogger } from "../src/log.js";
 import { ScrapeQueue } from "../src/queue.js";
-import { createTriggerServer } from "../src/server.js";
+import { createTriggerServer, parseTrigger } from "../src/server.js";
 
 const TOKEN = "s3cret-token-for-tests-0123456789abcdef";
 const BODY = {
@@ -74,7 +74,31 @@ describe("POST /scrape", () => {
   test("202 QUEUED, and the scrape runs", async () => {
     assert.deepEqual(await expectStatus(post(BODY), 202), { status: "QUEUED", runId: "r1" });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(started, [BODY]);
+    assert.deepEqual(started, [{ ...BODY, playerStats: false }]);
+  });
+
+  test("playerStats: absent → false, true → true, and only playerStats true is enough", async () => {
+    await expectStatus(post({ ...BODY, runId: "p1", teamId: 1 }), 202);
+    await expectStatus(post({ ...BODY, runId: "p2", teamId: 2, playerStats: true }), 202);
+    await expectStatus(post({ ...BODY, runId: "p3", teamId: 3, playerStats: false }), 202);
+    const statsOnly = { ...BODY, runId: "p4", teamId: 4, fixtures: false, standings: false };
+    await expectStatus(post({ ...statsOnly, playerStats: true }), 202);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(started, [{ ...BODY, runId: "p1", teamId: 1, playerStats: false }]);
+    assert.deepEqual(parseTrigger({ ...BODY, playerStats: true }).playerStats, true);
+    assert.deepEqual(parseTrigger({ ...BODY, playerStats: false }).playerStats, false);
+    assert.deepEqual(parseTrigger(BODY), { ...BODY, playerStats: false });
+    assert.deepEqual(parseTrigger({ ...statsOnly, playerStats: true }), {
+      ...statsOnly,
+      playerStats: true,
+    });
+  });
+
+  test("400 nothing to scrape: all three parts false", async () => {
+    const body = { ...BODY, fixtures: false, standings: false, playerStats: false };
+    assert.deepEqual(await expectStatus(post(body), 400), {
+      error: "nothing to scrape: fixtures, standings and playerStats are all false",
+    });
   });
 
   test("runId null is accepted and echoed", async () => {
@@ -149,6 +173,10 @@ describe("POST /scrape", () => {
     'runId ""': { ...BODY, runId: "" },
     "runId with a control character": { ...BODY, runId: "a\nb" },
     "a boolean as a string": { ...BODY, fixtures: "true" },
+    "playerStats null": { ...BODY, playerStats: null },
+    'playerStats "true"': { ...BODY, playerStats: "true" },
+    "playerStats 1": { ...BODY, playerStats: 1 },
+    "an unknown property next to playerStats": { ...BODY, playerStats: true, lineups: true },
   };
   for (const [name, body] of Object.entries(invalid)) {
     test(`400: ${name}, with a fixed message that doesn't echo the input`, async () => {

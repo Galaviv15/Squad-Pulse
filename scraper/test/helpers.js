@@ -85,6 +85,7 @@ export const OK_SCRIPT = () => ({
   "/team-details/team-games/": [{ status: 200, body: GAMES_HTML }],
   "/leagues/league/": [{ status: 200, body: leaguePage() }],
   "/Components.asmx/LeagueTable": [{ status: 200, body: TABLE_XML }],
+  "/Components.asmx/GetTeamPlayersStatisticsList": [{ status: 200, body: STATS_XML }],
 });
 
 export const JOB = Object.freeze({
@@ -95,3 +96,6 @@ export const JOB = Object.freeze({
   fixtures: true,
   standings: true,
 });
+
+/** JOB with all three parts (KAN-73); JOB itself has no `playerStats`, like a pre-KAN-73 trigger. */
+export const JOB_ALL = Object.freeze({ ...JOB, playerStats: true });

@@ -9,11 +9,11 @@ import {
 } from "../src/contract.js";
 import { runScrape } from "../src/scrape.js";
 import { createMemoryLogger } from "../src/log.js";
-import { JOB, OK_SCRIPT, contractExample, fakeClock, fakeSource } from "./helpers.js";
+import { JOB, JOB_ALL, OK_SCRIPT, contractExample, fakeClock, fakeSource } from "./helpers.js";
 
-async function fixturePayload() {
+async function fixturePayload(job = JOB) {
   const clock = fakeClock();
-  return runScrape(JOB, {
+  return runScrape(job, {
     source: fakeSource(clock, OK_SCRIPT()),
     clock,
     log: createMemoryLogger(),
@@ -52,7 +52,7 @@ async function threeParts() {
 }
 
 const ALLOWED = {
-  top: ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings"],
+  top: ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats"],
   fixtures: ["status", "fetchedAt", "games"],
   game: [
     "gameId",
@@ -100,8 +100,16 @@ describe("local contract check", () => {
     assert.equal(payload.standings.round, 6);
   });
 
+  test("accepts the payload built from the fixtures, with all three parts OK", async () => {
+    const payload = await fixturePayload(JOB_ALL);
+    assert.equal(payloadViolation(payload), null);
+    for (const part of PARTS) assert.equal(payload[part].status, "OK", part);
+    assert.equal(payload.playerStats.players.length, 34);
+    assert.deepEqual(enforceContract(payload), payload);
+  });
+
   test('no "" anywhere and no property outside the contract', async () => {
-    const payload = await fixturePayload();
+    const payload = await fixturePayload(JOB_ALL);
     walkStrings(payload, (s) => assert.notEqual(s.trim(), ""));
     assert.deepEqual(Object.keys(payload).sort(), [...ALLOWED.top].sort());
     assert.deepEqual(Object.keys(payload.fixtures).sort(), [...ALLOWED.fixtures].sort());
@@ -110,6 +118,7 @@ describe("local contract check", () => {
       assert.deepEqual(Object.keys(g).sort(), [...ALLOWED.game].sort());
     for (const r of payload.standings.rows)
       assert.deepEqual(Object.keys(r).sort(), [...ALLOWED.row].sort());
+    assert.deepEqual(Object.keys(payload.playerStats).sort(), ["fetchedAt", "players", "status"]);
   });
 
   const brokenFixtures = {
