@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Internal service: scrapes one team's fixtures and its league table from football.org.il on the backend's request and posts the result to the backend (KAN-67).",
+  "description": "Internal service: scrapes one team's fixtures, its player season statistics and its league table from football.org.il on the backend's request and posts the result to the backend (KAN-67).",
   "engines": {
     "node": ">=24"
   },
