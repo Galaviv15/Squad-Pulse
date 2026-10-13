@@ -338,8 +338,9 @@ A scrape where the site blocked the fixtures page and the standings weren't atte
   "clubsUpdated": 0, "warnings": [] }
 ```
 
-A player statistics part alone (KAN-72; names and ids made up):
+A player statistics part alone (KAN-72; names and ids made up). The scraper's tests check its local contract check accepts this block, and `ContractExampleIntegrationTest` posts it to the real backend and checks the answer below:
 
+<!-- contract-example-player-stats -->
 ```json
 { "runId": null, "teamId": 7617, "leagueId": 1010, "seasonId": 28,
   "playerStats": { "status": "OK", "fetchedAt": "2026-10-11T09:00:10Z", "players": [

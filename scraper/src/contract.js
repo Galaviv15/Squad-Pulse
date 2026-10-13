@@ -1,6 +1,7 @@
 // Local check of a result payload against docs/scraper-backend-contract.md, before it's posted.
 // The backend rejects the whole request (400) on any violation, which would also lose the other
-// part, so an `OK` part that breaks a rule is turned into `FAILED PARSE_ERROR` here.
+// parts, so an `OK` part that breaks a rule is turned into `FAILED PARSE_ERROR` here. Each rule
+// mirrors backend/.../scrapingintegration/ScrapeResultRequest.java, which is the source of truth.
 
 import { hasControlCharacter } from "./text.js";
 
@@ -8,7 +9,8 @@ export const REASONS = ["SOURCE_BLOCKED", "TIMEOUT", "SOURCE_ERROR", "PARSE_ERRO
 export const MAX_DETAIL_LENGTH = 500;
 const JAVA_INT_MAX = 2147483647;
 
-const TOP_KEYS = ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings"];
+export const PARTS = ["fixtures", "standings", "playerStats"];
+const TOP_KEYS = ["runId", "teamId", "leagueId", "seasonId", ...PARTS];
 const FAILED_KEYS = ["status", "reason", "detail"];
 const FIXTURES_KEYS = ["status", "fetchedAt", "games"];
 const GAME_KEYS = [
@@ -34,6 +36,18 @@ const ROW_KEYS = [
   "goalsAgainst",
   "points",
 ];
+const PLAYER_STATS_KEYS = ["status", "fetchedAt", "players"];
+const PLAYER_COUNTS = [
+  "games",
+  "goals",
+  "yellowCardsLeagueAndCup",
+  "yellowCardsToto",
+  "redCards",
+  "starts",
+  "cameOnAsSub",
+  "subbedOff",
+];
+const PLAYER_KEYS = ["playerId", "name", ...PLAYER_COUNTS, "minutes"];
 
 class Violation extends Error {}
 
@@ -149,6 +163,34 @@ function validateStandings(part, path) {
   });
 }
 
+/**
+ * PlayerStatsPart / PlayerStatsRow (KAN-72): 1–80 players, none null; every field required, no
+ * other; playerId 1..int max and unique; name 1–100 after trimming, no control characters; counts
+ * 0..200, minutes 0..20000; games = starts + cameOnAsSub. Minutes are never checked against games.
+ * A violation's path names the row by index, never by its name or playerId.
+ */
+function validatePlayerStats(part, path) {
+  keys(part, PLAYER_STATS_KEYS, path);
+  instant(part.fetchedAt, `${path}.fetchedAt`);
+  if (!Array.isArray(part.players) || part.players.length < 1 || part.players.length > 80) {
+    fail(`${path}.players`, "must have 1..80 players");
+  }
+  const playerIds = new Set();
+  part.players.forEach((player, i) => {
+    const at = `${path}.players[${i}]`;
+    keys(player, PLAYER_KEYS, at);
+    int(player.playerId, `${at}.playerId`, 1, JAVA_INT_MAX);
+    text(player.name, `${at}.name`, 100);
+    for (const key of PLAYER_COUNTS) int(player[key], `${at}.${key}`, 0, 200);
+    int(player.minutes, `${at}.minutes`, 0, 20000);
+    if (player.starts + player.cameOnAsSub !== player.games) {
+      fail(at, "starts + cameOnAsSub must equal games");
+    }
+    if (playerIds.has(player.playerId)) fail(`${at}.playerId`, "must be unique");
+    playerIds.add(player.playerId);
+  });
+}
+
 function validateFailed(part, path) {
   keys(part, FAILED_KEYS, path, ["status", "reason"]);
   if (!REASONS.includes(part.reason)) fail(`${path}.reason`, "unknown reason");
@@ -163,7 +205,9 @@ export function partViolation(name, part) {
     if (part.status === "FAILED") validateFailed(part, name);
     else if (part.status !== "OK") fail(`${name}.status`, "must be OK or FAILED");
     else if (name === "fixtures") validateFixtures(part, name);
-    else validateStandings(part, name);
+    else if (name === "standings") validateStandings(part, name);
+    else if (name === "playerStats") validatePlayerStats(part, name);
+    else fail(name, "unknown part");
     return null;
   } catch (error) {
     if (error instanceof Violation) return error.message;
@@ -182,16 +226,18 @@ export function payloadViolation(payload) {
       if (hasControlCharacter(payload.runId)) fail("runId", "must not contain control characters");
     }
     for (const key of ["teamId", "leagueId", "seasonId"]) int(payload[key], key, 1, JAVA_INT_MAX);
-    if (payload.fixtures == null && payload.standings == null) {
+    if (PARTS.every((name) => payload[name] == null)) {
       fail("request", "needs at least one part");
     }
   } catch (error) {
     if (error instanceof Violation) return error.message;
     throw error;
   }
-  return (
-    partViolation("fixtures", payload.fixtures) ?? partViolation("standings", payload.standings)
-  );
+  for (const name of PARTS) {
+    const violation = partViolation(name, payload[name]);
+    if (violation !== null) return violation;
+  }
+  return null;
 }
 
 /** A `FAILED` part. `detail` is cleaned to the contract's rules (never `""`). */
@@ -204,7 +250,7 @@ export function failedPart(reason, detail = null) {
 /** Turns every `OK` part that breaks the contract into `FAILED PARSE_ERROR` (first rule as detail). */
 export function enforceContract(payload) {
   const result = { ...payload };
-  for (const name of ["fixtures", "standings"]) {
+  for (const name of PARTS) {
     const violation = partViolation(name, result[name]);
     if (violation !== null) {
       result[name] = failedPart("PARSE_ERROR", `contract check: ${violation}`);
