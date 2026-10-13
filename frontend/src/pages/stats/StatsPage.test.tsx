@@ -3,7 +3,7 @@ import { HttpResponse } from "msw";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import he from "@/i18n/locales/he.json";
 import { hasPermission, type PermissionLevel } from "@/lib/auth/permissions";
-import type { PlayerStats } from "@/lib/matches/playerStats";
+import type { PlayerStats, PlayerStatsRow } from "@/lib/matches/playerStats";
 import type { RefreshStatus } from "@/lib/matches/types";
 import { deferred } from "@/test/deferred";
 import { watchLiveInsertion } from "@/test/liveRegion";
@@ -17,6 +17,7 @@ import {
 } from "@/test/msw/matches";
 import {
   allSquadPlayers,
+  createFromStatsReturns,
   emptyPlayerStats,
   linkReturns,
   playerRef,
@@ -29,6 +30,7 @@ import {
 } from "@/test/msw/playerStats";
 import { server } from "@/test/msw/server";
 import { conflict, recordedPlayers, summaryReturns } from "@/test/msw/squad";
+import { choose, fields, type as typeInto } from "@/test/playerForm";
 import { renderWithProviders } from "@/test/render";
 
 // Load the lazy pages' code up front: the first lazy load must not count against findBy's 1 s wait.
@@ -790,5 +792,134 @@ describe("creating a squad player from a row (KAN-77)", () => {
 
     expect(within(dialog).queryByRole("link", { name: S.createPlayer.pickerLink })).toBeNull();
     expect(within(dialog).queryByText(S.createPlayer.pickerLink)).toBeNull();
+  });
+});
+
+describe("focus when the row leaves the filter (KAN-77 follow-up)", () => {
+  const A = () => statsRow("fa", "אלון אבי");
+  const B = (overrides = {}) => statsRow("fb", "ברק בני", overrides);
+  const C = () => statsRow("fc", "גולן גיל");
+  const linkedB = () => B({ linkedPlayer: playerRef(squadPlayers.daniel) });
+  const header = (rowName: string) => screen.getByRole("rowheader", { name: rowName });
+
+  /**
+   * The whole flow: the create-player form for B under `filter`, saved; the stats then answer with
+   * `after` (B linked). Returns once the stats screen is back.
+   */
+  async function createFromForm(
+    before: PlayerStatsRow[],
+    after: PlayerStatsRow[],
+    filter = "?filter=unlinked",
+  ) {
+    const store = { stats: playerStatsBody({ players: before }) };
+    const created = createFromStatsReturns((_rowId, body) => {
+      store.stats = playerStatsBody({ players: after });
+      return HttpResponse.json({ ...squadPlayers.daniel, ...body, id: "new1" }, { status: 201 });
+    });
+    server.use(
+      refreshReturns("t1"),
+      meReturns({ permissionLevel: "EDIT_FULL" }),
+      playerStatsReturns(() => HttpResponse.json(store.stats)).handler,
+      refreshStatusReturns(refreshStatusBody()).handler,
+      created.handler,
+    );
+    const rendered = renderWithProviders({
+      initialEntries: [`/app/stats${filter}`, `/app/stats/stats-row-fb/new-player${filter}`],
+    });
+    await screen.findByRole("button", { name: he.squad.form.submitCreate });
+    await choose(fields.primaryPosition, "CB");
+    typeInto(fields.dateOfBirth, "1998-05-20");
+    const live = watchLiveInsertion(name(S.createPlayer.created, "ברק בני"));
+    fireEvent.click(screen.getByRole("button", { name: he.squad.form.submitCreate }));
+    await screen.findByRole("heading", { level: 1, name: he.nav.stats });
+    return { ...rendered, live };
+  }
+
+  it("moves to the next row once the refetch hides the created one, announcing it", async () => {
+    const { live } = await createFromForm([A(), B(), C()], [A(), linkedB(), C()]);
+
+    await waitFor(() => expect(header("גולן גיל")).toHaveFocus());
+    expect(screen.queryByRole("rowheader", { name: "ברק בני" })).toBeNull();
+    expect(await screen.findByText(name(S.createPlayer.created, "ברק בני"))).toBeVisible();
+    expect(live.result.intoExistingRegion).toBe(true);
+    live.stop();
+  });
+
+  it("moves to the previous row when the created one was the last", async () => {
+    await createFromForm([A(), B()], [A(), linkedB()]);
+
+    await waitFor(() => expect(header("אלון אבי")).toHaveFocus());
+  });
+
+  it("moves to the filter's selected option when no unlinked row is left", async () => {
+    await createFromForm([B(), statsRows.linked()], [linkedB(), statsRows.linked()]);
+
+    expect(await screen.findByText(S.filter.allLinked)).toBeVisible();
+    const filter = screen.getByRole("radiogroup", { name: S.filter.label });
+    await waitFor(() => expect(within(filter).getByRole("radio", { checked: true })).toHaveFocus());
+  });
+
+  it('stays on the row under "כל השחקנים", where it remains shown', async () => {
+    await createFromForm([A(), B(), C()], [A(), linkedB(), C()], "");
+
+    await waitFor(() => expect(header("ברק בני")).toHaveFocus());
+    await settle();
+    expect(header("ברק בני")).toHaveFocus();
+  });
+
+  async function renderForLink(stats: () => Response | Promise<Response>) {
+    server.use(
+      refreshReturns("t1"),
+      meReturns({ permissionLevel: "EDIT_FULL" }),
+      playerStatsReturns(stats).handler,
+      refreshStatusReturns(refreshStatusBody()).handler,
+      linkReturns().handler,
+    );
+    renderWithProviders({ initialEntries: ["/app/stats?filter=unlinked"] });
+    await table();
+  }
+
+  const suggestedB = () => B({ suggestedPlayer: playerRef(squadPlayers.avi) });
+  const linkedBToAvi = () => B({ linkedPlayer: playerRef(squadPlayers.avi) });
+
+  it("moves to the next row after confirming a suggestion (KAN-74) under the filter", async () => {
+    let linked = false;
+    await renderForLink(() =>
+      HttpResponse.json(
+        playerStatsBody({ players: [A(), linked ? linkedBToAvi() : suggestedB(), C()] }),
+      ),
+    );
+
+    linked = true;
+    fireEvent.click(screen.getByRole("button", { name: name(S.confirmLabel, "ברק בני") }));
+
+    await waitFor(() => expect(header("גולן גיל")).toHaveFocus());
+    expect(screen.queryByRole("rowheader", { name: "ברק בני" })).toBeNull();
+  });
+
+  it("never steals focus the user moved elsewhere before the refetch landed", async () => {
+    let linked = false;
+    const gate = deferred();
+    await renderForLink(async () => {
+      if (linked) {
+        await gate.promise;
+      }
+      return HttpResponse.json(
+        playerStatsBody({ players: [A(), linked ? linkedBToAvi() : suggestedB(), C()] }),
+      );
+    });
+
+    linked = true;
+    fireEvent.click(screen.getByRole("button", { name: name(S.confirmLabel, "ברק בני") }));
+    await waitFor(() => expect(header("ברק בני")).toHaveFocus());
+    const elsewhere = within(rowOf("אלון אבי")).getByRole("button", {
+      name: name(S.linkToLabel, "אלון אבי"),
+    });
+    act(() => elsewhere.focus());
+    gate.resolve();
+
+    await waitFor(() => expect(screen.queryByRole("rowheader", { name: "ברק בני" })).toBeNull());
+    await settle();
+    expect(elsewhere).toHaveFocus();
   });
 });
