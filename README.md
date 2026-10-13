@@ -262,6 +262,7 @@ Both answer `{ "outcome", "state", "failureReason", "startedAt", "finishedAt", "
 | `GET /matches/player-stats` | `VIEW_ONLY` | `{ "state", "lastUpdatedAt", "players": [ { "id", "name", "games", "goals", "yellowCardsLeagueAndCup", "yellowCardsToto", "redCards", "starts", "cameOnAsSub", "subbedOff", "minutes", "linkedPlayer", "suggestedPlayer" } ] }` |
 | `PUT /matches/player-stats/{id}/link` | `EDIT_FULL` | `{ "playerId" }` (one of the club's own players, active or released) → `200` with the row, as in the `GET`. Sets or replaces this scraped player's link; linking the same pair again changes nothing. `400` for a blank / missing `playerId`; `404` if `{id}` isn't in the club's current statistics (or the club isn't mapped / has no data) or the player isn't in the caller's club; `409` `PLAYER_ALREADY_LINKED` if that player is linked to another scraped player |
 | `DELETE /matches/player-stats/{id}/link` | `EDIT_FULL` | Removes this scraped player's link → `204`, also when there was none. `404` for an unknown `{id}` |
+| `POST /matches/player-stats/{id}/player` | `EDIT_FULL` | KAN-77: creates a squad player and links this scraped player to it, in one step. Body: exactly `POST /squad/players`'s (the same request type, the same validation and `400`s) → `201` with the player exactly as `POST /squad/players` returns it (`hasPhoto: false`), `Location: /squad/players/{newId}`. `404` if `{id}` isn't in the club's current statistics (or the club isn't mapped / has no data); `409` `STATS_ROW_ALREADY_LINKED` if this scraped player is already linked to an existing player (unlike `PUT …/link`, it never replaces a link; a link to a deleted player counts as none and is replaced); `409` `JERSEY_NUMBER_TAKEN`; `409` `CONCURRENT_MODIFICATION` if a concurrent write to this scraped player's link won. The player insert and the link write are one MongoDB transaction: on any error, no player and no link are written. Never retried automatically |
 
 - `state` and `lastUpdatedAt` as above (`lastUpdatedAt` = when the shown statistics were scraped). Team and season come only from the club's mapping.
 - `players`: every registered player in the site's table, also those with 0 games, in the site's order (no sorting). `name` as the site shows it (surname first). `games` = `starts` + `cameOnAsSub`.
@@ -300,18 +301,19 @@ Every `409` carries a `code`. Codes are stable: new ones may be added, but a shi
 
 | `code` | Meaning | Returned by |
 |---|---|---|
-| `JERSEY_NUMBER_TAKEN` | Another active player of the club has this jersey number | `POST /squad/players`, `PUT /squad/players/{id}`, `POST /squad/players/{id}/reactivate` |
+| `JERSEY_NUMBER_TAKEN` | Another active player of the club has this jersey number | `POST /squad/players`, `POST /matches/player-stats/{id}/player`, `PUT /squad/players/{id}`, `POST /squad/players/{id}/reactivate` |
 | `STALE_VERSION` | The player was saved since the client loaded it (the `version` sent is out of date, or the save lost a race) | `PUT /squad/players/{id}`, `POST /squad/players/{id}/release`, `POST /squad/players/{id}/reactivate` |
 | `PLAYER_RELEASED` | The player is released, so it can't be edited | `PUT /squad/players/{id}`, `PUT` / `DELETE /squad/players/{id}/photo` |
 | `PLAYER_ALREADY_RELEASED` | Releasing a released player | `POST /squad/players/{id}/release` |
 | `PLAYER_ALREADY_ACTIVE` | Re-activating an active player | `POST /squad/players/{id}/reactivate` |
 | `PLAYER_STATS_LINKED` | The player is linked to scraped statistics, so it can't be deleted; unlink first | `DELETE /squad/players/{id}` |
 | `PLAYER_ALREADY_LINKED` | The player is already linked to another scraped player | `PUT /matches/player-stats/{id}/link` |
+| `STATS_ROW_ALREADY_LINKED` | The scraped player is already linked to a player, so no player is created for it | `POST /matches/player-stats/{id}/player` |
 | `EMAIL_ALREADY_REGISTERED` | The email belongs to a user already (in any club) | `POST /auth/users/invite` |
 | `CANNOT_CHANGE_OWN_PERMISSION_LEVEL` | The caller tried to change their own level | `PATCH /auth/users/{id}/permission-level` |
 | `CANNOT_CHANGE_OWN_ACTIVE_STATUS` | The caller tried to deactivate or re-activate themselves | `POST /auth/users/{id}/deactivate`, `/reactivate` |
 | `USER_DEACTIVATED` | The user is deactivated, so their profile can't be changed | `PUT` / `DELETE /users/me/photo` and `/users/{id}/photo` |
-| `CONCURRENT_MODIFICATION` | A concurrent write that a retry didn't resolve (generic; retry the request) | `POST /auth/reset-password`, the user-management writes, `PUT /matches/player-stats/{id}/link` (two first links of the same scraped player at once) |
+| `CONCURRENT_MODIFICATION` | A concurrent write that a retry didn't resolve (generic; retry the request) | `POST /auth/reset-password`, the user-management writes, `PUT /matches/player-stats/{id}/link` (two first links of the same scraped player at once), `POST /matches/player-stats/{id}/player` (a concurrent write to the scraped player's link won; nothing was written) |
 
 Authentication comes first: a request without a valid token is a `401` whatever else is wrong with it — except a path the security firewall rejects, which is a `400` before authentication is looked at. After that, the request's form is checked before the permission level, so a malformed request from a caller who couldn't make it anyway gets a `400` / `415` rather than a `403` (nothing is read or changed either way). Any other status Spring itself raises is passed on with a generic message (`"The request could not be processed"`, or `"An unexpected error occurred"` for a 5xx).
 
