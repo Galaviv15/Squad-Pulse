@@ -45,8 +45,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * link → one re-read of the row's link: linked to an existing player → {@link
  * StatsRowAlreadyLinkedException}, otherwise {@code 409 CONCURRENT_MODIFICATION}. A write conflict
  * (two transactions writing the same link document, or a link committed after this transaction's
- * snapshot) → {@code 409 CONCURRENT_MODIFICATION}. The installed Spring Data MongoDB translates a
- * write conflict (server code 112, label {@code TransientTransactionError}) to a plain {@link
+ * snapshot, or a jersey number taken by another create still in flight) → {@code 409
+ * CONCURRENT_MODIFICATION}. The installed Spring Data MongoDB translates a write conflict (server
+ * code 112, label {@code TransientTransactionError}) to a plain {@link
  * DataIntegrityViolationException}, which would otherwise be a 500. A taken jersey number is {@code
  * squad}'s {@code JerseyNumberTakenException}, unchanged.
  *
@@ -160,6 +161,17 @@ class StatsPlayerCreationService {
         .filter(link -> playerRepository.existsById(link.getPlayerId()));
   }
 
+  /**
+   * Whether the failure is a transient transaction error: a write conflict (code 112) or anything
+   * else MongoDB labels {@code TransientTransactionError}. Every such error becomes {@code 409
+   * CONCURRENT_MODIFICATION}: the transaction was aborted, so nothing was written, and retrying the
+   * request is the right remedy. That includes a jersey-number clash with another create still in
+   * flight: inside a transaction MongoDB reports it on the players' unique index as a write
+   * conflict, not a duplicate key ({@code
+   * StatsPlayerCreationIntegrationTest#twoRowsCreatedAtOnceWithTheSameJerseyNumberLetExactlyOneWin}:
+   * the loser got {@code CONCURRENT_MODIFICATION} in every round). The retry then answers {@code
+   * JERSEY_NUMBER_TAKEN}, so no special case is made for it here.
+   */
   private static boolean isWriteConflict(Throwable e) {
     for (Throwable cause = e; cause != null; cause = cause.getCause()) {
       if (cause instanceof MongoException mongo

@@ -435,6 +435,48 @@ class StatsPlayerCreationIntegrationTest {
     }
   }
 
+  /**
+   * Two rows created at once with the same jersey number: the two inserts clash on the players'
+   * jersey index inside two transactions. Exactly one wins; the other is a 409 with nothing
+   * written. While the winner hasn't committed, MongoDB reports the clash as a write conflict, not
+   * a duplicate key, so the loser gets CONCURRENT_MODIFICATION (5 of 5 rounds when this was
+   * written); JERSEY_NUMBER_TAKEN only if the winner had already committed. A retry then answers
+   * JERSEY_NUMBER_TAKEN (see StatsPlayerCreationService#isWriteConflict).
+   */
+  @Test
+  void twoRowsCreatedAtOnceWithTheSameJerseyNumberLetExactlyOneWin() throws Exception {
+    String cohen = rowId(clubA, COHEN_NAME);
+    String levi = rowId(clubA, LEVI_NAME);
+    for (int round = 0; round < 5; round++) {
+      List<MockHttpServletResponse> responses =
+          inParallel(
+              List.of(
+                  () ->
+                      create(clubA, cohen, with(minimalBody("כהן"), "jerseyNumber", 8), editFull())
+                          .andReturn()
+                          .getResponse(),
+                  () ->
+                      create(clubA, levi, with(minimalBody("לוי"), "jerseyNumber", 8), editFull())
+                          .andReturn()
+                          .getResponse()));
+
+      assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(201, 409);
+      assertThat(responses).filteredOn(r -> r.getStatus() == 201).hasSize(1);
+      for (MockHttpServletResponse response : responses) {
+        if (response.getStatus() == 409) {
+          assertThat(JSON.readTree(response.getContentAsString()).get("code").stringValue())
+              .isIn("JERSEY_NUMBER_TAKEN", "CONCURRENT_MODIFICATION");
+        }
+      }
+      assertThat(players(clubA)).hasSize(1);
+      assertThat(rawLinks()).hasSize(1);
+      assertThat(rawLinks().getFirst().getString("playerId")).isEqualTo(players(clubA).getFirst());
+
+      mongoTemplate.getCollection("players").deleteMany(new Document());
+      mongoTemplate.getCollection("player_stats_links").deleteMany(new Document());
+    }
+  }
+
   // --- isolation --------------------------------------------------------------------------------
 
   /** Inside the transaction the club-scoped repositories still stamp and filter by the clubId. */
