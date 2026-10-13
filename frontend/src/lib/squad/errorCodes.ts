@@ -13,4 +13,6 @@ export const PLAYER_ERROR_CODES = {
   PLAYER_ALREADY_RELEASED: "PLAYER_ALREADY_RELEASED",
   /** squad.PlayerAlreadyActiveException: the player to re-activate is active already. */
   PLAYER_ALREADY_ACTIVE: "PLAYER_ALREADY_ACTIVE",
+  /** squad.PlayerStatsLinkedException: a delete of a player linked to scraped statistics. */
+  PLAYER_STATS_LINKED: "PLAYER_STATS_LINKED",
 } as const;

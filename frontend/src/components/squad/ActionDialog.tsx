@@ -36,6 +36,8 @@ export interface ActionDialogProps {
   confirmLabel: string;
   pendingLabel: string;
   destructive?: boolean;
+  /** The confirm button is disabled (and Enter does nothing) until a choice is made (the picker). */
+  confirmDisabled?: boolean;
   /** The confirm button or Enter in a field; called once at a time, however often it's pressed. */
   onConfirm(): Promise<unknown>;
 }
@@ -61,6 +63,7 @@ export function ActionDialog({
   confirmLabel,
   pendingLabel,
   destructive = false,
+  confirmDisabled = false,
   onConfirm,
 }: ActionDialogProps) {
   const { t } = useTranslation();
@@ -69,7 +72,7 @@ export function ActionDialog({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (running.current) {
+    if (running.current || confirmDisabled) {
       return;
     }
     running.current = true;
@@ -108,7 +111,7 @@ export function ActionDialog({
             <AlertDialogCancel disabled={pending}>{t("squad.dialog.cancel")}</AlertDialogCancel>
             <Button
               type="submit"
-              disabled={pending}
+              disabled={pending || confirmDisabled}
               className={cn(
                 destructive && "bg-destructive text-destructive-foreground hover:bg-destructive/90",
               )}

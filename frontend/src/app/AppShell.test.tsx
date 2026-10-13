@@ -308,6 +308,7 @@ describe("navigation", () => {
       [he.nav.dashboard, "/app"],
       [he.nav.squad, "/app/squad"],
       [he.nav.matches, "/app/matches"],
+      [he.nav.stats, "/app/stats"],
     ]);
   });
 

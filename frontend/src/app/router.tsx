@@ -104,6 +104,15 @@ export const routes: RouteObject[] = [
                     }),
                     handle: { titleKey: "nav.matches" } satisfies RouteHandle,
                   },
+                  // KAN-74: the scraped player statistics and their links to the squad. Its data is
+                  // under /matches/player-stats, which the /matches prefix already covers.
+                  {
+                    path: "stats",
+                    lazy: async () => ({
+                      Component: (await import("@/pages/stats/StatsPage")).StatsPage,
+                    }),
+                    handle: { titleKey: "nav.stats" } satisfies RouteHandle,
+                  },
                   {
                     path: "*",
                     element: <NotFoundInShellPage />,

@@ -60,6 +60,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
 
+  --color-card-yellow: var(--card-yellow);
+  --color-card-red: var(--card-red);
+
   /* sm and md as KAN-44 specifies them (4px / 6px); the larger steps are shadcn's own scale. */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -118,6 +121,10 @@
   --chart-2: #0e7f5c;
   --chart-3: #8fb83f;
   --chart-4: #3a6db8;
+
+  /* Card marks on the stats screen (KAN-74): decorative only, beside their text, never text. */
+  --card-yellow: #f2c12e;
+  --card-red: #d7263d;
 
   --radius: 0.5rem;
 }

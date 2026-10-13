@@ -4,10 +4,11 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { FIELD_INVALID_CLASSES } from "@/components/form/fieldClasses";
 import { FormField } from "@/components/form/FormField";
-import { FormAlert } from "@/components/form/FormMessage";
+import { FormAlert, FormNotice } from "@/components/form/FormMessage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/errors";
+import { useRemovePlayerStatsLink } from "@/lib/matches/playerStats";
 import { PLAYER_ERROR_CODES } from "@/lib/squad/errorCodes";
 import { jerseyNumberError, toNumber } from "@/lib/squad/form";
 import {
@@ -193,20 +194,92 @@ function DeleteDialog({
 }: DialogProps & Pick<PlayerActionDialogProps, "onDeleted">) {
   const { t } = useTranslation();
   const remove = useDeletePlayer();
+  const removeLink = useRemovePlayerStatsLink();
+  const [unlinked, setUnlinked] = useState(false);
+  // Drops a second click on "ביטול הקישור" before its disabled state renders.
+  const unlinking = useRef(false);
+  const pending = remove.isPending || removeLink.isPending;
+
+  /*
+   * The unlink never goes on to delete: removing the link and deleting the player are two explicit
+   * steps by design. The user clicks the delete button again, knowing the player's stats row will
+   * show as unlinked. The one exception is a 404: the player is already gone (the server checks the
+   * player first), which is what the user asked for, so it ends like a delete answered 404.
+   */
+  async function unlink() {
+    if (unlinking.current) {
+      return;
+    }
+    unlinking.current = true;
+    try {
+      await removeLink.mutateAsync({ playerId: player.id });
+      remove.reset();
+      setUnlinked(true);
+    } catch (error) {
+      if (isGone(error)) {
+        await onDeleted(player);
+      }
+      // Anything else is shown from removeLink.error.
+    } finally {
+      unlinking.current = false;
+    }
+  }
+
+  const statsLinked = remove.error !== null && actionErrorMessage(remove.error).offer === "unlink";
+  // A 404 isn't shown: it's handled as deleted.
+  const unlinkError =
+    removeLink.error !== null && !isGone(removeLink.error) ? removeLink.error : null;
+
+  const unlinkButton = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="self-start"
+      disabled={pending}
+      onClick={() => void unlink()}
+    >
+      {removeLink.isPending
+        ? t("squad.dialog.statsLinked.unlinking")
+        : t("squad.dialog.statsLinked.unlink")}
+    </Button>
+  );
+
+  // One alert at a time: a failed unlink replaces the explanation, keeping the button to retry.
+  let error = null;
+  if (statsLinked && unlinkError !== null) {
+    error = <FormAlert action={unlinkButton}>{t(actionErrorMessage(unlinkError).key)}</FormAlert>;
+  } else if (statsLinked) {
+    error = (
+      <FormAlert
+        action={
+          <>
+            <p className="font-normal">{t("squad.dialog.statsLinked.text")}</p>
+            {unlinkButton}
+          </>
+        }
+      >
+        {t("squad.dialog.statsLinked.title")}
+      </FormAlert>
+    );
+  } else if (remove.error !== null) {
+    error = <ActionError error={remove.error} place={place} onClose={dialog.onClose} />;
+  }
 
   return (
     <ActionDialog
       {...dialog}
       destructive
-      pending={remove.isPending}
+      pending={pending}
       title={t("squad.dialog.delete.title", { name: player.fullName })}
       description={t("squad.dialog.delete.text")}
       confirmLabel={t("squad.actions.delete")}
-      pendingLabel={t("squad.actions.deleting")}
-      error={
-        remove.error && <ActionError error={remove.error} place={place} onClose={dialog.onClose} />
-      }
+      // While the unlink runs the delete button is only disabled: nothing is being deleted.
+      pendingLabel={t(remove.isPending ? "squad.actions.deleting" : "squad.actions.delete")}
+      error={error}
       onConfirm={async () => {
+        setUnlinked(false);
+        removeLink.reset();
         try {
           await remove.mutateAsync({ playerId: player.id });
         } catch {
@@ -214,8 +287,22 @@ function DeleteDialog({
         }
         await onDeleted(player);
       }}
-    />
+    >
+      {/* The unlink's notice: a region that's always there, so the text is announced. */}
+      <div role="status" className="empty:-mb-4">
+        {unlinked && (
+          <FormNotice icon="success" live={false}>
+            {t("squad.dialog.statsLinked.unlinked")}
+          </FormNotice>
+        )}
+      </div>
+    </ActionDialog>
   );
+}
+
+/** A 404 on a write to the player: it's gone. */
+function isGone(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
 }
 
 /**
