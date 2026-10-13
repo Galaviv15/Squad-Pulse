@@ -50,15 +50,20 @@ export function useDialogHost<T>() {
 /** What a failed player action says (an i18n key) and what it offers with it. */
 export interface ActionErrorMessage {
   key: string;
-  /** "reload": close and refetch; "squad": go to the squad; null: nothing (retry is the button). */
-  offer: "reload" | "squad" | null;
+  /**
+   * "reload": close and refetch; "squad": go to the squad; "unlink": remove the player's stats
+   * link (only the delete dialog offers it: no other write is refused for a link); null: nothing
+   * (retry is the button).
+   */
+  offer: "reload" | "squad" | "unlink" | null;
 }
 
 /**
  * A player dialog's failure (release, re-activate, delete, photo removal): 403 no permission; 404
  * not found; the 409s that mean the data shown is out of date (stale version, already released or
- * active, released) with a reload; anything else (another 409, 5xx, no response) the generic
- * failure. Field-level failures (a taken jersey number) are the dialog's own.
+ * active, released) with a reload; a delete of a player linked to scraped statistics (KAN-74) with
+ * the unlink; anything else (another 409, 5xx, no response) the generic failure. Field-level
+ * failures (a taken jersey number) are the dialog's own.
  */
 export function actionErrorMessage(error: Error): ActionErrorMessage {
   if (error instanceof ApiError) {
@@ -78,6 +83,8 @@ export function actionErrorMessage(error: Error): ActionErrorMessage {
           return { key: "squad.dialog.alreadyActive", offer: "reload" };
         case PLAYER_ERROR_CODES.PLAYER_RELEASED:
           return { key: "squad.form.released", offer: "reload" };
+        case PLAYER_ERROR_CODES.PLAYER_STATS_LINKED:
+          return { key: "squad.dialog.statsLinked.title", offer: "unlink" };
       }
     }
   }
