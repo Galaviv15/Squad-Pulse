@@ -157,7 +157,8 @@ class PlayerStatsStorageIntegrationTest {
   }
 
   /**
-   * The index named by the driver's write error, the way {@link PlayerStatsLinkService} reads it.
+   * The driver's write error, which names the index. Only this test reads it: the services never
+   * inspect a duplicate key's message.
    */
   private static String violatedIndex(DuplicateKeyException e) {
     assertThat(e.getCause()).isInstanceOf(MongoWriteException.class);

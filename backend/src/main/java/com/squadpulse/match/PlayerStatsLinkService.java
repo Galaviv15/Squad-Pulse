@@ -1,7 +1,5 @@
 package com.squadpulse.match;
 
-import com.mongodb.ErrorCategory;
-import com.mongodb.MongoWriteException;
 import com.squadpulse.common.ClubContext;
 import com.squadpulse.common.NotFoundException;
 import com.squadpulse.squad.PlayerRepository;
@@ -22,13 +20,22 @@ import org.springframework.stereotype.Service;
  * doesn't exist, never a 403 that would reveal it.
  *
  * <p><b>Rules.</b> One link per scraped player and per {@code Player} in a club, guaranteed by the
- * two unique indexes on {@link PlayerStatsLink}; a write that loses a race on the {@code Player}'s
- * index is the same {@link PlayerAlreadyLinkedException} as the check before it. Linking a scraped
- * player again replaces its link (the old {@code Player} is free again); linking the same pair
- * again changes nothing. A released {@code Player} may be linked. Links are keyed by the scraped
- * player's stable {@code player_id}, so they outlive the player's absence from a scrape and a
- * season change; only an unlink removes one, from either side ({@link #unlink}, {@link
- * #removeLinkOf}).
+ * two unique indexes on {@link PlayerStatsLink}. Linking a scraped player again replaces its link
+ * (the old {@code Player} is free again); linking the same pair again changes nothing.
+ *
+ * <p><b>A write that loses a race</b> (a duplicate key on either index) is decided by re-reading
+ * the {@code Player}'s link once, never by reading the exception or the server's message: linked to
+ * this scraped player → the same outcome as ours, {@code 200} (a double click); linked to another
+ * scraped player → {@link PlayerAlreadyLinkedException}; otherwise this scraped player was linked
+ * to someone else meanwhile → {@code 409 CONCURRENT_MODIFICATION}. No duplicate key escapes.
+ *
+ * <p><b>Replacing an existing link is last write wins.</b> {@link PlayerStatsLink} has no
+ * {@code @Version}: two requests replacing the same scraped player's link with two different {@code
+ * Player}s at once both update the one document, and the later save stands (each request answers
+ * {@code 200} with what it wrote). Unless both pick the same {@code Player}, no unique index is
+ * involved. A released {@code Player} may be linked. Links are keyed by the scraped player's stable
+ * {@code player_id}, so they outlive the player's absence from a scrape and a season change; only
+ * an unlink removes one, from either side ({@link #unlink}, {@link #removeLinkOf}).
  *
  * <p><b>A link whose {@code Player} no longer exists counts as no link</b>, everywhere: it isn't
  * shown, doesn't stop its scraped player from being suggested or linked again (the new link
@@ -106,9 +113,22 @@ class PlayerStatsLinkService implements PlayerStatsLinks {
     try {
       linkRepository.save(link);
     } catch (DuplicateKeyException e) {
-      throw translate(e);
+      return afterLostRace(clubId, id, sourcePlayerId, playerId, e);
     }
     return readService.row(id);
+  }
+
+  /** See the class comment: decided by one re-read of the player's link. */
+  private PlayerStatsResponse.Row afterLostRace(
+      String clubId, String id, int sourcePlayerId, String playerId, DuplicateKeyException e) {
+    Optional<PlayerStatsLink> ofPlayer = linkRepository.findByClubIdAndPlayerId(clubId, playerId);
+    if (ofPlayer.isPresent()) {
+      if (ofPlayer.get().getSourcePlayerId() == sourcePlayerId) {
+        return readService.row(id);
+      }
+      throw new PlayerAlreadyLinkedException();
+    }
+    throw new OptimisticLockingFailureException("A concurrent link of the same player won", e);
   }
 
   /**
@@ -132,37 +152,5 @@ class PlayerStatsLinkService implements PlayerStatsLinks {
   @Override
   public void removeLinkOf(String playerId) {
     linkRepository.deleteByClubIdAndPlayerId(clubContext.requireClubId(), playerId);
-  }
-
-  /**
-   * A race lost on the {@code Player}'s index: someone linked that player meanwhile → {@link
-   * PlayerAlreadyLinkedException}. Lost on the scraped player's index (two first links of the same
-   * scraped player at once) → {@code 409 CONCURRENT_MODIFICATION}: reload and decide again.
-   */
-  private static RuntimeException translate(DuplicateKeyException e) {
-    String index = violatedIndex(e);
-    if (PlayerStatsLink.PLAYER_INDEX.equals(index)) {
-      return new PlayerAlreadyLinkedException();
-    }
-    if (PlayerStatsLink.SOURCE_PLAYER_INDEX.equals(index)) {
-      return new OptimisticLockingFailureException("A concurrent link of the same player won", e);
-    }
-    return e;
-  }
-
-  /** The index an E11000 names ({@code "index: <name> dup key"}), or {@code null}. */
-  private static String violatedIndex(DuplicateKeyException e) {
-    if (!(e.getCause() instanceof MongoWriteException writeException)
-        || writeException.getError().getCategory() != ErrorCategory.DUPLICATE_KEY) {
-      return null;
-    }
-    String message = writeException.getError().getMessage();
-    for (String index :
-        new String[] {PlayerStatsLink.PLAYER_INDEX, PlayerStatsLink.SOURCE_PLAYER_INDEX}) {
-      if (message.contains("index: " + index + " dup key")) {
-        return index;
-      }
-    }
-    return null;
   }
 }

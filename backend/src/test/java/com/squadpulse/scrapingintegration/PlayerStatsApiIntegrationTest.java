@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,6 +52,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -439,29 +441,32 @@ class PlayerStatsApiIntegrationTest {
     List<String> rowIds = read(clubA).get("players").findValuesAsString("id");
     assertThat(rowIds).hasSize(10);
 
-    CountDownLatch start = new CountDownLatch(1);
-    List<Future<Integer>> results = new ArrayList<>();
-    try (ExecutorService executor = Executors.newFixedThreadPool(10)) {
-      for (String rowId : rowIds) {
-        results.add(
-            executor.submit(
-                () -> {
-                  start.await();
-                  return link(clubA, rowId, player, PermissionLevel.EDIT_FULL)
-                      .andReturn()
-                      .getResponse()
-                      .getStatus();
-                }));
+    List<MockHttpServletResponse> responses =
+        inParallel(rowIds.stream().map(rowId -> link(clubA, rowId, player)).toList());
+
+    assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(200, 409);
+    assertThat(responses).filteredOn(r -> r.getStatus() == 200).hasSize(1);
+    for (MockHttpServletResponse response : responses) {
+      if (response.getStatus() == 409) {
+        assertThat(JSON.readTree(response.getContentAsString()).get("code").stringValue())
+            .isEqualTo("PLAYER_ALREADY_LINKED");
       }
-      start.countDown();
-      List<Integer> statuses = new ArrayList<>();
-      for (Future<Integer> result : results) {
-        statuses.add(result.get());
-      }
-      assertThat(statuses).containsOnly(200, 409);
-      assertThat(statuses).filteredOn(s -> s == 200).hasSize(1);
     }
     assertThat(rawLinks()).hasSize(1);
+  }
+
+  /** A double click: the same pair linked ten times at once, with no link before. All succeed. */
+  @Test
+  void parallelLinksOfTheSamePairAllSucceed() throws Exception {
+    String player = createPlayer(clubA, "דניאל כהן");
+    String row = rowId(clubA, COHEN_NAME);
+
+    List<MockHttpServletResponse> responses =
+        inParallel(java.util.Collections.nCopies(10, link(clubA, row, player)));
+
+    assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(200);
+    assertThat(rawLinks()).hasSize(1);
+    assertThat(rawLinks().getFirst().getString("playerId")).isEqualTo(player);
   }
 
   // --- a player's absence from a scrape --------------------------------------------------------
@@ -645,6 +650,34 @@ class PlayerStatsApiIntegrationTest {
             .header("Authorization", tokens.bearer(clubId, level))
             .contentType(MediaType.APPLICATION_JSON)
             .content(json(Map.of("playerId", playerId))));
+  }
+
+  /** A link request as an EDIT_FULL user, not sent yet. */
+  private Callable<MockHttpServletResponse> link(String clubId, String rowId, String playerId) {
+    return () -> link(clubId, rowId, playerId, PermissionLevel.EDIT_FULL).andReturn().getResponse();
+  }
+
+  /** Sends all at once (released together by a latch) and returns their responses in order. */
+  private static List<MockHttpServletResponse> inParallel(
+      List<Callable<MockHttpServletResponse>> requests) throws Exception {
+    CountDownLatch start = new CountDownLatch(1);
+    List<Future<MockHttpServletResponse>> futures = new ArrayList<>();
+    try (ExecutorService executor = Executors.newFixedThreadPool(requests.size())) {
+      for (Callable<MockHttpServletResponse> request : requests) {
+        futures.add(
+            executor.submit(
+                () -> {
+                  start.await();
+                  return request.call();
+                }));
+      }
+      start.countDown();
+      List<MockHttpServletResponse> responses = new ArrayList<>();
+      for (Future<MockHttpServletResponse> future : futures) {
+        responses.add(future.get());
+      }
+      return responses;
+    }
   }
 
   private ResultActions unlink(String clubId, String rowId, PermissionLevel level)
