@@ -1,6 +1,7 @@
 // Parses the league page (round, box, title) and the LeagueTable response (findings sections 1, 4, 6, 9).
 
 import { load } from "cheerio";
+import { loadHtmlData } from "./asmx.js";
 import { cleanText, queryParameter, readLabelledColumns } from "./parseFixtures.js";
 import { ParseError, excerpt } from "./text.js";
 
@@ -46,12 +47,7 @@ function positiveInteger(raw) {
 
 /** Parses the ASMX envelope, then the unescaped HTML in `HtmlData`. Goals are shown against-for. */
 export function parseLeagueTable(xml) {
-  const envelope = load(xml, { xml: true });
-  const htmlData = envelope("HtmlData");
-  if (htmlData.length !== 1) {
-    throw new ParseError("no HtmlData in the LeagueTable response");
-  }
-  const $ = load(htmlData.text());
+  const $ = loadHtmlData(xml, "LeagueTable");
   const rows = $('a.table_row[href*="team_id="]').toArray();
   if (rows.length === 0) {
     throw new ParseError("no standings rows in the LeagueTable response");
