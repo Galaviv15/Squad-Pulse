@@ -92,8 +92,7 @@ class PlayerController {
   @PostMapping
   @PreAuthorize("hasAuthority('EDIT_FULL')")
   ResponseEntity<PlayerResponse> create(@Valid @RequestBody CreatePlayerRequest request) {
-    // A new player can't have a photo yet: no storage query needed.
-    PlayerResponse created = PlayerResponse.from(playerService.create(request), false);
+    PlayerResponse created = PlayerResponse.ofNew(playerService.create(request));
     URI location =
         ServletUriComponentsBuilder.fromCurrentRequest()
             .path("/{id}")

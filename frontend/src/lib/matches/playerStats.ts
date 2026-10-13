@@ -1,7 +1,9 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, apiJson } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import { playerApiPath } from "@/lib/squad/players";
+import type { CreatePlayerBody } from "@/lib/squad/form";
+import { onPlayerWritten, playerApiPath } from "@/lib/squad/players";
+import type { Player } from "@/lib/squad/types";
 import { PLAYER_STATS_ERROR_CODES } from "./playerStatsErrorCodes";
 import { MATCHES_DATA_QUERY_KEY } from "./queries";
 import type { MatchDataState } from "./types";
@@ -123,6 +125,53 @@ export function useUnlinkStatsRow() {
 export function useRemovePlayerStatsLink() {
   return useStatsWrite(({ playerId }: { playerId: string }) =>
     apiFetch(`${playerApiPath(playerId)}/stats-link`, { method: "DELETE" }),
+  );
+}
+
+export interface CreatePlayerFromStatsVariables {
+  rowId: string;
+  /** Exactly what POST /squad/players takes (formValuesToCreateBody). */
+  body: CreatePlayerBody;
+}
+
+/**
+ * POST /matches/player-stats/{id}/player (KAN-77) → the new player (201): creates a squad player
+ * and links the row to it, in one backend transaction (both or neither). On success the squad
+ * caches are updated as for any create (onPlayerWritten) and the stats are refetched (the row is
+ * linked now). A 404 (the row is gone: a refresh replaced the snapshot) and the 409s that mean the
+ * row's link changed meanwhile (STATS_ROW_ALREADY_LINKED, CONCURRENT_MODIFICATION) refetch the
+ * stats too; nothing was created, so the squad is untouched. Never retried (mutations never are).
+ */
+export function useCreatePlayerFromStats() {
+  const queryClient = useQueryClient();
+  const refetchStats = () =>
+    void queryClient.invalidateQueries({ queryKey: PLAYER_STATS_QUERY_KEY });
+  return useMutation({
+    mutationFn: ({ rowId, body }: CreatePlayerFromStatsVariables) =>
+      apiJson<Player>(`/matches/player-stats/${encodeURIComponent(rowId)}/player`, {
+        method: "POST",
+        json: body,
+      }),
+    onSuccess: (player) => {
+      onPlayerWritten(queryClient, player);
+      refetchStats();
+    },
+    onError: (error) => {
+      if (isStatsOutOfDate(error)) {
+        refetchStats();
+      }
+    },
+  });
+}
+
+/** A create-and-link failure that means the stats shown are out of date. */
+function isStatsOutOfDate(error: Error): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 404 ||
+      (error.status === 409 &&
+        (error.code === PLAYER_STATS_ERROR_CODES.STATS_ROW_ALREADY_LINKED ||
+          error.code === PLAYER_STATS_ERROR_CODES.CONCURRENT_MODIFICATION)))
   );
 }
 

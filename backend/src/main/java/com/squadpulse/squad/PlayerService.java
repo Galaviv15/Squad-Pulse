@@ -71,7 +71,7 @@ import org.springframework.stereotype.Service;
  * photo of a released player is refused; reading it isn't, and release and re-activation keep it.
  */
 @Service
-class PlayerService {
+class PlayerService implements PlayerCreation {
 
   /**
    * Primary position in enum order (GK → ST), then jersey number with players without one last,
@@ -182,7 +182,8 @@ class PlayerService {
   /**
    * @throws JerseyNumberTakenException if another active player in the club has that number
    */
-  Player create(CreatePlayerRequest request) {
+  @Override
+  public Player create(CreatePlayerRequest request) {
     Player player = new Player();
     player.setFullName(request.fullName());
     player.setPrimaryPosition(request.primaryPosition());
