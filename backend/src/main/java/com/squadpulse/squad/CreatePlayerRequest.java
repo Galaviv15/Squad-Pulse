@@ -9,8 +9,10 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
 /**
- * Body of {@code POST /squad/players}. The constraints mirror {@link Player}'s, which aren't
- * enforced on save, so this is where they're actually checked.
+ * Body of {@code POST /squad/players}, and the same type for {@code POST
+ * /matches/player-stats/{id}/player} (KAN-77, through {@link PlayerCreation}), so the two can't
+ * validate differently. The constraints mirror {@link Player}'s, which aren't enforced on save, so
+ * this is where they're actually checked.
  *
  * <p>Deliberately has no {@code clubId} and no {@code active}: a new player always joins the
  * caller's own club, as an active player. Any such field a client sends is ignored.
@@ -20,7 +22,7 @@ import java.time.LocalDate;
  * @param dateOfBirth ISO format ({@code yyyy-MM-dd})
  */
 @DistinctPositions
-record CreatePlayerRequest(
+public record CreatePlayerRequest(
     @NotBlank @Size(max = 100) String fullName,
     @NotNull Position primaryPosition,
     Position secondaryPosition,
@@ -33,7 +35,7 @@ record CreatePlayerRequest(
     implements HasPositions {
 
   /** Trimmed first, so a whitespace-only name fails {@code @NotBlank} and padding doesn't count. */
-  CreatePlayerRequest {
+  public CreatePlayerRequest {
     fullName = fullName == null ? null : fullName.trim();
   }
 }
