@@ -164,3 +164,24 @@ export function removeStatsLinkReturns(
   });
   return { handler, requests };
 }
+
+/**
+ * POST /matches/player-stats/:id/player (KAN-77) recording each request as { rowId, body }; by
+ * default 201 with the player built from the body (id "new1"), after `gate` if given.
+ */
+export function createFromStatsReturns(
+  answer: (rowId: string, body: Record<string, unknown>) => Response | Promise<Response> = (
+    _rowId,
+    body,
+  ) => HttpResponse.json(playerBody({ ...body, id: "new1" } as Partial<Player>), { status: 201 }),
+  gate?: Promise<void>,
+) {
+  const requests: { rowId: string; body: Record<string, unknown> }[] = [];
+  const handler = http.post("/matches/player-stats/:id/player", async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    requests.push({ rowId: String(params.id), body });
+    await gate;
+    return answer(String(params.id), body);
+  });
+  return { handler, requests };
+}
