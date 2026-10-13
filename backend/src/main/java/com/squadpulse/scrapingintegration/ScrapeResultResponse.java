@@ -9,10 +9,15 @@ import java.util.List;
  * was rejected: these are data outcomes the scraper should log, not client errors. Never names a
  * club.
  *
+ * @param playerStats the player season statistics (KAN-72); {@code NOT_SENT} when absent
  * @param clubsUpdated how many clubs' fixtures were written (normally 0 or 1)
  */
 public record ScrapeResultResponse(
-    PartOutcome fixtures, PartOutcome standings, int clubsUpdated, List<Warning> warnings) {
+    PartOutcome fixtures,
+    PartOutcome standings,
+    PartOutcome playerStats,
+    int clubsUpdated,
+    List<Warning> warnings) {
 
   /**
    * @param reason set only for {@link Outcome#REJECTED}

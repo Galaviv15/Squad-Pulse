@@ -5,10 +5,15 @@ import java.util.List;
 /**
  * What {@link ScrapeIngestService#ingest} did with each part of one scrape. Never names a club.
  *
+ * @param playerStats the player season statistics (KAN-72)
  * @param clubsUpdated how many clubs' fixtures snapshots were written
  */
 public record IngestResult(
-    PartResult fixtures, PartResult standings, int clubsUpdated, List<Warning> warnings) {
+    PartResult fixtures,
+    PartResult standings,
+    PartResult playerStats,
+    int clubsUpdated,
+    List<Warning> warnings) {
 
   /** The outcome of one part; {@code reason} is set only for {@link Outcome#REJECTED}. */
   public record PartResult(Outcome outcome, RejectionReason reason) {
@@ -34,7 +39,7 @@ public record IngestResult(
   }
 
   public enum RejectionReason {
-    /** No club is currently mapped to the scrape's ids. */
+    /** No club is currently mapped to the scrape's ids (any part). */
     NOT_MAPPED,
     /** The same home / away pairing twice in one fixtures list. */
     DUPLICATE_GAME,

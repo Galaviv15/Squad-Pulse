@@ -24,7 +24,8 @@ class ScraperClientTest {
         ScraperClient client = new ScraperClient(properties, JsonMapper.builder().build());
 
         ScraperClient.Answer answer =
-            client.trigger(new ScraperClient.TriggerRequest("run-1", 7617, 62, 28, true, true));
+            client.trigger(
+                new ScraperClient.TriggerRequest("run-1", 7617, 62, 28, true, true, false));
 
         assertThat(answer).as(url).isEqualTo(new ScraperClient.Answer.Queued("run-1"));
         assertThat(scraper.received().getLast().path()).as(url).isEqualTo("/scrape");
@@ -32,5 +33,30 @@ class ScraperClientTest {
       }
       assertThat(scraper.received()).hasSize(2);
     }
+  }
+
+  /**
+   * KAN-72: {@code playerStats} is sent only when true; false (today's {@link
+   * ScrapeTriggerService#REQUEST_PLAYER_STATS}) leaves it out, because the scraper rejects an
+   * unknown property.
+   */
+  @Test
+  void playerStatsIsInTheBodyOnlyWhenTrue() {
+    JsonMapper json = JsonMapper.builder().build();
+
+    assertThat(
+            json.readTree(
+                    json.writeValueAsString(
+                        new ScraperClient.TriggerRequest("r", 1, 2, 3, true, false, false)))
+                .propertyNames())
+        .containsExactly("runId", "teamId", "leagueId", "seasonId", "fixtures", "standings");
+    assertThat(
+            json.readTree(
+                    json.writeValueAsString(
+                        new ScraperClient.TriggerRequest("r", 1, 2, 3, true, false, true)))
+                .get("playerStats")
+                .booleanValue())
+        .isTrue();
+    assertThat(ScrapeTriggerService.REQUEST_PLAYER_STATS).isFalse();
   }
 }

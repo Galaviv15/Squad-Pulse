@@ -50,6 +50,16 @@ final class ScrapePayloads {
       int seasonId,
       Map<String, Object> fixtures,
       Map<String, Object> standings) {
+    return request(teamId, leagueId, seasonId, fixtures, standings, null);
+  }
+
+  static Map<String, Object> request(
+      int teamId,
+      int leagueId,
+      int seasonId,
+      Map<String, Object> fixtures,
+      Map<String, Object> standings,
+      Map<String, Object> playerStats) {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("runId", "run-1");
     request.put("teamId", teamId);
@@ -61,7 +71,81 @@ final class ScrapePayloads {
     if (standings != null) {
       request.put("standings", standings);
     }
+    if (playerStats != null) {
+      request.put("playerStats", playerStats);
+    }
     return request;
+  }
+
+  // --- player statistics (KAN-72): made-up names and ids, surname first like the site ----------
+
+  static final int COHEN_ID = 900001;
+  static final int LEVI_ID = 900002;
+  static final int MIZRAHI_ID = 900003;
+  static final int PERETZ_ID = 900004;
+
+  /** Surname first, as the site's table shows names. */
+  static final String COHEN_NAME = "כהן דניאל";
+
+  /** Three words: surname and two given names. */
+  static final String LEVI_NAME = "לוי יוסף משה";
+
+  static final String MIZRAHI_NAME = "מזרחי אבירם";
+  static final String PERETZ_NAME = "פרץ עומר";
+
+  /** Only the player statistics, OK, for Sderot. */
+  static Map<String, Object> playerStatsOnly(Instant fetchedAt) {
+    return request(SDEROT, LEAGUE, SEASON, null, null, playerStats(fetchedAt));
+  }
+
+  /** Three players; Mizrahi is registered but hasn't played (every row is kept). */
+  static Map<String, Object> playerStats(Instant fetchedAt) {
+    return playerStatsWith(
+        fetchedAt,
+        statsRow(COHEN_ID, COHEN_NAME, 10, 2, 1, 0, 0, 8, 2, 3, 712),
+        statsRow(LEVI_ID, LEVI_NAME, 9, 0, 3, 1, 1, 9, 0, 4, 801),
+        statsRow(MIZRAHI_ID, MIZRAHI_NAME, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+  }
+
+  @SafeVarargs
+  static Map<String, Object> playerStatsWith(Instant fetchedAt, Map<String, Object>... rows) {
+    Map<String, Object> part = new LinkedHashMap<>();
+    part.put("status", "OK");
+    part.put("fetchedAt", fetchedAt.toString());
+    part.put("players", new ArrayList<>(Arrays.asList(rows)));
+    return part;
+  }
+
+  /** A player with 3 games (2 starts, 1 as a sub). */
+  static Map<String, Object> statsRow(int playerId, String name) {
+    return statsRow(playerId, name, 3, 1, 0, 0, 0, 2, 1, 1, 200);
+  }
+
+  static Map<String, Object> statsRow(
+      int playerId,
+      String name,
+      int games,
+      int goals,
+      int yellowCardsLeagueAndCup,
+      int yellowCardsToto,
+      int redCards,
+      int starts,
+      int cameOnAsSub,
+      int subbedOff,
+      int minutes) {
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("playerId", playerId);
+    row.put("name", name);
+    row.put("games", games);
+    row.put("goals", goals);
+    row.put("yellowCardsLeagueAndCup", yellowCardsLeagueAndCup);
+    row.put("yellowCardsToto", yellowCardsToto);
+    row.put("redCards", redCards);
+    row.put("starts", starts);
+    row.put("cameOnAsSub", cameOnAsSub);
+    row.put("subbedOff", subbedOff);
+    row.put("minutes", minutes);
+    return row;
   }
 
   /**
@@ -170,6 +254,12 @@ final class ScrapePayloads {
   @SuppressWarnings("unchecked")
   static List<Map<String, Object>> rows(Map<String, Object> request) {
     return (List<Map<String, Object>>) ((Map<String, Object>) request.get("standings")).get("rows");
+  }
+
+  @SuppressWarnings("unchecked")
+  static List<Map<String, Object>> statsRows(Map<String, Object> request) {
+    return (List<Map<String, Object>>)
+        ((Map<String, Object>) request.get("playerStats")).get("players");
   }
 
   @SuppressWarnings("unchecked")

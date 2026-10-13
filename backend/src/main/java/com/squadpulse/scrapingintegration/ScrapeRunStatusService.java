@@ -6,6 +6,7 @@ import com.squadpulse.scrapingintegration.RefreshStatusResponse.Outcome;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.State;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.FixturesPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PartStatus;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.PlayerStatsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.StandingsPart;
 import java.time.Clock;
 import java.time.Duration;
@@ -30,7 +31,9 @@ import org.springframework.stereotype.Service;
  *
  * <pre>
  * scrape:run:{runId}               HASH    clubId, teamId, leagueId, seasonId - who and what it's for
- *                                          fixtures, standings - the parts requested ("1" / "0")
+ *                                          fixtures, standings, playerStats - the parts requested
+ *                                            ("1" / "0"; playerStats absent in records written
+ *                                            before KAN-72 = not requested)
  *                                          source    - USER / SCHEDULED
  *                                          state     - PENDING / RUNNING / SUCCEEDED / FAILED
  *                                          startedAt, finishedAt - epoch millis (backend clock)
@@ -126,6 +129,7 @@ class ScrapeRunStatusService {
       FootballOrgIlIds ids,
       boolean fixtures,
       boolean standings,
+      boolean playerStats,
       String state,
       String failureReason,
       Instant startedAt,
@@ -252,6 +256,7 @@ class ScrapeRunStatusService {
                   Integer.parseInt(string(hash, "seasonId"))),
               "1".equals(string(hash, "fixtures")),
               "1".equals(string(hash, "standings")),
+              "1".equals(string(hash, "playerStats")),
               string(hash, "state"),
               string(hash, "failureReason"),
               Instant.ofEpochMilli(Long.parseLong(string(hash, "startedAt"))),
@@ -345,7 +350,11 @@ class ScrapeRunStatusService {
     }
   }
 
-  /** The first failed part the run requested, fixtures before standings; {@code null} if none. */
+  /**
+   * The first failed part the run requested, in the order fixtures, standings, player statistics
+   * (KAN-72); {@code null} if none. A part the run didn't request is ignored, whatever the result
+   * says about it: a run succeeds only if every part it asked for was stored or already up to date.
+   */
   private static FailureReason firstFailure(
       Run run, ScrapeResultRequest request, ScrapeResultResponse response) {
     if (run.fixtures()) {
@@ -356,7 +365,14 @@ class ScrapeRunStatusService {
       }
     }
     if (run.standings()) {
-      return partFailure(response.standings().outcome(), scraperReason(request.standings()));
+      FailureReason reason =
+          partFailure(response.standings().outcome(), scraperReason(request.standings()));
+      if (reason != null) {
+        return reason;
+      }
+    }
+    if (run.playerStats()) {
+      return partFailure(response.playerStats().outcome(), scraperReason(request.playerStats()));
     }
     return null;
   }
@@ -384,6 +400,9 @@ class ScrapeRunStatusService {
     }
     if (part instanceof StandingsPart standings && standings.status() == PartStatus.FAILED) {
       return standings.reason();
+    }
+    if (part instanceof PlayerStatsPart playerStats && playerStats.status() == PartStatus.FAILED) {
+      return playerStats.reason();
     }
     return null;
   }

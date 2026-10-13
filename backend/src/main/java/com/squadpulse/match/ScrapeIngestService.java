@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -29,12 +30,13 @@ import org.springframework.stereotype.Service;
 
 /**
  * Applies one scrape's successful parts to the stored snapshots (KAN-66). The only writer of {@link
- * LeagueStandingsSnapshot} and {@link LeagueFixturesSnapshot}, called only by the service-token
- * ingest endpoint in {@code scrapingintegration}, which validated the input and handles the parts
- * the scraper reported as failed. See docs/scraper-backend-contract.md.
+ * LeagueStandingsSnapshot}, {@link LeagueFixturesSnapshot} and {@link PlayerSeasonStatsSnapshot}
+ * (KAN-72), called only by the service-token ingest endpoint in {@code scrapingintegration}, which
+ * validated the input and handles the parts the scraper reported as failed. See
+ * docs/scraper-backend-contract.md.
  *
- * <p>Order: the standings first, so the fixtures can be resolved against them; then the fixtures.
- * The two are independent — one rejected doesn't stop the other.
+ * <p>Order: the standings first, so the fixtures can be resolved against them; then the fixtures;
+ * then the player statistics. The parts are independent — one rejected doesn't stop another.
  *
  * <ul>
  *   <li><b>Standings</b>: stored only if some club is currently mapped to the league and season
@@ -52,6 +54,12 @@ import org.springframework.stereotype.Service;
  *       {@code null} id ({@link WarningCode#UNRESOLVED_TEAM_NAMES}); standings that lack the
  *       configured team are stored anyway ({@link WarningCode#TEAM_NOT_IN_STANDINGS}, logged at
  *       WARN with ids only).
+ *   <li><b>Player statistics</b> (KAN-72): written like the fixtures — for every club mapped to
+ *       exactly the scrape's three ids, each inside {@link ClubContext#callAs}, the whole list
+ *       replacing the club's snapshot; no such club → {@code NOT_MAPPED}. Every row keeps the
+ *       opaque id it had in the stored snapshot (by {@code player_id}); only a new {@code
+ *       player_id} gets a new random one. Never touches a {@code squad.Player} or a link. Logged
+ *       with ids and counts only, never a player's name.
  *   <li><b>Staleness</b>: a part whose {@code fetchedAt} isn't newer than the stored snapshot's is
  *       {@link IngestResult.Outcome#STALE}, nothing written — so neither a late old scrape nor a
  *       replay ever overwrites newer data. Load, compare, save, with {@code @Version}: on a lost
@@ -66,6 +74,7 @@ public class ScrapeIngestService {
 
   private final LeagueStandingsSnapshotRepository standingsRepository;
   private final LeagueFixturesSnapshotRepository fixturesRepository;
+  private final PlayerSeasonStatsSnapshotRepository playerStatsRepository;
   private final ClubFootballMappings mappings;
   private final ClubContext clubContext;
   private final Clock clock;
@@ -74,20 +83,29 @@ public class ScrapeIngestService {
   ScrapeIngestService(
       LeagueStandingsSnapshotRepository standingsRepository,
       LeagueFixturesSnapshotRepository fixturesRepository,
+      PlayerSeasonStatsSnapshotRepository playerStatsRepository,
       ClubFootballMappings mappings,
       ClubContext clubContext) {
-    this(standingsRepository, fixturesRepository, mappings, clubContext, Clock.systemUTC());
+    this(
+        standingsRepository,
+        fixturesRepository,
+        playerStatsRepository,
+        mappings,
+        clubContext,
+        Clock.systemUTC());
   }
 
   /** For tests: {@code clock} sets {@code storedAt}. */
   ScrapeIngestService(
       LeagueStandingsSnapshotRepository standingsRepository,
       LeagueFixturesSnapshotRepository fixturesRepository,
+      PlayerSeasonStatsSnapshotRepository playerStatsRepository,
       ClubFootballMappings mappings,
       ClubContext clubContext,
       Clock clock) {
     this.standingsRepository = standingsRepository;
     this.fixturesRepository = fixturesRepository;
+    this.playerStatsRepository = playerStatsRepository;
     this.mappings = mappings;
     this.clubContext = clubContext;
     this.clock = clock;
@@ -96,13 +114,15 @@ public class ScrapeIngestService {
   /**
    * @param fixtures {@code null} if this scrape has no successful fixtures part
    * @param standings {@code null} if this scrape has no successful standings part
+   * @param playerStats {@code null} if this scrape has no successful player statistics part
    */
   public IngestResult ingest(
       int teamId,
       int leagueId,
       int seasonId,
       ScrapedFixtures fixtures,
-      ScrapedStandings standings) {
+      ScrapedStandings standings,
+      ScrapedPlayerStats playerStats) {
     List<Warning> warnings = new ArrayList<>();
 
     PartResult standingsResult = PartResult.NOT_SENT;
@@ -141,7 +161,84 @@ public class ScrapeIngestService {
       fixturesResult = outcome.result();
       clubsUpdated = outcome.clubsUpdated();
     }
-    return new IngestResult(fixturesResult, standingsResult, clubsUpdated, List.copyOf(warnings));
+
+    PartResult playerStatsResult =
+        playerStats == null
+            ? PartResult.NOT_SENT
+            : ingestPlayerStats(teamId, leagueId, seasonId, playerStats);
+    return new IngestResult(
+        fixturesResult, standingsResult, playerStatsResult, clubsUpdated, List.copyOf(warnings));
+  }
+
+  private PartResult ingestPlayerStats(
+      int teamId, int leagueId, int seasonId, ScrapedPlayerStats playerStats) {
+    List<String> clubIds = mappings.clubIdsMappedTo(teamId, leagueId, seasonId);
+    if (clubIds.isEmpty()) {
+      return PartResult.rejected(RejectionReason.NOT_MAPPED);
+    }
+    int stored = 0;
+    for (String clubId : clubIds) {
+      if (clubContext.callAs(clubId, () -> storePlayerStats(teamId, seasonId, playerStats))) {
+        stored++;
+      }
+    }
+    log.info(
+        "Player stats for team {} season {}: {} players, stored for {} of {} clubs",
+        teamId,
+        seasonId,
+        playerStats.players().size(),
+        stored,
+        clubIds.size());
+    return stored > 0 ? PartResult.STORED : PartResult.STALE;
+  }
+
+  /** In the current club's context. True if written, false if stale. */
+  private boolean storePlayerStats(int teamId, int seasonId, ScrapedPlayerStats playerStats) {
+    String clubId = clubContext.requireClubId();
+    return storeIfNewer(
+        () -> playerStatsRepository.findByClubIdAndTeamIdAndSeasonId(clubId, teamId, seasonId),
+        PlayerSeasonStatsSnapshot::getFetchedAt,
+        PlayerSeasonStatsSnapshot::new,
+        snapshot -> {
+          snapshot.setTeamId(teamId);
+          snapshot.setSeasonId(seasonId);
+          snapshot.setFetchedAt(playerStats.fetchedAt());
+          snapshot.setStoredAt(clock.instant());
+          snapshot.setPlayers(withOpaqueIds(playerStats.players(), snapshot.getPlayers()));
+          playerStatsRepository.save(snapshot);
+        },
+        playerStats.fetchedAt());
+  }
+
+  /**
+   * The scraped rows with our opaque ids: the id a {@code player_id} already has in the stored
+   * snapshot (the one this write replaces, re-read on a retry), else a new random one. So a link
+   * request that arrives during a refresh still finds its row.
+   */
+  private static List<StoredPlayerStats> withOpaqueIds(
+      List<ScrapedPlayerStats.Row> rows, List<StoredPlayerStats> stored) {
+    Map<Integer, String> idsBySource = new HashMap<>();
+    if (stored != null) {
+      stored.forEach(row -> idsBySource.put(row.sourcePlayerId(), row.opaqueId()));
+    }
+    return rows.stream()
+        .map(
+            row ->
+                new StoredPlayerStats(
+                    Optional.ofNullable(idsBySource.get(row.playerId()))
+                        .orElseGet(() -> UUID.randomUUID().toString()),
+                    row.playerId(),
+                    row.name(),
+                    row.games(),
+                    row.goals(),
+                    row.yellowCardsLeagueAndCup(),
+                    row.yellowCardsToto(),
+                    row.redCards(),
+                    row.starts(),
+                    row.cameOnAsSub(),
+                    row.subbedOff(),
+                    row.minutes()))
+        .toList();
   }
 
   private record FixturesOutcome(PartResult result, int clubsUpdated) {

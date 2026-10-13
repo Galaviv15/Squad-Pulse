@@ -12,6 +12,7 @@ import static com.squadpulse.scrapingintegration.ScrapePayloads.json;
 import static com.squadpulse.scrapingintegration.ScrapePayloads.request;
 import static com.squadpulse.scrapingintegration.ScrapePayloads.standings;
 import static com.squadpulse.scrapingintegration.ScrapeRunStatusService.leagueLockKey;
+import static com.squadpulse.scrapingintegration.ScrapeRunStatusService.runKey;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -137,6 +138,7 @@ class RefreshApiIntegrationTest {
     logs.stop();
     mongoTemplate.getCollection("league_fixtures").deleteMany(new Document());
     mongoTemplate.getCollection("league_standings").deleteMany(new Document());
+    mongoTemplate.getCollection("player_season_stats").deleteMany(new Document());
     clubs.deleteAllClubs();
     redis.getConnectionFactory().getConnection().serverCommands().flushAll();
   }
@@ -459,12 +461,13 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
 
     statusService.recordResult(
-        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null),
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null),
         new ScrapeResultResponse(
             new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.STORED, null),
             new ScrapeResultResponse.PartOutcome(
                 ScrapeResultResponse.Outcome.REJECTED,
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
+            new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.NOT_SENT, null),
             1,
             List.of()));
 
@@ -606,7 +609,154 @@ class RefreshApiIntegrationTest {
     assertThat(logs.everythingLogged()).doesNotContain(SERVICE_TOKEN);
   }
 
+  // --- player statistics (KAN-72): defined, not requested yet --------------------------------
+
+  /**
+   * The scraper rejects an unknown property with a 400 (every refresh would be unavailable), so
+   * until KAN-73 the trigger has exactly the six properties it always had, and the run record says
+   * the stats weren't requested.
+   */
+  @Test
+  void todaysTriggerHasExactlyTheSixPropertiesAndDoesntAskForStats() throws Exception {
+    String runId = start(clubA);
+
+    assertThat(SCRAPER.received().getFirst().body().propertyNames())
+        .containsExactly("runId", "teamId", "leagueId", "seasonId", "fixtures", "standings");
+    assertThat(redis.opsForHash().get(runKey(runId), "playerStats")).isEqualTo("0");
+  }
+
+  @Test
+  void aRunThatRequestedStatsSucceedsWhenTheyreStoredOrAlreadyUpToDate() throws Exception {
+    String runId = startRequestingStats(clubA);
+    ingest(withRunId(runId, allThree()))
+        .andExpect(jsonPath("$.playerStats.outcome").value("STORED"));
+    statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+
+    redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+    String again = startRequestingStats(clubA);
+    ingest(withRunId(again, allThree()))
+        .andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
+    statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+  }
+
+  @Test
+  void aFailedStatsPartFailsARunThatRequestedIt() throws Exception {
+    String runId = startRequestingStats(clubA);
+    Map<String, Object> result = allThree();
+    result.put("playerStats", failed("PARSE_ERROR", null));
+
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("PARSE_ERROR"));
+  }
+
+  @Test
+  void missingStatsFailARunThatRequestedThem() throws Exception {
+    String runId = startRequestingStats(clubA);
+
+    ingest(withRunId(runId, ScrapePayloads.full())).andExpect(status().isOk());
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("NO_RESULT"));
+  }
+
+  /**
+   * Through the real endpoint, stats are rejected only when no club is mapped — and then the
+   * fixtures are too, and come first. So the stats' own reason is checked on the hook directly.
+   */
+  @Test
+  void rejectedStatsFailARunThatRequestedThem() throws Exception {
+    String runId = startRequestingStats(clubA);
+
+    statusService.recordResult(
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null),
+        new ScrapeResultResponse(
+            outcome(ScrapeResultResponse.Outcome.STORED),
+            outcome(ScrapeResultResponse.Outcome.STORED),
+            new ScrapeResultResponse.PartOutcome(
+                ScrapeResultResponse.Outcome.REJECTED,
+                com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
+            1,
+            List.of()));
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("REJECTED"));
+  }
+
+  @Test
+  void aFixturesFailureIsReportedBeforeAStatsFailure() throws Exception {
+    String runId = startRequestingStats(clubA);
+
+    ingest(
+            withRunId(
+                runId,
+                request(
+                    SDEROT,
+                    LEAGUE,
+                    SEASON,
+                    failed("SOURCE_BLOCKED", null),
+                    standings(FETCHED_AT),
+                    failed("PARSE_ERROR", null))))
+        .andExpect(status().isOk());
+
+    statusOf(clubA).andExpect(jsonPath("$.failureReason").value("SOURCE_BLOCKED"));
+  }
+
+  /** A run that didn't ask for the stats is judged on the other parts, whatever the stats say. */
+  @Test
+  void aRunThatDidntRequestStatsIgnoresThem() throws Exception {
+    String runId = start(clubA);
+    Map<String, Object> result = allThree();
+    result.put("playerStats", failed("SOURCE_BLOCKED", null));
+
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+    statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+  }
+
+  /** A run record written before KAN-72 has no {@code playerStats} field: not requested. */
+  @Test
+  void anOldRunRecordWithoutTheFlagIgnoresTheStats() throws Exception {
+    String withStats = start(clubA);
+    redis.opsForHash().delete(runKey(withStats), "playerStats");
+    Map<String, Object> result = allThree();
+    result.put("playerStats", failed("TIMEOUT", null));
+    ingest(withRunId(withStats, result)).andExpect(status().isOk());
+    statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+
+    redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+    String withoutStats = start(clubA);
+    redis.opsForHash().delete(runKey(withoutStats), "playerStats");
+    ingest(withRunId(withoutStats, ScrapePayloads.full())).andExpect(status().isOk());
+    statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+  }
+
   // --- helpers -------------------------------------------------------------------------------
+
+  /** Starts a run and marks it as having asked for the stats, as KAN-73's trigger will. */
+  private String startRequestingStats(String clubId) throws Exception {
+    String runId = start(clubId);
+    redis.opsForHash().put(runKey(runId), "playerStats", "1");
+    return runId;
+  }
+
+  private static Map<String, Object> allThree() {
+    return request(
+        SDEROT,
+        LEAGUE,
+        SEASON,
+        fixtures(FETCHED_AT),
+        standings(FETCHED_AT),
+        ScrapePayloads.playerStats(FETCHED_AT));
+  }
+
+  private static ScrapeResultResponse.PartOutcome outcome(ScrapeResultResponse.Outcome outcome) {
+    return new ScrapeResultResponse.PartOutcome(outcome, null);
+  }
 
   private String start(String clubId) throws Exception {
     int before = SCRAPER.received().size();

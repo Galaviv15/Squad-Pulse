@@ -20,10 +20,10 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * The body of {@code POST /internal/scrape-results}: one scrape of one team's league fixtures and
- * its league's standings, posted by the scraper (KAN-66). <b>These records are the scraper ↔
- * backend contract</b>, and docs/scraper-backend-contract.md is its public description: keep the
- * two in sync.
+ * The body of {@code POST /internal/scrape-results}: one scrape of one team's league fixtures, its
+ * league's standings and the team's player season statistics (KAN-72), posted by the scraper
+ * (KAN-66). <b>These records are the scraper ↔ backend contract</b>, and
+ * docs/scraper-backend-contract.md is its public description: keep the two in sync.
  *
  * <p>No string in it may contain a control character ({@link NoControlCharacters}): the backend
  * joins team names with one to build a game's key.
@@ -37,6 +37,7 @@ import java.util.Set;
  *     {@link ScrapeRunStatusService#recordResult}); {@code null} or unknown sets none
  * @param fixtures {@code null} / absent if not attempted
  * @param standings {@code null} / absent if not attempted
+ * @param playerStats {@code null} / absent if not attempted (KAN-72)
  */
 public record ScrapeResultRequest(
     @Size(max = 100) @NoControlCharacters String runId,
@@ -44,11 +45,12 @@ public record ScrapeResultRequest(
     @NotNull @Positive Integer leagueId,
     @NotNull @Positive Integer seasonId,
     @Valid FixturesPart fixtures,
-    @Valid StandingsPart standings) {
+    @Valid StandingsPart standings,
+    @Valid PlayerStatsPart playerStats) {
 
-  @AssertTrue(message = "fixtures or standings must be present")
+  @AssertTrue(message = "fixtures, standings or playerStats must be present")
   boolean isAnyPartPresent() {
-    return fixtures != null || standings != null;
+    return fixtures != null || standings != null || playerStats != null;
   }
 
   /** Whether a part succeeded; {@code FAILED} carries a {@link FailureReason} instead of data. */
@@ -136,6 +138,81 @@ public record ScrapeResultRequest(
                           || row.position() >= 1 && row.position() <= rows.size())
           && rows.stream().allMatch(row -> row.teamId() == null || ids.add(row.teamId()))
           && rows.stream().allMatch(row -> row.teamName() == null || names.add(row.teamName()));
+    }
+  }
+
+  /**
+   * The team's player season statistics (KAN-72): one row per registered player, all competitions
+   * together, in the page's order. {@code OK}: {@code fetchedAt} and {@code players}, no {@code
+   * reason} / {@code detail}. {@code FAILED}: as for {@link FixturesPart}.
+   *
+   * <p>Besides each row's own checks, {@code playerId} must be unique in the list. Nothing else is
+   * checked across rows, and minutes are never checked against games (added and extra time).
+   */
+  public record PlayerStatsPart(
+      @NotNull PartStatus status,
+      Instant fetchedAt,
+      @Size(min = 1, max = 80) List<@NotNull @Valid PlayerStatsRow> players,
+      FailureReason reason,
+      @Size(max = 500) @NoControlCharacters String detail) {
+
+    @AssertTrue(
+        message =
+            "status OK needs fetchedAt and players and no reason or detail; FAILED needs a reason"
+                + " and no fetchedAt or players")
+    boolean isConsistentWithStatus() {
+      return isConsistent(
+          status,
+          fetchedAt != null && players != null,
+          fetchedAt != null || players != null,
+          reason,
+          detail);
+    }
+
+    @AssertTrue(message = "playerId must be unique")
+    boolean isPlayerIdsUnique() {
+      if (players == null) {
+        return true;
+      }
+      Set<Integer> ids = new HashSet<>();
+      return players.stream()
+          .filter(Objects::nonNull)
+          .allMatch(row -> row.playerId() == null || ids.add(row.playerId()));
+    }
+  }
+
+  /**
+   * One player's season totals, as the site publishes them (all competitions together).
+   *
+   * @param playerId the site's {@code player_id}; never leaves the backend
+   * @param name as the site shows it (surname first, 1–3 given names); trimmed here
+   * @param yellowCardsLeagueAndCup yellow cards in the league and the State Cup
+   * @param yellowCardsToto yellow cards in the Toto Cup
+   * @param games {@code starts + cameOnAsSub}, the one cross-field check
+   */
+  public record PlayerStatsRow(
+      @NotNull @Positive Integer playerId,
+      @NotBlank @Size(max = 100) @NoControlCharacters String name,
+      @NotNull @Min(0) @Max(200) Integer games,
+      @NotNull @Min(0) @Max(200) Integer goals,
+      @NotNull @Min(0) @Max(200) Integer yellowCardsLeagueAndCup,
+      @NotNull @Min(0) @Max(200) Integer yellowCardsToto,
+      @NotNull @Min(0) @Max(200) Integer redCards,
+      @NotNull @Min(0) @Max(200) Integer starts,
+      @NotNull @Min(0) @Max(200) Integer cameOnAsSub,
+      @NotNull @Min(0) @Max(200) Integer subbedOff,
+      @NotNull @Min(0) @Max(20000) Integer minutes) {
+
+    public PlayerStatsRow {
+      name = trim(name);
+    }
+
+    @AssertTrue(message = "starts + cameOnAsSub must equal games")
+    boolean isAppearancesConsistent() {
+      return games == null
+          || starts == null
+          || cameOnAsSub == null
+          || starts + cameOnAsSub == games;
     }
   }
 

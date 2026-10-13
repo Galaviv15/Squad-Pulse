@@ -4,9 +4,11 @@ import com.squadpulse.common.BadRequestException;
 import com.squadpulse.match.IngestResult;
 import com.squadpulse.match.ScrapeIngestService;
 import com.squadpulse.match.ScrapedFixtures;
+import com.squadpulse.match.ScrapedPlayerStats;
 import com.squadpulse.match.ScrapedStandings;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.FixturesPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PartStatus;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.PlayerStatsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.StandingsPart;
 import jakarta.validation.Valid;
 import java.time.Clock;
@@ -73,21 +75,27 @@ class ScrapeResultController {
     if (request.standings() != null && isAfter(request.standings().fetchedAt(), latest)) {
       throw new BadRequestException("standings.fetchedAt", "must not be in the future");
     }
+    if (request.playerStats() != null && isAfter(request.playerStats().fetchedAt(), latest)) {
+      throw new BadRequestException("playerStats.fetchedAt", "must not be in the future");
+    }
 
     boolean fixturesFailed = reportFailure("fixtures", request, request.fixtures());
     boolean standingsFailed = reportFailure("standings", request, request.standings());
+    boolean playerStatsFailed = reportFailure("playerStats", request, request.playerStats());
     IngestResult result =
         ingestService.ingest(
             request.teamId(),
             request.leagueId(),
             request.seasonId(),
             fixturesFailed ? null : toFixtures(request.fixtures()),
-            standingsFailed ? null : toStandings(request.standings()));
+            standingsFailed ? null : toStandings(request.standings()),
+            playerStatsFailed ? null : toPlayerStats(request.playerStats()));
 
     ScrapeResultResponse response =
         new ScrapeResultResponse(
             fixturesFailed ? failureRecorded() : outcome(result.fixtures()),
             standingsFailed ? failureRecorded() : outcome(result.standings()),
+            playerStatsFailed ? failureRecorded() : outcome(result.playerStats()),
             result.clubsUpdated(),
             result.warnings().stream()
                 .map(warning -> new ScrapeResultResponse.Warning(warning.code(), warning.count()))
@@ -111,6 +119,10 @@ class ScrapeResultController {
         && standings.status() == PartStatus.FAILED) {
       reason = standings.reason();
       detail = standings.detail();
+    } else if (partBody instanceof PlayerStatsPart playerStats
+        && playerStats.status() == PartStatus.FAILED) {
+      reason = playerStats.reason();
+      detail = playerStats.detail();
     } else {
       return false;
     }
@@ -167,6 +179,30 @@ class ScrapeResultController {
                         row.goalsFor(),
                         row.goalsAgainst(),
                         row.points()))
+            .toList());
+  }
+
+  private static ScrapedPlayerStats toPlayerStats(PlayerStatsPart part) {
+    if (part == null) {
+      return null;
+    }
+    return new ScrapedPlayerStats(
+        part.fetchedAt(),
+        part.players().stream()
+            .map(
+                row ->
+                    new ScrapedPlayerStats.Row(
+                        row.playerId(),
+                        row.name(),
+                        row.games(),
+                        row.goals(),
+                        row.yellowCardsLeagueAndCup(),
+                        row.yellowCardsToto(),
+                        row.redCards(),
+                        row.starts(),
+                        row.cameOnAsSub(),
+                        row.subbedOff(),
+                        row.minutes()))
             .toList());
   }
 
