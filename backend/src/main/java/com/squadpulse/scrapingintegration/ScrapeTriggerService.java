@@ -116,14 +116,16 @@ public class ScrapeTriggerService {
           Long.class);
 
   /**
-   * Whether a trigger asks for the team's player statistics (KAN-72). {@code false} until the
-   * scraper accepts the property (KAN-73 flips it in the same change that teaches the scraper): the
-   * scraper rejects an unknown property with a 400, which would make every refresh {@code
-   * SCRAPER_UNAVAILABLE}. While {@code false}, the property is left out of the trigger body and the
-   * run doesn't count the part. The stats share the per-team lock; the league lock doesn't concern
-   * them.
+   * Whether a trigger asks for the team's player statistics (KAN-72). {@code true} since KAN-73,
+   * which taught the scraper the property in the same change: every refresh asks for them, and the
+   * run counts the part, so a refresh succeeds only if the stats are stored (or already up to date)
+   * too. The scraper accepts the property as optional (absent = {@code false}), but the backend now
+   * always sends it as {@code true}, and a scraper without KAN-73 rejects it as unknown (a 400, so
+   * every refresh is {@code SCRAPER_UNAVAILABLE}): a backend with this change needs a scraper with
+   * it. Deploy the scraper first, or together with the backend. The stats share the per-team lock;
+   * the league lock doesn't concern them.
    */
-  static final boolean REQUEST_PLAYER_STATS = false;
+  static final boolean REQUEST_PLAYER_STATS = true;
 
   private static final Logger log = LoggerFactory.getLogger(ScrapeTriggerService.class);
 

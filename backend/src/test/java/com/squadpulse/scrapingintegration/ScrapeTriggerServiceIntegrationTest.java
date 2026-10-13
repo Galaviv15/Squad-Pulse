@@ -138,12 +138,14 @@ class ScrapeTriggerServiceIntegrationTest {
     assertThat(request.contentType()).startsWith("application/json");
     assertThat(UUID.fromString(request.runId()).toString()).isEqualTo(request.runId());
     assertThat(request.body().propertyNames())
-        .containsExactly("runId", "teamId", "leagueId", "seasonId", "fixtures", "standings");
+        .containsExactly(
+            "runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats");
     assertThat(request.body().get("teamId").intValue()).isEqualTo(7617);
     assertThat(request.body().get("leagueId").intValue()).isEqualTo(1010);
     assertThat(request.body().get("seasonId").intValue()).isEqualTo(28);
     assertThat(request.body().get("fixtures").booleanValue()).isTrue();
     assertThat(request.body().get("standings").booleanValue()).isTrue();
+    assertThat(request.body().get("playerStats").booleanValue()).isTrue();
     assertThat(redis.opsForValue().get(teamLockKey(IDS))).isEqualTo(request.runId());
     assertThat(redis.opsForValue().get(leagueLockKey(IDS))).isEqualTo(request.runId());
     assertThat(redis.opsForValue().get(currentKey(CLUB))).isEqualTo(request.runId());
@@ -151,7 +153,8 @@ class ScrapeTriggerServiceIntegrationTest {
         .containsEntry("clubId", CLUB)
         .containsEntry("state", "RUNNING")
         .containsEntry("source", "USER")
-        .containsEntry("standings", "1");
+        .containsEntry("standings", "1")
+        .containsEntry("playerStats", "1");
     assertThat(redis.getExpire(runKey(request.runId())))
         .isBetween(Duration.ofDays(7).toSeconds() - 5, Duration.ofDays(7).toSeconds());
     assertThat(redis.getExpire(currentKey(CLUB)))

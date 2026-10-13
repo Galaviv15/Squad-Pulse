@@ -36,9 +36,9 @@ class ScraperClientTest {
   }
 
   /**
-   * KAN-72: {@code playerStats} is sent only when true; false (today's {@link
-   * ScrapeTriggerService#REQUEST_PLAYER_STATS}) leaves it out, because the scraper rejects an
-   * unknown property.
+   * KAN-72: {@code playerStats} is sent only when true (the scraper treats it as optional, absent =
+   * false); KAN-73: {@link ScrapeTriggerService#REQUEST_PLAYER_STATS} is true, so every trigger
+   * asks for the stats.
    */
   @Test
   void playerStatsIsInTheBodyOnlyWhenTrue() {
@@ -57,6 +57,6 @@ class ScraperClientTest {
                 .get("playerStats")
                 .booleanValue())
         .isTrue();
-    assertThat(ScrapeTriggerService.REQUEST_PLAYER_STATS).isFalse();
+    assertThat(ScrapeTriggerService.REQUEST_PLAYER_STATS).isTrue();
   }
 }

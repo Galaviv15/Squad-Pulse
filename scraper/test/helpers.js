@@ -8,6 +8,7 @@ export const fixture = (name) => readFileSync(here(`fixtures/${name}`), "utf8");
 export const GAMES_HTML = fixture("team-games-7617-s28.html");
 export const TABLE_XML = fixture("league-62-s28-table-round6.xml");
 export const BLOCK_HTML = fixture("cloudflare-block-403.html");
+export const STATS_XML = fixture("team-players-stats-7617-s28.xml");
 
 /** A minimal league page: the standings placeholder only. `null` leaves an attribute out. */
 export function leaguePage({ round = "6", box = "20", title = "טבלת ליגה" } = {}) {
@@ -84,6 +85,7 @@ export const OK_SCRIPT = () => ({
   "/team-details/team-games/": [{ status: 200, body: GAMES_HTML }],
   "/leagues/league/": [{ status: 200, body: leaguePage() }],
   "/Components.asmx/LeagueTable": [{ status: 200, body: TABLE_XML }],
+  "/Components.asmx/GetTeamPlayersStatisticsList": [{ status: 200, body: STATS_XML }],
 });
 
 export const JOB = Object.freeze({
@@ -94,3 +96,6 @@ export const JOB = Object.freeze({
   fixtures: true,
   standings: true,
 });
+
+/** JOB with all three parts (KAN-73); JOB itself has no `playerStats`, like a pre-KAN-73 trigger. */
+export const JOB_ALL = Object.freeze({ ...JOB, playerStats: true });

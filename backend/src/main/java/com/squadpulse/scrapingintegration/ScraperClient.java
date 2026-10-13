@@ -38,10 +38,9 @@ class ScraperClient {
 
   /**
    * The trigger body: the six properties the scraper requires, always (it rejects a missing one),
-   * and {@code playerStats} (KAN-72) only when {@code true}. The scraper doesn't know that property
-   * yet and rejects an unknown one with a 400, so a {@code false} is left out of the JSON
-   * altogether; {@link ScrapeTriggerService#REQUEST_PLAYER_STATS} is {@code false} until the
-   * scraper accepts it (KAN-73).
+   * and {@code playerStats} (KAN-72) only when {@code true}. Since KAN-73 the scraper accepts that
+   * property as optional (absent = {@code false}), so leaving a {@code false} out of the JSON is
+   * harmless; {@link ScrapeTriggerService#REQUEST_PLAYER_STATS} is {@code true}.
    */
   record TriggerRequest(
       String runId,

@@ -7,7 +7,9 @@ import { hasControlCharacter } from "./text.js";
 
 export const MAX_BODY_BYTES = 4096;
 const JAVA_INT_MAX = 2147483647;
-const PROPERTIES = ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings"];
+const REQUIRED = ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings"];
+// Optional, absent = false: the backend leaves a false playerStats out of the body (KAN-72/73).
+const OPTIONAL = ["playerStats"];
 
 class BadRequest extends Error {}
 
@@ -20,15 +22,22 @@ export function tokenMatches(authorization, expectedDigest) {
   return timingSafeEqual(provided, expectedDigest) && match !== null;
 }
 
-/** Validates a trigger body. → a job, or throws BadRequest with a fixed message. */
+/**
+ * Validates a trigger body. → a job, or throws BadRequest with a fixed message. The six REQUIRED
+ * properties must be present; `playerStats` is optional (absent = `false`), but a boolean if
+ * present. Any other property is rejected. At least one of the three parts must be `true`. The
+ * job always has `playerStats` as a boolean.
+ */
 export function parseTrigger(body) {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     throw new BadRequest("body must be a JSON object");
   }
   for (const key of Object.keys(body)) {
-    if (!PROPERTIES.includes(key)) throw new BadRequest("unknown property");
+    if (!REQUIRED.includes(key) && !OPTIONAL.includes(key)) {
+      throw new BadRequest("unknown property");
+    }
   }
-  for (const key of PROPERTIES) {
+  for (const key of REQUIRED) {
     if (!(key in body)) throw new BadRequest(`missing property: ${key}`);
   }
   const { runId } = body;
@@ -47,13 +56,14 @@ export function parseTrigger(body) {
       throw new BadRequest(`${key}: must be an integer in 1..${JAVA_INT_MAX}`);
     }
   }
-  for (const key of ["fixtures", "standings"]) {
-    if (typeof body[key] !== "boolean") throw new BadRequest(`${key}: must be a boolean`);
+  const job = { ...body, playerStats: "playerStats" in body ? body.playerStats : false };
+  for (const key of ["fixtures", "standings", "playerStats"]) {
+    if (typeof job[key] !== "boolean") throw new BadRequest(`${key}: must be a boolean`);
   }
-  if (!body.fixtures && !body.standings) {
-    throw new BadRequest("nothing to scrape: fixtures and standings are both false");
+  if (!job.fixtures && !job.standings && !job.playerStats) {
+    throw new BadRequest("nothing to scrape: fixtures, standings and playerStats are all false");
   }
-  return { ...body };
+  return job;
 }
 
 export function createTriggerServer({ token, queue, log }) {
@@ -133,6 +143,7 @@ export function createTriggerServer({ token, queue, log }) {
             ...ids,
             fixtures: job.fixtures,
             standings: job.standings,
+            playerStats: job.playerStats,
             ...(result.status === "ALREADY_QUEUED" ? { existingRun: result.runId ?? "-" } : {}),
           },
         );

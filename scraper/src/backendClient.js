@@ -1,13 +1,15 @@
 // Posts a scrape result to the backend's POST /internal/scrape-results (docs/scraper-backend-contract.md).
 
 import { realClock } from "./clock.js";
+import { PARTS } from "./contract.js";
 
 const RETRY_STATUSES = (status) => status === 409 || status >= 500;
 const WARN_WARNINGS = new Set(["TEAM_NOT_IN_STANDINGS"]);
 
 /**
  * One retry after 5 s on a 409, a 5xx, a network error or a timeout; none on any other status.
- * Logs outcomes only, never the payload, its team names, a `detail` or the token.
+ * Logs outcomes only, never the payload, its team or player names, a player id, a `detail` or the
+ * token.
  */
 export async function postScrapeResult(payload, deps) {
   const {
@@ -87,7 +89,7 @@ function logOutcomes(runId, answer, log) {
     log.warn(runId, "backend stored the result, unreadable answer");
     return;
   }
-  for (const part of ["fixtures", "standings"]) {
+  for (const part of PARTS) {
     const outcome = answer[part]?.outcome;
     if (outcome === "REJECTED") {
       log.warn(runId, "backend outcome", { part, outcome, reason: answer[part]?.reason });
