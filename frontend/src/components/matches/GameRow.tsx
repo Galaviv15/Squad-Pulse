@@ -209,8 +209,9 @@ export function GameRow({
 
 /**
  * The row's footer (KAN-81, the matches screen only), from `detailsState` alone: AVAILABLE → a
- * link to the game's page, styled as a button, named with the opponent and the date (a season has
- * many); PENDING / UNAVAILABLE → a muted sentence; a game not played (null) → nothing. AVAILABLE
+ * link to the game's page, styled as a button; its name is the visible "פרטי משחק" followed by
+ * the opponent and the date in sr-only text (a season has many such links, and the name must start
+ * with the visible label, WCAG 2.5.3, so no aria-label); PENDING / UNAVAILABLE → a muted sentence; a game not played (null) → nothing. AVAILABLE
  * without a detailsId can't come from the backend: nothing, never a broken link.
  */
 function DetailsFooter({ game }: { game: Game }) {
@@ -233,15 +234,14 @@ function DetailsFooter({ game }: { game: Game }) {
   }
   return (
     <RowFooter>
-      <Link
-        to={gamePath(detailsId)}
-        aria-label={t("matches.details.actionLabel", {
-          opponent: game.opponentName,
-          date: formatIsoDate(game.date) ?? game.date,
-        })}
-        className={buttonVariants({ variant: "outline", size: "sm" })}
-      >
+      <Link to={gamePath(detailsId)} className={buttonVariants({ variant: "outline", size: "sm" })}>
         {t("matches.details.action")}
+        <span className="sr-only">
+          {t("matches.details.actionContext", {
+            opponent: game.opponentName,
+            date: formatIsoDate(game.date) ?? game.date,
+          })}
+        </span>
         <ChevronLeft aria-hidden="true" />
       </Link>
     </RowFooter>

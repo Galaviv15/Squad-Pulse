@@ -429,16 +429,20 @@ describe("a played game's details on the matches screen (KAN-81)", () => {
     await renderMatches("/app/matches", { fixtures });
 
     const row = await gameOf("Maccabi Yavne");
-    const link = within(row).getByRole("link", {
-      name: i18n.t("matches.details.actionLabel", {
+    const link = within(row).getByRole("link", { name: "פרטי משחק: Maccabi Yavne, 05.09.2026" });
+    // WCAG 2.5.3: the accessible name starts with the visible label, then the context.
+    expect(link).not.toHaveAttribute("aria-label");
+    expect(link).toHaveAccessibleName(
+      `${D.action}${i18n.t("matches.details.actionContext", {
         opponent: "Maccabi Yavne",
         date: "05.09.2026",
-      }),
-    });
+      })}`,
+    );
+    expect(link).toHaveAccessibleName(new RegExp(`^${D.action}:`));
     expect(link).toHaveAttribute("href", "/app/matches/games/details-2026-09-05");
     expect(link).toHaveTextContent(D.action);
     // The only such link: one per AVAILABLE game with an id.
-    expect(screen.getAllByRole("link", { name: /^פרטי המשחק מול/ })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: new RegExp(`^${D.action}: `) })).toHaveLength(1);
   });
 
   it("says a PENDING game's details aren't collected yet, with no link", async () => {

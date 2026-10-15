@@ -307,7 +307,7 @@
     },
     "details": {
       "action": "פרטי משחק",
-      "actionLabel": "פרטי המשחק מול {{opponent}}, {{date}}",
+      "actionContext": ": {{opponent}}, {{date}}",
       "PENDING": "פרטי המשחק עוד לא נאספו. הם יתווספו באחד הרענונים הבאים.",
       "UNAVAILABLE": "פרטי המשחק לא זמינים כרגע."
     },
