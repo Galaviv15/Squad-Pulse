@@ -485,7 +485,8 @@ class PlayerStatsIngestIntegrationTest {
         .andExpect(status().isBadRequest())
         .andExpect(
             jsonPath("$.details[0]")
-                .value("anyPartPresent: fixtures, standings or playerStats must be present"));
+                .value(
+                    "anyPartPresent: fixtures, standings, playerStats or gameDetails must be present"));
   }
 
   // --- logs -------------------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import com.squadpulse.match.IngestResult.WarningCode;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -30,13 +31,14 @@ import org.springframework.stereotype.Service;
 
 /**
  * Applies one scrape's successful parts to the stored snapshots (KAN-66). The only writer of {@link
- * LeagueStandingsSnapshot}, {@link LeagueFixturesSnapshot} and {@link PlayerSeasonStatsSnapshot}
- * (KAN-72), called only by the service-token ingest endpoint in {@code scrapingintegration}, which
- * validated the input and handles the parts the scraper reported as failed. See
- * docs/scraper-backend-contract.md.
+ * LeagueStandingsSnapshot}, {@link LeagueFixturesSnapshot}, {@link PlayerSeasonStatsSnapshot}
+ * (KAN-72), {@link GameDetails} and {@link GameDetailAttempts} (KAN-79), called only by the
+ * service-token ingest endpoint in {@code scrapingintegration}, which validated the input and
+ * handles the parts the scraper reported as failed. See docs/scraper-backend-contract.md.
  *
  * <p>Order: the standings first, so the fixtures can be resolved against them; then the fixtures;
- * then the player statistics. The parts are independent — one rejected doesn't stop another.
+ * then the player statistics; then the game details. The parts are independent — one rejected
+ * doesn't stop another.
  *
  * <ul>
  *   <li><b>Standings</b>: stored only if some club is currently mapped to the league and season
@@ -60,6 +62,20 @@ import org.springframework.stereotype.Service;
  *       opaque id it had in the stored snapshot (by {@code player_id}); only a new {@code
  *       player_id} gets a new random one. Never touches a {@code squad.Player} or a link. Logged
  *       with ids and counts only, never a player's name.
+ *   <li><b>Game details</b> (KAN-79): our side of each game the scraper read, for every club mapped
+ *       to exactly the scrape's three ids, each inside {@link ClubContext#callAs}; no such club →
+ *       {@code NOT_MAPPED}, otherwise {@code STORED}. <b>Per game, not a snapshot</b>: a game
+ *       creates its own record or replaces that one record only, and only with a newer {@code
+ *       fetchedAt} (otherwise it's skipped silently, and the part is still {@code STORED}); the
+ *       record keeps its opaque id; other games' records are never touched. Storing a game deletes
+ *       its {@link GameDetailAttempts}. Each failed game the scraper reports counts as an attempt
+ *       if the page was broken ({@code PARSE_ERROR}, {@code SOURCE_ERROR}), not if the site or the
+ *       network was ({@code TIMEOUT}, {@code SOURCE_BLOCKED}: only its last reason and time
+ *       change); a failure for a game whose details are stored, or one not newer than the last
+ *       recorded attempt (a replay), is ignored. A given-up game is retried {@code
+ *       GameDetailAttempts.RETRY_GIVEN_UP_AFTER} after its last counted failure. Never writes a
+ *       {@code squad.Player}. Logged with ids and counts only: never a player's or team's name,
+ *       never the scraper's {@code detail} above DEBUG.
  *   <li><b>Staleness</b>: a part whose {@code fetchedAt} isn't newer than the stored snapshot's is
  *       {@link IngestResult.Outcome#STALE}, nothing written — so neither a late old scrape nor a
  *       replay ever overwrites newer data. Load, compare, save, with {@code @Version}: on a lost
@@ -75,6 +91,8 @@ public class ScrapeIngestService {
   private final LeagueStandingsSnapshotRepository standingsRepository;
   private final LeagueFixturesSnapshotRepository fixturesRepository;
   private final PlayerSeasonStatsSnapshotRepository playerStatsRepository;
+  private final GameDetailsRepository gameDetailsRepository;
+  private final GameDetailAttemptsRepository attemptsRepository;
   private final ClubFootballMappings mappings;
   private final ClubContext clubContext;
   private final Clock clock;
@@ -84,12 +102,16 @@ public class ScrapeIngestService {
       LeagueStandingsSnapshotRepository standingsRepository,
       LeagueFixturesSnapshotRepository fixturesRepository,
       PlayerSeasonStatsSnapshotRepository playerStatsRepository,
+      GameDetailsRepository gameDetailsRepository,
+      GameDetailAttemptsRepository attemptsRepository,
       ClubFootballMappings mappings,
       ClubContext clubContext) {
     this(
         standingsRepository,
         fixturesRepository,
         playerStatsRepository,
+        gameDetailsRepository,
+        attemptsRepository,
         mappings,
         clubContext,
         Clock.systemUTC());
@@ -100,12 +122,16 @@ public class ScrapeIngestService {
       LeagueStandingsSnapshotRepository standingsRepository,
       LeagueFixturesSnapshotRepository fixturesRepository,
       PlayerSeasonStatsSnapshotRepository playerStatsRepository,
+      GameDetailsRepository gameDetailsRepository,
+      GameDetailAttemptsRepository attemptsRepository,
       ClubFootballMappings mappings,
       ClubContext clubContext,
       Clock clock) {
     this.standingsRepository = standingsRepository;
     this.fixturesRepository = fixturesRepository;
     this.playerStatsRepository = playerStatsRepository;
+    this.gameDetailsRepository = gameDetailsRepository;
+    this.attemptsRepository = attemptsRepository;
     this.mappings = mappings;
     this.clubContext = clubContext;
     this.clock = clock;
@@ -115,6 +141,7 @@ public class ScrapeIngestService {
    * @param fixtures {@code null} if this scrape has no successful fixtures part
    * @param standings {@code null} if this scrape has no successful standings part
    * @param playerStats {@code null} if this scrape has no successful player statistics part
+   * @param gameDetails {@code null} if this scrape has no successful game-details part
    */
   public IngestResult ingest(
       int teamId,
@@ -122,7 +149,8 @@ public class ScrapeIngestService {
       int seasonId,
       ScrapedFixtures fixtures,
       ScrapedStandings standings,
-      ScrapedPlayerStats playerStats) {
+      ScrapedPlayerStats playerStats,
+      ScrapedGameDetails gameDetails) {
     List<Warning> warnings = new ArrayList<>();
 
     PartResult standingsResult = PartResult.NOT_SENT;
@@ -166,8 +194,161 @@ public class ScrapeIngestService {
         playerStats == null
             ? PartResult.NOT_SENT
             : ingestPlayerStats(teamId, leagueId, seasonId, playerStats);
+    PartResult gameDetailsResult =
+        gameDetails == null
+            ? PartResult.NOT_SENT
+            : ingestGameDetails(teamId, leagueId, seasonId, gameDetails);
     return new IngestResult(
-        fixturesResult, standingsResult, playerStatsResult, clubsUpdated, List.copyOf(warnings));
+        fixturesResult,
+        standingsResult,
+        playerStatsResult,
+        gameDetailsResult,
+        clubsUpdated,
+        List.copyOf(warnings));
+  }
+
+  /** How one club's copy of a game-details part went: counts only. */
+  private record GameDetailsCounts(int stored, int failuresCounted) {}
+
+  private PartResult ingestGameDetails(
+      int teamId, int leagueId, int seasonId, ScrapedGameDetails gameDetails) {
+    List<String> clubIds = mappings.clubIdsMappedTo(teamId, leagueId, seasonId);
+    if (clubIds.isEmpty()) {
+      return PartResult.rejected(RejectionReason.NOT_MAPPED);
+    }
+    for (ScrapedGameDetails.Failure failure : gameDetails.failures()) {
+      log.debug(
+          "Scraper's detail for the failed game {} ({}): {}",
+          failure.gameId(),
+          failure.reason(),
+          failure.detail());
+    }
+    for (String clubId : clubIds) {
+      GameDetailsCounts counts =
+          clubContext.callAs(clubId, () -> storeGameDetails(teamId, seasonId, gameDetails));
+      log.info(
+          "Game details for team {} season {}: {} games sent, {} stored; {} failures sent, {}"
+              + " counted as attempts",
+          teamId,
+          seasonId,
+          gameDetails.games().size(),
+          counts.stored(),
+          gameDetails.failures().size(),
+          counts.failuresCounted());
+    }
+    return PartResult.STORED;
+  }
+
+  /** In the current club's context: each game on its own, then each failure. */
+  private GameDetailsCounts storeGameDetails(
+      int teamId, int seasonId, ScrapedGameDetails gameDetails) {
+    String clubId = clubContext.requireClubId();
+    Instant fetchedAt = gameDetails.fetchedAt();
+    int stored = 0;
+    for (ScrapedGameDetails.Game game : gameDetails.games()) {
+      boolean written =
+          storeIfNewer(
+              () ->
+                  gameDetailsRepository.findByClubIdAndTeamIdAndSeasonIdAndGameId(
+                      clubId, teamId, seasonId, game.gameId()),
+              GameDetails::getFetchedAt,
+              GameDetails::create,
+              details -> {
+                details.setTeamId(teamId);
+                details.setSeasonId(seasonId);
+                details.setGameId(game.gameId());
+                details.setFetchedAt(fetchedAt);
+                details.setStoredAt(clock.instant());
+                details.setDate(game.date());
+                details.setKickoffTime(game.kickoffTime());
+                details.setCompetition(game.competition());
+                details.setRound(game.round());
+                details.setOwnSide(game.ownSide());
+                details.setHomeTeamName(game.homeTeamName());
+                details.setAwayTeamName(game.awayTeamName());
+                details.setHomeScore(game.homeScore());
+                details.setAwayScore(game.awayScore());
+                details.setAppearances(toAppearances(game.players()));
+                gameDetailsRepository.save(details);
+              },
+              fetchedAt);
+      if (written) {
+        stored++;
+        attemptsRepository.deleteByClubIdAndTeamIdAndSeasonIdAndGameId(
+            clubId, teamId, seasonId, game.gameId());
+      }
+    }
+    int counted = 0;
+    for (ScrapedGameDetails.Failure failure : gameDetails.failures()) {
+      if (recordFailedAttempt(clubId, teamId, seasonId, fetchedAt, failure)) {
+        counted++;
+      }
+    }
+    return new GameDetailsCounts(stored, counted);
+  }
+
+  /**
+   * Records one failed game in the current club's context, unless its details are stored (then it's
+   * ignored) or this scrape isn't newer than the last recorded attempt (a replay).
+   *
+   * @return true if it counted towards giving the game up
+   */
+  private boolean recordFailedAttempt(
+      String clubId,
+      int teamId,
+      int seasonId,
+      Instant fetchedAt,
+      ScrapedGameDetails.Failure failure) {
+    if (gameDetailsRepository
+        .findByClubIdAndTeamIdAndSeasonIdAndGameId(clubId, teamId, seasonId, failure.gameId())
+        .isPresent()) {
+      return false;
+    }
+    boolean counts = failure.reason().countsAsAttempt();
+    boolean written =
+        storeIfNewer(
+            () ->
+                attemptsRepository.findByClubIdAndTeamIdAndSeasonIdAndGameId(
+                    clubId, teamId, seasonId, failure.gameId()),
+            GameDetailAttempts::getLastAttemptAt,
+            GameDetailAttempts::new,
+            attempts -> {
+              attempts.setTeamId(teamId);
+              attempts.setSeasonId(seasonId);
+              attempts.setGameId(failure.gameId());
+              if (counts) {
+                attempts.setFailedAttempts(attempts.getFailedAttempts() + 1);
+                attempts.setLastCountedAttemptAt(fetchedAt);
+              }
+              attempts.setLastReason(failure.reason());
+              attempts.setLastAttemptAt(fetchedAt);
+              attemptsRepository.save(attempts);
+            },
+            fetchedAt);
+    return written && counts;
+  }
+
+  /** As sent, each player's events sorted by minute, an unknown minute last. */
+  private static List<GameDetails.StoredAppearance> toAppearances(
+      List<ScrapedGameDetails.Appearance> players) {
+    return players.stream()
+        .map(
+            player ->
+                new GameDetails.StoredAppearance(
+                    player.playerId(),
+                    player.name(),
+                    player.shirtNumber(),
+                    player.role(),
+                    player.goalkeeper(),
+                    player.captain(),
+                    player.events().stream()
+                        .sorted(
+                            Comparator.comparing(
+                                ScrapedGameDetails.Event::minute,
+                                Comparator.nullsLast(Comparator.<Integer>naturalOrder())))
+                        .map(event -> new GameDetails.StoredEvent(event.kind(), event.minute()))
+                        .toList()))
+        .toList();
   }
 
   private PartResult ingestPlayerStats(

@@ -3,6 +3,8 @@ package com.squadpulse.scrapingintegration;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.OptBoolean;
 import com.squadpulse.common.NoControlCharacters;
+import com.squadpulse.match.FixturesResponse;
+import com.squadpulse.match.ScrapedGameDetails;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
@@ -21,9 +23,10 @@ import java.util.Set;
 
 /**
  * The body of {@code POST /internal/scrape-results}: one scrape of one team's league fixtures, its
- * league's standings and the team's player season statistics (KAN-72), posted by the scraper
- * (KAN-66). <b>These records are the scraper ↔ backend contract</b>, and
- * docs/scraper-backend-contract.md is its public description: keep the two in sync.
+ * league's standings, the team's player season statistics (KAN-72) and the details of some of its
+ * played games (KAN-79), posted by the scraper (KAN-66). <b>These records are the scraper ↔ backend
+ * contract</b>, and docs/scraper-backend-contract.md is its public description: keep the two in
+ * sync.
  *
  * <p>No string in it may contain a control character ({@link NoControlCharacters}): the backend
  * joins team names with one to build a game's key.
@@ -38,6 +41,7 @@ import java.util.Set;
  * @param fixtures {@code null} / absent if not attempted
  * @param standings {@code null} / absent if not attempted
  * @param playerStats {@code null} / absent if not attempted (KAN-72)
+ * @param gameDetails {@code null} / absent if not attempted (KAN-79)
  */
 public record ScrapeResultRequest(
     @Size(max = 100) @NoControlCharacters String runId,
@@ -46,11 +50,12 @@ public record ScrapeResultRequest(
     @NotNull @Positive Integer seasonId,
     @Valid FixturesPart fixtures,
     @Valid StandingsPart standings,
-    @Valid PlayerStatsPart playerStats) {
+    @Valid PlayerStatsPart playerStats,
+    @Valid GameDetailsPart gameDetails) {
 
-  @AssertTrue(message = "fixtures, standings or playerStats must be present")
+  @AssertTrue(message = "fixtures, standings, playerStats or gameDetails must be present")
   boolean isAnyPartPresent() {
-    return fixtures != null || standings != null || playerStats != null;
+    return fixtures != null || standings != null || playerStats != null || gameDetails != null;
   }
 
   /** Whether a part succeeded; {@code FAILED} carries a {@link FailureReason} instead of data. */
@@ -215,6 +220,148 @@ public record ScrapeResultRequest(
           || starts + cameOnAsSub == games;
     }
   }
+
+  /**
+   * The details of the games the scraper fetched (KAN-79), <b>our side only</b>, and the games it
+   * requested and couldn't read. {@code OK}: {@code fetchedAt}, {@code games} and {@code failures}
+   * (each may be empty: nothing to fetch, or every attempt failed), no {@code reason} / {@code
+   * detail}. {@code FAILED}: as for {@link FixturesPart}.
+   *
+   * <p>A {@code gameId} appears at most once across {@code games} and {@code failures} together.
+   * Nothing else is checked across fields: not starters = 11, not one goalkeeper, not goals =
+   * score, not subs on = subs off, not events against the role — real pages break each of them.
+   */
+  public record GameDetailsPart(
+      @NotNull PartStatus status,
+      Instant fetchedAt,
+      @Size(max = 10) List<@NotNull @Valid GameDetailsGame> games,
+      @Size(max = 10) List<@NotNull @Valid GameDetailsFailure> failures,
+      FailureReason reason,
+      @Size(max = 500) @NoControlCharacters String detail) {
+
+    @AssertTrue(
+        message =
+            "status OK needs fetchedAt, games and failures and no reason or detail; FAILED needs a"
+                + " reason and no fetchedAt, games or failures")
+    boolean isConsistentWithStatus() {
+      return isConsistent(
+          status,
+          fetchedAt != null && games != null && failures != null,
+          fetchedAt != null || games != null || failures != null,
+          reason,
+          detail);
+    }
+
+    @AssertTrue(message = "gameId must be unique across games and failures")
+    boolean isGameIdsUnique() {
+      Set<Integer> ids = new HashSet<>();
+      boolean unique = true;
+      if (games != null) {
+        unique =
+            games.stream()
+                .filter(Objects::nonNull)
+                .allMatch(game -> game.gameId() == null || ids.add(game.gameId()));
+      }
+      if (unique && failures != null) {
+        unique =
+            failures.stream()
+                .filter(Objects::nonNull)
+                .allMatch(failure -> failure.gameId() == null || ids.add(failure.gameId()));
+      }
+      return unique;
+    }
+  }
+
+  /**
+   * One played game's details, our side only. Every field is required except {@code kickoffTime}.
+   *
+   * @param gameId the site's {@code game_id}; never leaves the backend
+   * @param date from the team-games row, Israel local, {@code yyyy-MM-dd}
+   * @param kickoffTime from the row, {@code HH:mm}; {@code null} if none
+   * @param competition the page's {@code h1} before {@code " מחזור N"}; trimmed here
+   * @param round {@code N} from the {@code h1}
+   * @param ownSide our side on the page (picked by the header's {@code team_id})
+   * @param homeTeamName short name, as the page shows it; trimmed here
+   * @param homeScore home first
+   * @param players our side only; {@code playerId} unique in the list
+   */
+  public record GameDetailsGame(
+      @NotNull @Positive Integer gameId,
+      @NotNull @JsonFormat(pattern = "uuuu-MM-dd", lenient = OptBoolean.FALSE) LocalDate date,
+      @JsonFormat(pattern = "HH:mm", lenient = OptBoolean.FALSE) LocalTime kickoffTime,
+      @NotBlank @Size(max = 100) @NoControlCharacters String competition,
+      @NotNull @Min(1) @Max(99) Integer round,
+      @NotNull FixturesResponse.Side ownSide,
+      @NotBlank @Size(max = 100) @NoControlCharacters String homeTeamName,
+      @NotBlank @Size(max = 100) @NoControlCharacters String awayTeamName,
+      @NotNull @Min(0) @Max(99) Integer homeScore,
+      @NotNull @Min(0) @Max(99) Integer awayScore,
+      @NotNull @Size(min = 1, max = 40) List<@NotNull @Valid GameAppearance> players) {
+
+    public GameDetailsGame {
+      competition = trim(competition);
+      homeTeamName = trim(homeTeamName);
+      awayTeamName = trim(awayTeamName);
+    }
+
+    @AssertTrue(message = "homeTeamName and awayTeamName must differ")
+    boolean isTwoTeams() {
+      return homeTeamName == null || !homeTeamName.equals(awayTeamName);
+    }
+
+    @AssertTrue(message = "playerId must be unique")
+    boolean isPlayerIdsUnique() {
+      if (players == null) {
+        return true;
+      }
+      Set<Integer> ids = new HashSet<>();
+      return players.stream()
+          .filter(Objects::nonNull)
+          .allMatch(player -> player.playerId() == null || ids.add(player.playerId()));
+    }
+  }
+
+  /**
+   * One of our players in one game.
+   *
+   * @param playerId the site's {@code player_id} (the same as the statistics'); never leaves the
+   *     backend
+   * @param name first name first; trimmed here; {@code null} if the site masks it. Never logged.
+   * @param shirtNumber the number worn in this game; {@code null} if missing
+   * @param role {@code SUBSTITUTE} = came on
+   * @param events any role may have any event
+   */
+  public record GameAppearance(
+      @NotNull @Positive Integer playerId,
+      @Size(min = 1, max = 100) @NoControlCharacters String name,
+      @Min(0) @Max(99) Integer shirtNumber,
+      @NotNull ScrapedGameDetails.Role role,
+      @NotNull Boolean goalkeeper,
+      @NotNull Boolean captain,
+      @NotNull @Size(max = 10) List<@NotNull @Valid GameEvent> events) {
+
+    public GameAppearance {
+      name = trim(name);
+    }
+  }
+
+  /**
+   * @param minute as the site shows it (93, not 90+3); {@code null} if unknown (the site's {@code
+   *     -1})
+   */
+  public record GameEvent(
+      @NotNull ScrapedGameDetails.EventKind kind, @Min(0) @Max(150) Integer minute) {}
+
+  /**
+   * A game the scraper requested and couldn't read. A game it never started (out of time, after a
+   * block) isn't listed.
+   *
+   * @param detail free text for the operator; never logged above DEBUG
+   */
+  public record GameDetailsFailure(
+      @NotNull @Positive Integer gameId,
+      @NotNull FailureReason reason,
+      @Size(max = 500) @NoControlCharacters String detail) {}
 
   private static boolean isConsistent(
       PartStatus status,

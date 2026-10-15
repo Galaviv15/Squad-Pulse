@@ -1,4 +1,4 @@
-# Scraper ↔ backend contract (KAN-66, KAN-67, KAN-72)
+# Scraper ↔ backend contract (KAN-66, KAN-67, KAN-72, KAN-79)
 
 The two calls between the backend and the scraper service (`scraper/`):
 
@@ -19,7 +19,9 @@ Both directions use the same shared secret, `SCRAPER_SERVICE_TOKEN`.
   "seasonId":  int,
   "fixtures":  boolean,
   "standings": boolean,
-  "playerStats": boolean   // optional, absent = false
+  "playerStats": boolean,  // optional, absent = false
+  "gameDetails": boolean,  // optional, absent = false (KAN-79; not sent until KAN-80)
+  "knownGameIds": [int]    // optional, absent = [] (KAN-79; not sent until KAN-80)
 }
 ```
 
@@ -32,10 +34,14 @@ Both directions use the same shared secret, `SCRAPER_SERVICE_TOKEN`.
 | `fixtures` | boolean | required | Scrape the team's games page. |
 | `standings` | boolean | required | Scrape the league table. |
 | `playerStats` | boolean | optional; absent = `false`; if present, a boolean (`null` is a `400`) | Scrape the team's player statistics (KAN-72, KAN-73). |
+| `gameDetails` | boolean | optional; absent = `false` | **Defined, not sent yet (KAN-79).** Fetch the details of up to 2 finished games not in `knownGameIds` (KAN-80). |
+| `knownGameIds` | int array | optional; absent = `[]`; only with `gameDetails: true`; ≤ 200 entries, each 1..2147483647, no duplicates | **Defined, not sent yet (KAN-79).** Games the scraper must not fetch: those whose details the backend stores **and** those it gave up on (see [Game details part](#game-details-part-ok-kan-79)). The scraper doesn't need to know which is which. |
 
 The first six properties are required (`runId` may be `null`); `playerStats` is optional. At least one of `fixtures` / `standings` / `playerStats` must be `true`. Unknown properties are rejected. A part that's `false` is sent to the backend as `null` (not attempted).
 
 **`playerStats` (KAN-72, sent since KAN-73).** The backend sends it only when `true` (its trigger record leaves a `false` out of the JSON), and sets it from one constant, `ScrapeTriggerService.REQUEST_PLAYER_STATS`, which is `true`: every trigger asks for the stats. The scraper accepts the property as optional, but the backend now always sends it as `true`, and a scraper without KAN-73 rejects it as an unknown property (`400`, so every refresh is `SCRAPER_UNAVAILABLE`). So a backend with this change needs a scraper with this change: **deploy the scraper first, or together with the backend.**
+
+**`gameDetails` and `knownGameIds` (KAN-79): defined, not sent yet.** Today's scraper rejects both as unknown properties (`400`, so every refresh would be `SCRAPER_UNAVAILABLE`), so the backend sets `gameDetails` from one constant, `ScrapeTriggerService.REQUEST_GAME_DETAILS`, which is `false`, and leaves a `false` `gameDetails` and an empty `knownGameIds` out of the JSON (its trigger record: `NON_DEFAULT` / `NON_EMPTY`). KAN-80 sets the constant to `true` in the same change that teaches the scraper both properties; deploy as for `playerStats`: **the scraper first, or together with the backend.** When it's `true`, the backend builds `knownGameIds` from the triggering club's own data only (club-scoped reads inside its `ClubContext`, the HTTP and a scheduled path alike), for the club's current team and season: its stored games and its given-up games, ascending, without duplicates. With more than 200 such ids it doesn't ask for `gameDetails` at all for that trigger (a WARN with ids and counts): a cut list would make the scraper fetch stored games again. 200 ten-digit ids fit the 4 KB body limit with everything else. The run record keeps the flag (`gameDetails` `"1"` / `"0"`; today always `"0"`).
 
 **What the backend sends (KAN-68).** `POST <SCRAPER_URL>/scrape` from `scrapingintegration.ScraperClient`. `SCRAPER_URL` is the scraper's origin only (`http(s)://host[:port]`, an optional trailing `/` is dropped); one with a path, user-info, a query or a fragment stops the backend from starting. It's sent only after the backend took the per-team lock (below), with a new UUID as `runId`, the club's own mapping as the ids, `fixtures: true` always, and `standings: true` only if it also took the per-league lock — otherwise `false`, because another club of the same league and season had the table scraped within the cooldown. and `playerStats: true` always. The stats share the per-team lock (same scrape, same team); the league lock doesn't concern them. Connect timeout 2 s, read timeout 5 s, no redirects followed, no retry. It treats the answers as follows:
 
@@ -95,7 +101,8 @@ Checked in that order: path, method, token, `Content-Type`, size, body. Error me
   "teamId":    int, "leagueId": int, "seasonId": int,
   "fixtures":    null | FixturesPart,
   "standings":   null | StandingsPart,
-  "playerStats": null | PlayerStatsPart
+  "playerStats": null | PlayerStatsPart,
+  "gameDetails": null | GameDetailsPart
 }
 ```
 
@@ -108,8 +115,9 @@ Checked in that order: path, method, token, `Content-Type`, size, body. Error me
 | `fixtures` | object or `null` / absent | | `null` / absent = not attempted. |
 | `standings` | object or `null` / absent | | `null` / absent = not attempted (e.g. KAN-68's per-league lock). |
 | `playerStats` | object or `null` / absent | | `null` / absent = not attempted (KAN-72; requested by every trigger since KAN-73). |
+| `gameDetails` | object or `null` / absent | | `null` / absent = not attempted (KAN-79; requested by no trigger until KAN-80). |
 
-At least one of `fixtures`, `standings` and `playerStats` must be present.
+At least one of `fixtures`, `standings`, `playerStats` and `gameDetails` must be present.
 
 ### A part: `OK` or `FAILED`
 
@@ -195,16 +203,61 @@ The team's season totals for every registered player, **all competitions togethe
 
 `games == starts + cameOnAsSub` is the only cross-field check. A duplicate `playerId` or a failed check is a `400` for the whole request, like the standings table's own checks: nothing from it is written, not even its other parts.
 
+### Game details part (`OK`, KAN-79)
+
+The details of played games from their game pages, **our side only**: the opponent is a name and a score; its lineup and scorers are never sent, stored or shown. Each game page has both lineups, the shirt number worn in that game, goals, cards and substitution minutes; there are no minutes played per player.
+
+| Field | Type | Rules |
+|---|---|---|
+| `fetchedAt` | instant | required; at most 5 minutes ahead |
+| `games` | array of GameDetails | 0–10, none `null`. **An empty list is a valid `OK`** (nothing to fetch, or every attempt failed). |
+| `failures` | array of GameFailure | 0–10, none `null`. Only games the scraper actually requested; a game it never started (out of time, after a block) is simply absent. |
+
+A `gameId` appears at most once across `games` and `failures` together. `games` and `failures` are both required with `OK` (empty is fine) and both absent with `FAILED`.
+
+**GameDetails** (every field present; `null` only where stated):
+
+| Field | Type | Rules | Meaning |
+|---|---|---|---|
+| `gameId` | int | ≥ 1 | football.org.il's `game_id` (the team-games row's id). Never leaves the backend. |
+| `date` | string | `yyyy-MM-dd`, a real date | From the team-games row (Israel local, like the fixtures). |
+| `kickoffTime` | string or `null` | `HH:mm` | From the row. |
+| `competition` | string | 1–100 chars after trimming | The `h1` before ` מחזור N`, e.g. `ליגה א' דרום`. |
+| `round` | int | 1–99 | `N` from the `h1`. |
+| `ownSide` | `HOME` \| `AWAY` | | Our side on the page (picked by the header's `team_id`). |
+| `homeTeamName`, `awayTeamName` | string | 1–100 chars after trimming, different | Short names, as the page shows them. |
+| `homeScore`, `awayScore` | int | 0–99 each | Home first. A finished game always has both. |
+| `players` | array of Appearance | 1–40, none `null`, `playerId` unique in the list | **Our side only.** |
+
+**Appearance:**
+
+| Field | Type | Rules | Meaning |
+|---|---|---|---|
+| `playerId` | int | ≥ 1 | football.org.il's `player_id`, the same id as the player statistics' (so it reaches the club's own player through the KAN-72 links). Never leaves the backend. |
+| `name` | string or `null` | 1–100 chars after trimming | **First name first** (unlike the statistics). `null` = masked by the site (`*****`). Never logged. |
+| `shirtNumber` | int or `null` | 0–99 | The number worn in **this** game. `null` if missing. Never the club's `Player.jerseyNumber`, and never written to it. |
+| `role` | `STARTER` \| `SUBSTITUTE` \| `UNUSED` | | `SUBSTITUTE` = came on; `UNUSED` = on the bench, never came on. |
+| `goalkeeper`, `captain` | boolean | | `(GK)`, `(C)`. |
+| `events` | array of Event | 0–10, none `null` | Any role may have any event. |
+
+**Event:** `kind` is one of `GOAL`, `YELLOW`, `SECOND_YELLOW`, `RED`, `SUB_ON`, `SUB_OFF`; `minute` an int 0–150 or `null` (unknown, the site's `-1`). Minutes are plain numbers as the site shows them (93, not 90+3). No other kind: own goals and penalties are unseen on the site and come with their own ticket (KAN-80 fails such a game, as a `PARSE_ERROR` failure).
+
+**GameFailure:** `gameId` int ≥ 1; `reason` a `FailureReason` (required); `detail` string or `null`, ≤ 500 chars (never logged above DEBUG).
+
+**No count checks**, on purpose: not starters = 11, not one goalkeeper, not our goals = our score, not subs on = subs off, not events against the role. Real pages break each of them. Everything else above is checked, and any violation is a `400` for the whole request: nothing from it is written, not even its other parts.
+
 ## What the backend does
 
-Standings are processed first, then fixtures, then player statistics. The parts are independent: one rejected doesn't block another. Each part is a **snapshot**: a stored one is replaced as a whole, never merged.
+Standings are processed first, then fixtures, then player statistics, then game details. The parts are independent: one rejected doesn't block another. Each part is a **snapshot**: a stored one is replaced as a whole, never merged.
 
 - **Standings** are stored once per `(leagueId, seasonId)`, shared by every club in that league, and only if at least one club is currently mapped to that league and season.
 - **Fixtures** are stored per club, for every club currently mapped to exactly `(teamId, leagueId, seasonId)`. Normally that's one club. A game missing from a later scrape disappears.
 - **Player statistics** (KAN-72) are stored the same way: per club, for every club currently mapped to exactly `(teamId, leagueId, seasonId)`, one snapshot per `(club, teamId, seasonId)`, the whole list replaced. No such club → `REJECTED NOT_MAPPED`. A player missing from a later scrape disappears from the snapshot with their stats; a club's link of that player to one of its own players stays (and shows again when they reappear). The backend gives each player an **opaque id of its own** (a random UUID), kept across replaces for as long as the `playerId` stays in the table; a new `playerId` gets a new one. That opaque id is the only id the backend's own API shows: `playerId` (like the team, league and season ids) never leaves the backend. The ingest never writes the club's own players.
+- **Game details** (KAN-79) are stored per club, for every club currently mapped to exactly `(teamId, leagueId, seasonId)`; no such club → `REJECTED NOT_MAPPED`, otherwise `STORED` (also with no games, and with games skipped as not newer). **Per game, not a snapshot:** one record per `(club, teamId, seasonId, gameId)`; a game creates its record, or replaces **its own record only** if its `fetchedAt` is newer than the stored one's (otherwise that game is skipped silently). Other games' records are never touched. Each record gets an **opaque id of the backend's own** (a random UUID), kept when it's replaced; two clubs mapped to the same team get different ids. That id is the only one the backend's API shows: `gameId` and `playerId` never leave the backend. The ingest never writes the club's own players (nor their jersey numbers).
+- **Failed games** (the `failures` of an `OK` game-details part) are counted per club and game: `PARSE_ERROR` and `SOURCE_ERROR` (the page itself is broken) count as a failed attempt; `TIMEOUT` and `SOURCE_BLOCKED` (the site or the network) don't, they only update the last reason and time, so an outage can't burn healthy games. After **3** counted attempts the game is **given up**: it goes into the trigger's `knownGameIds` and shows as unavailable. Giving up lasts **3 days from the game's last counted failure** (not its last failure of any kind, so a `TIMEOUT` on a retry doesn't extend it): then the game drops out of `knownGameIds` and shows as pending, so the scraper tries it again. A retry that fails with a counting reason gives it up for another 3 days from that failure; one that succeeds stores the details. A failure for a game whose details are stored is ignored; one whose `fetchedAt` isn't newer than the game's last recorded attempt is ignored too (a replay counts once). Storing a game's details deletes its attempt count. The count itself is never reset (it keeps growing across retries).
 - **Team names → ids**: each fixture name is matched exactly against the same league's standings: this request's if it has an accepted standings part, otherwise the stored ones. A name with no match keeps a `null` id (warning `UNRESOLVED_TEAM_NAMES`). The scrape doesn't fail for it.
 - **Our team** is the standings row with the request's `teamId`. Without standings (none in the request, none stored), it's the one name that appears in every game.
-- **Staleness:** a part whose `fetchedAt` isn't newer than the stored snapshot's is ignored (`STALE`). So an old scrape arriving late, or a replayed request, never overwrites newer data.
+- **Staleness:** a part whose `fetchedAt` isn't newer than the stored snapshot's is ignored (`STALE`). For game details staleness is per game (above): the part is never `STALE`. So an old scrape arriving late, or a replayed request, never overwrites newer data.
 - **Failed parts** are logged (reason and ids) and change nothing: the last good snapshot stays. They do fail the run's status (below).
 - **Validation** covers the whole request before anything is written. A `400` writes nothing.
 
@@ -213,7 +266,7 @@ Standings are processed first, then fixtures, then player statistics. The parts 
 After the ingest itself has succeeded, the outcomes it computed set the status of the run named by `runId` (`scrapingintegration.ScrapeRunStatusService`), shown on `GET /matches/refresh`. So a `400`, `409` or `5xx` never changes a status (the scraper's retry will).
 
 - `runId` `null` or unknown (the run record expired after 7 days, or a manual trigger): no status change. A known `runId` whose run was for other team / league / season ids: no status change, logged at WARN.
-- Only the parts the run requested count (the run record keeps `fixtures`, `standings` and, from KAN-72, `playerStats`; a record without `playerStats` means not requested; every trigger since KAN-73 requests it): `STORED` or `STALE` is fine; `FAILURE_RECORDED` fails the run with the scraper's reason (`TIMEOUT` → `SOURCE_TIMEOUT`); `REJECTED` → `REJECTED`; `NOT_SENT` for a requested part → `NO_RESULT`. All fine → `SUCCEEDED`; otherwise `FAILED` with the first failed part's reason, in the order fixtures, standings, playerStats. A part the run didn't request is ignored, whatever the result says about it. The `TEAM_NOT_IN_STANDINGS` warning doesn't fail a run.
+- Only the parts the run requested count (the run record keeps `fixtures`, `standings`, from KAN-72 `playerStats` and from KAN-79 `gameDetails`; a record without `playerStats` or `gameDetails` means not requested; every trigger since KAN-73 requests `playerStats`, none requests `gameDetails` until KAN-80): `STORED` or `STALE` is fine; `FAILURE_RECORDED` fails the run with the scraper's reason (`TIMEOUT` → `SOURCE_TIMEOUT`); `REJECTED` → `REJECTED`; `NOT_SENT` for a requested part → `NO_RESULT`. All fine → `SUCCEEDED`; otherwise `FAILED` with the first failed part's reason, in the order fixtures, standings, playerStats, gameDetails. **Per-game `failures` never fail a run** (the part is `STORED`): otherwise one broken page would turn every refresh red. A part the run didn't request is ignored, whatever the result says about it. The `TEAM_NOT_IN_STANDINGS` warning doesn't fail a run.
 - The same result twice gives the same status. A result after the run timed out (`NO_RESULT`) replaces that. A result only ever changes its own run.
 - Recording the status never changes this response: if it fails (e.g. Redis is down), the `200` with the outcomes stands and a WARN is logged.
 
@@ -226,18 +279,19 @@ After the ingest itself has succeeded, the outcomes it computed set the status o
   "fixtures":    { "outcome": Outcome, "reason": RejectionReason | null },
   "standings":   { "outcome": Outcome, "reason": RejectionReason | null },
   "playerStats": { "outcome": Outcome, "reason": RejectionReason | null },
+  "gameDetails": { "outcome": Outcome, "reason": RejectionReason | null },
   "clubsUpdated": int,
   "warnings": [ { "code": WarningCode, "count": int | null } ]
 }
 ```
 
-`clubsUpdated` is how many clubs' fixtures were written (not the player statistics). The response never names a club. `playerStats` is new in KAN-72; the scraper's `backendClient.js` logs the outcome of all three parts (KAN-73), `clubsUpdated` and `warnings`.
+`clubsUpdated` is how many clubs' fixtures were written (not the player statistics or game details). The response never names a club. `playerStats` is new in KAN-72, `gameDetails` in KAN-79 (never `STALE`); the scraper's `backendClient.js` logs the outcome of each part in its own list (`PARTS`, three today; KAN-80 adds `gameDetails`), `clubsUpdated` and `warnings`, and ignores any other field.
 
 **Outcome**
 
 | Value | Meaning |
 |---|---|
-| `STORED` | Written: replaced the stored snapshot, or was the first one. |
+| `STORED` | Written: replaced the stored snapshot, or was the first one. Game details: the part was processed (each game newer, or skipped). |
 | `REJECTED` | Refused, nothing written. See `reason`. |
 | `STALE` | Not newer than the stored snapshot. Nothing written. |
 | `FAILURE_RECORDED` | The scraper sent `FAILED`. Nothing written. |
@@ -247,7 +301,7 @@ After the ingest itself has succeeded, the outcomes it computed set the status o
 
 | Value | Part | Meaning |
 |---|---|---|
-| `NOT_MAPPED` | all | No club is currently mapped to these ids (e.g. the mapping changed during the scrape). Standings: no club in that league and season. Fixtures and player statistics: no club with exactly that team, league and season. |
+| `NOT_MAPPED` | all | No club is currently mapped to these ids (e.g. the mapping changed during the scrape). Standings: no club in that league and season. Fixtures, player statistics and game details: no club with exactly that team, league and season. |
 | `DUPLICATE_GAME` | fixtures | The same home / away pairing appears twice. The page should be league-only; a playoff stage or a cup game could repeat a pairing, so this is rejected rather than overwritten silently. |
 | `OWN_TEAM_UNKNOWN` | fixtures | No standings available, and not exactly one name appears in every game. |
 | `INVALID` | fixtures | A game doesn't have our team on either side. |
@@ -266,7 +320,7 @@ A `200` is returned even when every part is rejected: those are data outcomes fo
 | Status | When |
 |---|---|
 | `200` | The request was valid. See the outcomes. |
-| `400` | Invalid request: bad JSON or types, a missing or out-of-range field, a broken cross-field rule (incl. a duplicate `playerId`), an unknown property, `fetchedAt` more than 5 minutes in the future, or no part present. Standard error body, with one `"path: problem"` entry per problem in `details` (e.g. `"fixtures.games[0].date: invalid value"`, `"standings.rows[2].recordConsistent: won + drawn + lost must equal played"`). Nothing written. |
+| `400` | Invalid request: bad JSON or types, a missing or out-of-range field, a broken cross-field rule (incl. a duplicate `playerId`, a `gameId` twice across `games` and `failures`, an unknown event kind), an unknown property, `fetchedAt` more than 5 minutes in the future, or no part present. Standard error body, with one `"path: problem"` entry per problem in `details` (e.g. `"fixtures.games[0].date: invalid value"`, `"standings.rows[2].recordConsistent: won + drawn + lost must equal played"`). Nothing written. |
 | `401` | No, or the wrong, `Authorization: Bearer` token, or no token configured on the backend. |
 | `413` | Body over **256 KB** (262,144 bytes), with or without `Content-Length` (chunked too). A real scrape is about 15 KB. |
 | `409` | Another write to the same snapshot won a race twice in a row (code `CONCURRENT_MODIFICATION`). Nothing from this request was written for that part. Retry once; with KAN-68's locks this shouldn't happen. |
@@ -321,6 +375,7 @@ Response (Hadera isn't in this cut-down table, so one name stays unresolved). Th
   "fixtures": { "outcome": "STORED", "reason": null },
   "standings": { "outcome": "STORED", "reason": null },
   "playerStats": { "outcome": "NOT_SENT", "reason": null },
+  "gameDetails": { "outcome": "NOT_SENT", "reason": null },
   "clubsUpdated": 1,
   "warnings": [ { "code": "UNRESOLVED_TEAM_NAMES", "count": 1 } ]
 }
@@ -337,6 +392,7 @@ A scrape where the site blocked the fixtures page and the standings weren't atte
 { "fixtures": { "outcome": "FAILURE_RECORDED", "reason": null },
   "standings": { "outcome": "NOT_SENT", "reason": null },
   "playerStats": { "outcome": "NOT_SENT", "reason": null },
+  "gameDetails": { "outcome": "NOT_SENT", "reason": null },
   "clubsUpdated": 0, "warnings": [] }
 ```
 
@@ -359,5 +415,42 @@ A player statistics part alone (KAN-72; names and ids made up). The scraper's te
 { "fixtures": { "outcome": "NOT_SENT", "reason": null },
   "standings": { "outcome": "NOT_SENT", "reason": null },
   "playerStats": { "outcome": "STORED", "reason": null },
+  "gameDetails": { "outcome": "NOT_SENT", "reason": null },
+  "clubsUpdated": 0, "warnings": [] }
+```
+
+A game-details part (KAN-79; names and ids made up; cut down to four of our players): one game stored, one game the scraper couldn't parse. `ContractExampleIntegrationTest` posts it to the real backend and checks the answer below:
+
+<!-- contract-example-game-details -->
+```json
+{ "runId": null, "teamId": 7617, "leagueId": 1010, "seasonId": 28,
+  "gameDetails": { "status": "OK", "fetchedAt": "2026-10-11T09:00:20Z",
+    "games": [
+      { "gameId": 1122601, "date": "2026-09-05", "kickoffTime": "20:00",
+        "competition": "ליגה א' דרום", "round": 1, "ownSide": "AWAY",
+        "homeTeamName": "מ.כ. צעירי טירה", "awayTeamName": "מ.כ. שדרות",
+        "homeScore": 4, "awayScore": 1,
+        "players": [
+          { "playerId": 920001, "name": "עומר גבאי", "shirtNumber": 1, "role": "STARTER",
+            "goalkeeper": true, "captain": true, "events": [] },
+          { "playerId": 920002, "name": "נועם אזולאי", "shirtNumber": 9, "role": "STARTER",
+            "goalkeeper": false, "captain": false,
+            "events": [ { "kind": "GOAL", "minute": 38 }, { "kind": "RED", "minute": 40 } ] },
+          { "playerId": 920004, "name": null, "shirtNumber": 22, "role": "SUBSTITUTE",
+            "goalkeeper": false, "captain": false,
+            "events": [ { "kind": "SUB_ON", "minute": 57 }, { "kind": "YELLOW", "minute": null } ] },
+          { "playerId": 920005, "name": "רועי שלום", "shirtNumber": 30, "role": "UNUSED",
+            "goalkeeper": false, "captain": false, "events": [ { "kind": "YELLOW", "minute": 93 } ] }
+        ] }
+    ],
+    "failures": [ { "gameId": 1122670, "reason": "PARSE_ERROR", "detail": "unknown event icon" } ] } }
+```
+
+<!-- contract-example-game-details-response -->
+```json
+{ "fixtures": { "outcome": "NOT_SENT", "reason": null },
+  "standings": { "outcome": "NOT_SENT", "reason": null },
+  "playerStats": { "outcome": "NOT_SENT", "reason": null },
+  "gameDetails": { "outcome": "STORED", "reason": null },
   "clubsUpdated": 0, "warnings": [] }
 ```

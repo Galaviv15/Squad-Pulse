@@ -1,0 +1,96 @@
+package com.squadpulse.match;
+
+import com.squadpulse.auth.ClubFootballMappings;
+import com.squadpulse.auth.FootballOrgIlIds;
+import com.squadpulse.common.NotFoundException;
+import com.squadpulse.squad.Player;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import org.springframework.stereotype.Service;
+
+/**
+ * One game's details as the club sees them, read-only (KAN-79). The record is found by our opaque
+ * id through the club-scoped repository, so another club's record is a 404, the same as one that
+ * doesn't exist (never a 403). It must also belong to the club's <b>current</b> mapping's team and
+ * season ({@link ClubFootballMappings#currentClubMapping()}): records of an earlier mapping stay in
+ * the database but are never shown, like the snapshots. Linked players come from the KAN-72 links
+ * ({@link PlayerStatsReadService#linkedPlayers()}), with the same rule for a link to a deleted
+ * player.
+ */
+@Service
+class GameDetailsReadService {
+
+  private static final Comparator<GameDetails.StoredAppearance> ROLE_ORDER =
+      Comparator.comparing(GameDetails.StoredAppearance::role);
+
+  private final ClubFootballMappings mappings;
+  private final GameDetailsRepository repository;
+  private final PlayerStatsReadService playerStatsReadService;
+
+  GameDetailsReadService(
+      ClubFootballMappings mappings,
+      GameDetailsRepository repository,
+      PlayerStatsReadService playerStatsReadService) {
+    this.mappings = mappings;
+    this.repository = repository;
+    this.playerStatsReadService = playerStatsReadService;
+  }
+
+  /**
+   * @throws NotFoundException if the club isn't mapped, or has no such record for its current team
+   *     and season
+   */
+  GameDetailsResponse read(String id) {
+    FootballOrgIlIds ids =
+        mappings.currentClubMapping().orElseThrow(GameDetailsReadService::notFound);
+    GameDetails details =
+        repository
+            .findById(id)
+            .filter(found -> Objects.equals(found.getTeamId(), ids.teamId()))
+            .filter(found -> Objects.equals(found.getSeasonId(), ids.seasonId()))
+            .orElseThrow(GameDetailsReadService::notFound);
+
+    boolean home = details.getOwnSide() == FixturesResponse.Side.HOME;
+    int ownScore = home ? details.getHomeScore() : details.getAwayScore();
+    int opponentScore = home ? details.getAwayScore() : details.getHomeScore();
+    Map<Integer, Player> linked = playerStatsReadService.linkedPlayers();
+    List<GameDetailsResponse.Appearance> players =
+        details.getAppearances().stream()
+            .sorted(ROLE_ORDER) // stable: within a role, as sent
+            .map(appearance -> toResponse(appearance, linked.get(appearance.sourcePlayerId())))
+            .toList();
+    return new GameDetailsResponse(
+        details.getId(),
+        details.localDate(),
+        details.localKickoffTime(),
+        details.getCompetition(),
+        details.getRound(),
+        details.getOwnSide(),
+        home ? details.getAwayTeamName() : details.getHomeTeamName(),
+        ownScore,
+        opponentScore,
+        FixturesResponse.Result.of(ownScore, opponentScore),
+        details.getFetchedAt(),
+        players);
+  }
+
+  private static GameDetailsResponse.Appearance toResponse(
+      GameDetails.StoredAppearance appearance, Player linkedPlayer) {
+    return new GameDetailsResponse.Appearance(
+        appearance.name(),
+        linkedPlayer == null ? null : PlayerStatsResponse.PlayerRef.of(linkedPlayer),
+        appearance.shirtNumber(),
+        appearance.role(),
+        appearance.goalkeeper(),
+        appearance.captain(),
+        appearance.events().stream()
+            .map(event -> new GameDetailsResponse.Event(event.kind(), event.minute()))
+            .toList());
+  }
+
+  private static NotFoundException notFound() {
+    return new NotFoundException("Game details not found");
+  }
+}

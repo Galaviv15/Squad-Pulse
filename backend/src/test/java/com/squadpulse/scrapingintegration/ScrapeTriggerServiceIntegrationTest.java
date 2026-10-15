@@ -7,6 +7,7 @@ import static com.squadpulse.scrapingintegration.ScrapeRunStatusService.teamLock
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.redis.testcontainers.RedisContainer;
@@ -14,6 +15,7 @@ import com.squadpulse.auth.ClubFootballMappings;
 import com.squadpulse.auth.FootballOrgIlIds;
 import com.squadpulse.common.CapturedLogs;
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.match.KnownGames;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.Outcome;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.State;
 import java.net.ServerSocket;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -60,6 +63,7 @@ class ScrapeTriggerServiceIntegrationTest {
   private final FakeScraper scraper = new FakeScraper();
   private final ClubContext clubContext = new ClubContext();
   private final ClubFootballMappings mappings = mock(ClubFootballMappings.class);
+  private final KnownGames knownGames = mock(KnownGames.class);
   private final CapturedLogs logs = new CapturedLogs();
 
   @BeforeAll
@@ -154,7 +158,10 @@ class ScrapeTriggerServiceIntegrationTest {
         .containsEntry("state", "RUNNING")
         .containsEntry("source", "USER")
         .containsEntry("standings", "1")
-        .containsEntry("playerStats", "1");
+        .containsEntry("playerStats", "1")
+        .containsEntry("gameDetails", "0");
+    // KAN-79: game details aren't requested yet, so the known games aren't even read.
+    verifyNoInteractions(knownGames);
     assertThat(redis.getExpire(runKey(request.runId())))
         .isBetween(Duration.ofDays(7).toSeconds() - 5, Duration.ofDays(7).toSeconds());
     assertThat(redis.getExpire(currentKey(CLUB)))
@@ -192,6 +199,52 @@ class ScrapeTriggerServiceIntegrationTest {
     assertThat(request.body().get("standings").booleanValue()).isFalse();
     assertThat(redis.opsForValue().get(leagueLockKey(IDS))).isEqualTo("another-clubs-run");
     assertThat(redis.opsForHash().entries(runKey(request.runId()))).containsEntry("standings", "0");
+  }
+
+  // --- game details (KAN-79), exercised with the flag true -----------------------------------
+
+  @Test
+  void upToTwoHundredKnownGamesAreSentAndMoreRequestNoGameDetailsAtAll() {
+    ScrapeTriggerService service = service(scraper.url(), TOKEN);
+    List<Integer> twoHundred = IntStream.rangeClosed(1, 200).boxed().toList();
+    when(knownGames.knownGameIds(IDS.teamId(), IDS.seasonId())).thenReturn(twoHundred);
+
+    assertThat(service.gameDetailsRequest(true, IDS))
+        .isEqualTo(new ScrapeTriggerService.GameDetailsRequest(true, twoHundred));
+    logs.assertNoWarningsOrAbove();
+
+    when(knownGames.knownGameIds(IDS.teamId(), IDS.seasonId()))
+        .thenReturn(IntStream.rangeClosed(1, 201).boxed().toList());
+
+    assertThat(service.gameDetailsRequest(true, IDS))
+        .isEqualTo(ScrapeTriggerService.GameDetailsRequest.NONE);
+    assertThat(logs.warningsOrAbove()).hasSize(1);
+    assertThat(logs.warningsOrAbove().getFirst().getFormattedMessage())
+        .isEqualTo(
+            "Team 7617 season 28 has 201 known games, more than the 200 a trigger can list: game"
+                + " details not requested");
+  }
+
+  /** The longest body the trigger can send (200 ten-digit ids) fits the scraper's 4 KB. */
+  @Test
+  void theLongestKnownGamesListFitsTheScrapersBodyLimit() {
+    List<Integer> longest =
+        IntStream.range(0, 200).map(i -> Integer.MAX_VALUE - i).boxed().toList();
+    byte[] body =
+        JsonMapper.builder()
+            .build()
+            .writeValueAsBytes(
+                new ScraperClient.TriggerRequest(
+                    UUID.randomUUID().toString(),
+                    Integer.MAX_VALUE,
+                    Integer.MAX_VALUE,
+                    Integer.MAX_VALUE,
+                    true,
+                    true,
+                    true,
+                    true,
+                    longest));
+    assertThat(body.length).isLessThanOrEqualTo(4096);
   }
 
   // --- the scraper unavailable ---------------------------------------------------------------
@@ -459,7 +512,8 @@ class ScrapeTriggerServiceIntegrationTest {
         template,
         properties,
         new ScraperClient(properties, JsonMapper.builder().build()),
-        statusService);
+        statusService,
+        knownGames);
   }
 
   private static ScraperProperties properties(String url, String token) {

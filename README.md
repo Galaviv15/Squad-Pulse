@@ -230,12 +230,13 @@ The club's league data, scraped from football.org.il (KAN-66). Which team, leagu
 
 | Endpoint | Access | What it does |
 |---|---|---|
-| `GET /matches/fixtures` | `VIEW_ONLY` | `{ "state", "lastUpdatedAt", "teamName", "mappingProblem", "games": [ { "date", "kickoffTime", "ownSide", "opponentName", "venue", "ownScore", "opponentScore", "result" } ] }` |
+| `GET /matches/fixtures` | `VIEW_ONLY` | `{ "state", "lastUpdatedAt", "teamName", "mappingProblem", "games": [ { "date", "kickoffTime", "ownSide", "opponentName", "venue", "ownScore", "opponentScore", "result", "detailsId", "detailsState" } ] }` |
 | `GET /matches/league-table` | `VIEW_ONLY` | `{ "state", "lastUpdatedAt", "round", "mappingProblem", "rows": [ { "position", "teamName", "played", "won", "drawn", "lost", "goalsFor", "goalsAgainst", "goalDifference", "points", "ownTeam" } ] }` |
 
 - `state`: `NOT_MAPPED` (the club has no mapping: a normal `200`, with empty data), `NO_DATA` (mapped, but nothing scraped yet for the current mapping) or `OK`.
 - `lastUpdatedAt`: when the shown data was scraped (`null` without data). Show it as "last updated at": a failed scrape keeps the last good data.
 - Fixtures: league games only, from our team's side (`ownSide` `HOME` / `AWAY`), sorted by date, then kickoff time, with an unset time last within its day. `date` (`yyyy-MM-dd`) and `kickoffTime` (`HH:mm`) are Israel local time. `kickoffTime` is `null` while not set yet; `venue` is `null` when the site shows none; `ownScore`, `opponentScore` and `result` (`WIN` / `DRAW` / `LOSS`) are `null` until played.
+- `detailsId` / `detailsState` (KAN-79): whether the game's details (see below) are there. `detailsState` is `AVAILABLE` (stored; `detailsId` is the id for `GET /matches/games/{id}`), `UNAVAILABLE` (the scraper failed on the game page 3 times; it's tried again 3 days after the last failure, and shows as `PENDING` from then), `PENDING` (played, not fetched yet) or `null` for a game not played yet. `detailsId` is `null` unless `AVAILABLE`.
 - League table: by position. `goalDifference` is derived (for − against); `points` are as published (deductions possible). Our row has `"ownTeam": true`. The table is shared by every club in the league.
 - `mappingProblem`: `TEAM_NOT_IN_STANDINGS` when the league's table doesn't contain the club's configured team, so the mapping is probably wrong; otherwise `null`.
 - After the season (or league, or team) in the mapping changes, both answer `NO_DATA` until the new season is scraped. The old data stays in the database but is never shown.
@@ -251,7 +252,7 @@ Both answer `{ "outcome", "state", "failureReason", "startedAt", "finishedAt", "
 
 - `outcome` (`POST` only, `null` on `GET`): `STARTED` (the scraper accepted it), `ALREADY_RUNNING` (a run of this club is queued or running), `COOLDOWN` (the team was scraped too recently; see `nextRefreshAt`), `NOT_MAPPED` (no mapping; nothing happened) or `SCRAPER_UNAVAILABLE` (the scraper isn't configured, unreachable or refused it; nothing is locked, try again). These are states to show, not errors.
 - `state`: the club's latest run — `NOT_MAPPED`, `IDLE` (no run yet, or the mapping changed since), `RUNNING`, `SUCCEEDED` or `FAILED`. `SCRAPER_UNAVAILABLE` leaves the previous run's state as it was.
-- `failureReason` (only with `FAILED`): `SOURCE_BLOCKED`, `SOURCE_TIMEOUT`, `SOURCE_ERROR`, `PARSE_ERROR` (the scraper's reason for the first failed part: fixtures, then standings, then player statistics), `REJECTED` (the backend refused what was scraped) or `NO_RESULT` (no result within the run timeout, or a requested part missing). A failed run still keeps the cooldown: the site was asked.
+- `failureReason` (only with `FAILED`): `SOURCE_BLOCKED`, `SOURCE_TIMEOUT`, `SOURCE_ERROR`, `PARSE_ERROR` (the scraper's reason for the first failed part: fixtures, then standings, then player statistics, then game details — a single game the scraper couldn't read never fails a run), `REJECTED` (the backend refused what was scraped) or `NO_RESULT` (no result within the run timeout, or a requested part missing). A failed run still keeps the cooldown: the site was asked.
 - `startedAt` / `finishedAt`: when the run started, and when the backend recorded its end (result received, or timed out); `null` when not applicable. `nextRefreshAt`: when a `POST` may next start a scrape, `null` if it may now.
 - No response contains an id, the scraper's URL or the scraper's error text. A club whose league another club just refreshed gets its fixtures scraped without the shared table, and can't tell.
 - Tuning: `squadpulse.scraper.refresh-cooldown` (default `10m`, how long the per-team and per-league locks hold once the scraper accepted a trigger) and `squadpulse.scraper.run-timeout` (default `10m`, must not exceed the cooldown, or the backend refuses to start).
@@ -270,6 +271,18 @@ Both answer `{ "outcome", "state", "failureReason", "startedAt", "finishedAt", "
 - `id` is the backend's own opaque id for the scraped player, stable for as long as they stay in the table: no football.org.il id (player, team, league or season) is ever in a response. Each club has its own ids, even two clubs mapped to the same team.
 - `linkedPlayer`: `{ "id", "fullName", "active" }` of the club's player it's linked to, or `null`. At most one link per scraped player and per club player. A link outlives the scraped player's absence from a scrape (it shows again when they return) and a season change; a link whose player no longer exists counts as no link.
 - `suggestedPlayer`: same shape, only while not linked: a likely match by name (word order, punctuation look-alikes and spacing ignored), offered only when it's unambiguous on both sides. A suggestion only; nothing links by itself.
+
+**Game details (KAN-79).** One played game's details from its football.org.il game page, **our side only** — the opponent appears only by name and score; its players are never stored or shown. The data arrives through the ingest's `gameDetails` part, which no refresh requests yet (the scraper side is KAN-80), so today no game has details and every played game is `PENDING`.
+
+| Endpoint | Access | What it does |
+|---|---|---|
+| `GET /matches/games/{id}` | `VIEW_ONLY` | `{ "id", "date", "kickoffTime", "competition", "round", "ownSide", "opponentName", "ownScore", "opponentScore", "result", "lastUpdatedAt", "players": [ { "name", "linkedPlayer", "shirtNumber", "role", "goalkeeper", "captain", "events": [ { "kind", "minute" } ] } ] }`. `404` if `{id}` isn't one of the club's game details for its **current** mapping (another club's, an earlier season's, or the club isn't mapped) |
+
+- `id`: the backend's own opaque id, from the fixtures' `detailsId`, kept when the game's details are re-scraped. No football.org.il id (game, player, team, league or season) is ever in a response; each club has its own ids.
+- `date` / `kickoffTime` as in the fixtures; `competition` and `round` from the page's heading (e.g. `ליגה א' דרום`, `6`); `result` from our side. `lastUpdatedAt`: when the page was scraped.
+- `players`: starters, then substitutes who came on (`role` `SUBSTITUTE`), then unused players (`UNUSED`); within a role, in the page's order. `name` as the site shows it (**first name first**), `null` when the site masks it. `shirtNumber` is the number worn in **this** game (`null` if missing) — never the squad's jersey number, which this never changes. `linkedPlayer`: `{ "id", "fullName", "active" }` of the club's player linked to this scraped player through the player statistics' links (above), or `null` (a link to a deleted player counts as none).
+- `events`: `kind` `GOAL` / `YELLOW` / `SECOND_YELLOW` / `RED` / `SUB_ON` / `SUB_OFF`, sorted by `minute`; `minute` as the site shows it (`93`, never `90+3`), `null` when unknown (last). No minutes played per player: the site has none.
+- Nothing is checked against counts (11 starters, a goalkeeper, goals against the score, subs on against subs off): real pages break each of them.
 
 How the data gets there: [docs/scraper-backend-contract.md](docs/scraper-backend-contract.md).
 

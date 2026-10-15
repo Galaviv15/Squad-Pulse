@@ -60,6 +60,17 @@ final class ScrapePayloads {
       Map<String, Object> fixtures,
       Map<String, Object> standings,
       Map<String, Object> playerStats) {
+    return request(teamId, leagueId, seasonId, fixtures, standings, playerStats, null);
+  }
+
+  static Map<String, Object> request(
+      int teamId,
+      int leagueId,
+      int seasonId,
+      Map<String, Object> fixtures,
+      Map<String, Object> standings,
+      Map<String, Object> playerStats,
+      Map<String, Object> gameDetails) {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("runId", "run-1");
     request.put("teamId", teamId);
@@ -74,7 +85,191 @@ final class ScrapePayloads {
     if (playerStats != null) {
       request.put("playerStats", playerStats);
     }
+    if (gameDetails != null) {
+      request.put("gameDetails", gameDetails);
+    }
     return request;
+  }
+
+  // --- game details (KAN-79): made-up names and ids, first name first like the game page --------
+
+  /** Sderot's 1-4 loss at Tira (fixtures' first game). */
+  static final int TIRA_GAME = 1122601;
+
+  /** Sderot's 2-1 home win over Kiryat Malachi (fixtures' second game). */
+  static final int MALACHI_GAME = 1122602;
+
+  /** Sderot's 1-1 draw at Nir Ram (fixtures' third game). */
+  static final int NIR_RAM_GAME = 1122603;
+
+  /** Our players in the game pages, first name first; ids distinct from the stats' 9000NN. */
+  static final int GK_ID = 920001;
+
+  static final int SCORER_ID = 920002;
+  static final int MASKED_ID = 920003;
+  static final int SUB_ID = 920004;
+  static final int BENCH_ID = 920005;
+  static final String GK_NAME = "עומר גבאי";
+  static final String SCORER_NAME = "נועם אזולאי";
+  static final String SUB_NAME = "איתי ברק";
+  static final String BENCH_NAME = "רועי שלום";
+
+  /** Only the game details, OK, for Sderot. */
+  static Map<String, Object> gameDetailsOnly(Map<String, Object> part) {
+    return request(SDEROT, LEAGUE, SEASON, null, null, null, part);
+  }
+
+  @SafeVarargs
+  static Map<String, Object> gameDetailsWith(
+      Instant fetchedAt, List<Map<String, Object>> failures, Map<String, Object>... games) {
+    Map<String, Object> part = new LinkedHashMap<>();
+    part.put("status", "OK");
+    part.put("fetchedAt", fetchedAt.toString());
+    part.put("games", new ArrayList<>(Arrays.asList(games)));
+    part.put("failures", new ArrayList<>(failures));
+    return part;
+  }
+
+  /** Two games, no failures. */
+  static Map<String, Object> gameDetails(Instant fetchedAt) {
+    return gameDetailsWith(fetchedAt, List.of(), tiraGame(), malachiGame());
+  }
+
+  /**
+   * Away at Tira, lost 1-4, 10 starters (accepted). The captain is the goalkeeper; the scorer also
+   * got a straight red; one starter's name is masked; minutes 93 and 98 and an unknown one; a
+   * one-player bench, booked though unused.
+   */
+  static Map<String, Object> tiraGame() {
+    List<Map<String, Object>> players = new ArrayList<>();
+    players.add(appearance(GK_ID, GK_NAME, 1, "STARTER", true, true, event("YELLOW", 98)));
+    players.add(
+        appearance(
+            SCORER_ID,
+            SCORER_NAME,
+            9,
+            "STARTER",
+            false,
+            false,
+            event("RED", 40),
+            event("GOAL", 38)));
+    players.add(appearance(MASKED_ID, null, 4, "STARTER", false, false, event("SUB_OFF", 57)));
+    for (int i = 0; i < 7; i++) {
+      players.add(appearance(920100 + i, "שחקן " + (i + 1), 10 + i, "STARTER", false, false));
+    }
+    players.add(
+        appearance(
+            SUB_ID,
+            SUB_NAME,
+            22,
+            "SUBSTITUTE",
+            false,
+            false,
+            event("SUB_ON", 57),
+            event("YELLOW", null),
+            event("SUB_OFF", 93)));
+    players.add(appearance(BENCH_ID, BENCH_NAME, 30, "UNUSED", false, false, event("YELLOW", 88)));
+    return detailsGame(
+        TIRA_GAME, "2026-09-05", "20:00", 1, "AWAY", TIRA_NAME, SDEROT_NAME, 4, 1, players);
+  }
+
+  /** At home to Kiryat Malachi, won 2-1: two goals by one player (91, 97), no goalkeeper sent. */
+  static Map<String, Object> malachiGame() {
+    List<Map<String, Object>> players = new ArrayList<>();
+    players.add(
+        appearance(
+            SCORER_ID,
+            SCORER_NAME,
+            9,
+            "STARTER",
+            false,
+            true,
+            event("GOAL", 97),
+            event("GOAL", 91)));
+    players.add(appearance(SUB_ID, SUB_NAME, 14, "SUBSTITUTE", false, false, event("SUB_ON", 60)));
+    return detailsGame(
+        MALACHI_GAME,
+        "2026-09-12",
+        "19:30",
+        2,
+        "HOME",
+        SDEROT_NAME,
+        KIRYAT_MALACHI_NAME,
+        2,
+        1,
+        players);
+  }
+
+  static Map<String, Object> detailsGame(
+      int gameId,
+      String date,
+      String kickoffTime,
+      int round,
+      String ownSide,
+      String home,
+      String away,
+      int homeScore,
+      int awayScore,
+      List<Map<String, Object>> players) {
+    Map<String, Object> game = new LinkedHashMap<>();
+    game.put("gameId", gameId);
+    game.put("date", date);
+    game.put("kickoffTime", kickoffTime);
+    game.put("competition", "ליגה א' דרום");
+    game.put("round", round);
+    game.put("ownSide", ownSide);
+    game.put("homeTeamName", home);
+    game.put("awayTeamName", away);
+    game.put("homeScore", homeScore);
+    game.put("awayScore", awayScore);
+    game.put("players", players);
+    return game;
+  }
+
+  @SafeVarargs
+  static Map<String, Object> appearance(
+      int playerId,
+      String name,
+      Integer shirtNumber,
+      String role,
+      boolean goalkeeper,
+      boolean captain,
+      Map<String, Object>... events) {
+    Map<String, Object> appearance = new LinkedHashMap<>();
+    appearance.put("playerId", playerId);
+    appearance.put("name", name);
+    appearance.put("shirtNumber", shirtNumber);
+    appearance.put("role", role);
+    appearance.put("goalkeeper", goalkeeper);
+    appearance.put("captain", captain);
+    appearance.put("events", new ArrayList<>(Arrays.asList(events)));
+    return appearance;
+  }
+
+  static Map<String, Object> event(String kind, Integer minute) {
+    Map<String, Object> event = new LinkedHashMap<>();
+    event.put("kind", kind);
+    event.put("minute", minute);
+    return event;
+  }
+
+  static Map<String, Object> gameFailure(int gameId, String reason) {
+    Map<String, Object> failure = new LinkedHashMap<>();
+    failure.put("gameId", gameId);
+    failure.put("reason", reason);
+    failure.put("detail", "unknown event icon");
+    return failure;
+  }
+
+  @SuppressWarnings("unchecked")
+  static List<Map<String, Object>> detailsGames(Map<String, Object> request) {
+    return (List<Map<String, Object>>)
+        ((Map<String, Object>) request.get("gameDetails")).get("games");
+  }
+
+  @SuppressWarnings("unchecked")
+  static List<Map<String, Object>> detailsPlayers(Map<String, Object> game) {
+    return (List<Map<String, Object>>) game.get("players");
   }
 
   // --- player statistics (KAN-72): made-up names and ids, surname first like the site ----------

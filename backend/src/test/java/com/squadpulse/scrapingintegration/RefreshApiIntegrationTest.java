@@ -139,6 +139,8 @@ class RefreshApiIntegrationTest {
     mongoTemplate.getCollection("league_fixtures").deleteMany(new Document());
     mongoTemplate.getCollection("league_standings").deleteMany(new Document());
     mongoTemplate.getCollection("player_season_stats").deleteMany(new Document());
+    mongoTemplate.getCollection("game_details").deleteMany(new Document());
+    mongoTemplate.getCollection("game_detail_attempts").deleteMany(new Document());
     clubs.deleteAllClubs();
     redis.getConnectionFactory().getConnection().serverCommands().flushAll();
   }
@@ -462,12 +464,13 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
 
     statusService.recordResult(
-        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null),
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null),
         new ScrapeResultResponse(
             new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.STORED, null),
             new ScrapeResultResponse.PartOutcome(
                 ScrapeResultResponse.Outcome.REJECTED,
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
+            new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.NOT_SENT, null),
             new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.NOT_SENT, null),
             1,
             List.of()));
@@ -682,13 +685,14 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
 
     statusService.recordResult(
-        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null),
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null),
         new ScrapeResultResponse(
             outcome(ScrapeResultResponse.Outcome.STORED),
             outcome(ScrapeResultResponse.Outcome.STORED),
             new ScrapeResultResponse.PartOutcome(
                 ScrapeResultResponse.Outcome.REJECTED,
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
+            outcome(ScrapeResultResponse.Outcome.NOT_SENT),
             1,
             List.of()));
 
@@ -749,7 +753,133 @@ class RefreshApiIntegrationTest {
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
   }
 
+  // --- game details (KAN-79, defined but not requested yet) ----------------------------------
+
+  /** Today's trigger has exactly KAN-73's properties, and its run record says "not requested". */
+  @Test
+  void theTriggerDoesntAskForGameDetailsYet() throws Exception {
+    String runId = start(clubA);
+
+    assertThat(SCRAPER.received().getFirst().body().propertyNames())
+        .containsExactly(
+            "runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats");
+    assertThat(redis.opsForHash().get(runKey(runId), "gameDetails")).isEqualTo("0");
+  }
+
+  /** A run that requested game details: per-game failures never fail it, the part's do. */
+  @Test
+  void aRunThatRequestedGameDetailsSucceedsWithPerGameFailures() throws Exception {
+    String runId = startWithGameDetails();
+    Map<String, Object> result = allFour();
+    ScrapePayloads.part(result, "gameDetails")
+        .put("failures", List.of(ScrapePayloads.gameFailure(1122603, "PARSE_ERROR")));
+
+    ingest(withRunId(runId, result)).andExpect(jsonPath("$.gameDetails.outcome").value("STORED"));
+
+    statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+  }
+
+  @Test
+  void aFailedGameDetailsPartFailsARunThatRequestedIt() throws Exception {
+    String runId = startWithGameDetails();
+    Map<String, Object> result = allFour();
+    result.put("gameDetails", failed("PARSE_ERROR", null));
+
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("PARSE_ERROR"));
+  }
+
+  @Test
+  void requestedGameDetailsThatWerentSentFailTheRun() throws Exception {
+    String runId = startWithGameDetails();
+
+    ingest(withRunId(runId, allThree())).andExpect(status().isOk());
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("NO_RESULT"));
+  }
+
+  @Test
+  void aFixturesFailureIsReportedBeforeAGameDetailsFailure() throws Exception {
+    String runId = startWithGameDetails();
+    Map<String, Object> result = allFour();
+    result.put("fixtures", failed("SOURCE_ERROR", null));
+    result.put("gameDetails", failed("PARSE_ERROR", null));
+
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+    statusOf(clubA).andExpect(jsonPath("$.failureReason").value("SOURCE_ERROR"));
+  }
+
+  /** Through the real endpoint the part is rejected only with the fixtures; so on the hook. */
+  @Test
+  void rejectedGameDetailsFailARunThatRequestedThem() throws Exception {
+    String runId = startWithGameDetails();
+
+    statusService.recordResult(
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null),
+        new ScrapeResultResponse(
+            outcome(ScrapeResultResponse.Outcome.STORED),
+            outcome(ScrapeResultResponse.Outcome.STORED),
+            outcome(ScrapeResultResponse.Outcome.STORED),
+            new ScrapeResultResponse.PartOutcome(
+                ScrapeResultResponse.Outcome.REJECTED,
+                com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
+            1,
+            List.of()));
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("REJECTED"));
+  }
+
+  /**
+   * A run that didn't ask for game details (every run today, flag {@code "0"}), or whose record
+   * predates KAN-79 (no flag), is judged on the other parts, whether the part was sent or not.
+   */
+  @Test
+  void aRunThatDidntRequestGameDetailsIgnoresThem() throws Exception {
+    for (boolean oldRecord : new boolean[] {false, true}) {
+      for (boolean sent : new boolean[] {false, true}) {
+        redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+        String runId = start(clubA);
+        if (oldRecord) {
+          redis.opsForHash().delete(runKey(runId), "gameDetails");
+        }
+        Map<String, Object> result = allThree();
+        if (sent) {
+          result.put("gameDetails", failed("PARSE_ERROR", null));
+        }
+
+        ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+        statusOf(clubA)
+            .andExpect(jsonPath("$.state").value("SUCCEEDED"))
+            .andExpect(jsonPath("$.failureReason").isEmpty());
+      }
+    }
+  }
+
   // --- helpers -------------------------------------------------------------------------------
+
+  /** A started run whose record says game details were requested, as KAN-80's trigger will. */
+  private String startWithGameDetails() throws Exception {
+    String runId = start(clubA);
+    redis.opsForHash().put(runKey(runId), "gameDetails", "1");
+    return runId;
+  }
+
+  private static Map<String, Object> allFour() {
+    Map<String, Object> request = allThree();
+    request.put(
+        "gameDetails",
+        ScrapePayloads.gameDetailsWith(FETCHED_AT, List.of(), ScrapePayloads.tiraGame()));
+    return request;
+  }
 
   private static Map<String, Object> allThree() {
     return request(

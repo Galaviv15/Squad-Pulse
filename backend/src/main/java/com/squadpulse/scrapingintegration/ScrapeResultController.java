@@ -4,9 +4,11 @@ import com.squadpulse.common.BadRequestException;
 import com.squadpulse.match.IngestResult;
 import com.squadpulse.match.ScrapeIngestService;
 import com.squadpulse.match.ScrapedFixtures;
+import com.squadpulse.match.ScrapedGameDetails;
 import com.squadpulse.match.ScrapedPlayerStats;
 import com.squadpulse.match.ScrapedStandings;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.FixturesPart;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.GameDetailsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PartStatus;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PlayerStatsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.StandingsPart;
@@ -78,10 +80,14 @@ class ScrapeResultController {
     if (request.playerStats() != null && isAfter(request.playerStats().fetchedAt(), latest)) {
       throw new BadRequestException("playerStats.fetchedAt", "must not be in the future");
     }
+    if (request.gameDetails() != null && isAfter(request.gameDetails().fetchedAt(), latest)) {
+      throw new BadRequestException("gameDetails.fetchedAt", "must not be in the future");
+    }
 
     boolean fixturesFailed = reportFailure("fixtures", request, request.fixtures());
     boolean standingsFailed = reportFailure("standings", request, request.standings());
     boolean playerStatsFailed = reportFailure("playerStats", request, request.playerStats());
+    boolean gameDetailsFailed = reportFailure("gameDetails", request, request.gameDetails());
     IngestResult result =
         ingestService.ingest(
             request.teamId(),
@@ -89,13 +95,15 @@ class ScrapeResultController {
             request.seasonId(),
             fixturesFailed ? null : toFixtures(request.fixtures()),
             standingsFailed ? null : toStandings(request.standings()),
-            playerStatsFailed ? null : toPlayerStats(request.playerStats()));
+            playerStatsFailed ? null : toPlayerStats(request.playerStats()),
+            gameDetailsFailed ? null : toGameDetails(request.gameDetails()));
 
     ScrapeResultResponse response =
         new ScrapeResultResponse(
             fixturesFailed ? failureRecorded() : outcome(result.fixtures()),
             standingsFailed ? failureRecorded() : outcome(result.standings()),
             playerStatsFailed ? failureRecorded() : outcome(result.playerStats()),
+            gameDetailsFailed ? failureRecorded() : outcome(result.gameDetails()),
             result.clubsUpdated(),
             result.warnings().stream()
                 .map(warning -> new ScrapeResultResponse.Warning(warning.code(), warning.count()))
@@ -123,6 +131,10 @@ class ScrapeResultController {
         && playerStats.status() == PartStatus.FAILED) {
       reason = playerStats.reason();
       detail = playerStats.detail();
+    } else if (partBody instanceof GameDetailsPart gameDetails
+        && gameDetails.status() == PartStatus.FAILED) {
+      reason = gameDetails.reason();
+      detail = gameDetails.detail();
     } else {
       return false;
     }
@@ -204,6 +216,66 @@ class ScrapeResultController {
                         row.subbedOff(),
                         row.minutes()))
             .toList());
+  }
+
+  private static ScrapedGameDetails toGameDetails(GameDetailsPart part) {
+    if (part == null) {
+      return null;
+    }
+    return new ScrapedGameDetails(
+        part.fetchedAt(),
+        part.games().stream()
+            .map(
+                game ->
+                    new ScrapedGameDetails.Game(
+                        game.gameId(),
+                        game.date(),
+                        game.kickoffTime(),
+                        game.competition(),
+                        game.round(),
+                        game.ownSide(),
+                        game.homeTeamName(),
+                        game.awayTeamName(),
+                        game.homeScore(),
+                        game.awayScore(),
+                        game.players().stream()
+                            .map(
+                                player ->
+                                    new ScrapedGameDetails.Appearance(
+                                        player.playerId(),
+                                        player.name(),
+                                        player.shirtNumber(),
+                                        player.role(),
+                                        player.goalkeeper(),
+                                        player.captain(),
+                                        player.events().stream()
+                                            .map(
+                                                event ->
+                                                    new ScrapedGameDetails.Event(
+                                                        event.kind(), event.minute()))
+                                            .toList()))
+                            .toList()))
+            .toList(),
+        part.failures().stream()
+            .map(
+                failure ->
+                    new ScrapedGameDetails.Failure(
+                        failure.gameId(), toMatchReason(failure.reason()), failure.detail()))
+            .toList());
+  }
+
+  /**
+   * Exhaustive, with no {@code default}: a reason added to the contract's enum doesn't compile
+   * until {@code match} has it too ({@code FailureReasonMirrorTest} checks the other direction).
+   */
+  private static ScrapedGameDetails.FailureReason toMatchReason(
+      ScrapeResultRequest.FailureReason reason) {
+    return switch (reason) {
+      case SOURCE_BLOCKED -> ScrapedGameDetails.FailureReason.SOURCE_BLOCKED;
+      case TIMEOUT -> ScrapedGameDetails.FailureReason.TIMEOUT;
+      case SOURCE_ERROR -> ScrapedGameDetails.FailureReason.SOURCE_ERROR;
+      case PARSE_ERROR -> ScrapedGameDetails.FailureReason.PARSE_ERROR;
+    };
   }
 
   private static ScrapeResultResponse.PartOutcome failureRecorded() {

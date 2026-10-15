@@ -5,6 +5,7 @@ import com.squadpulse.scrapingintegration.RefreshStatusResponse.FailureReason;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.Outcome;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.State;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.FixturesPart;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.GameDetailsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PartStatus;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PlayerStatsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.StandingsPart;
@@ -31,9 +32,10 @@ import org.springframework.stereotype.Service;
  *
  * <pre>
  * scrape:run:{runId}               HASH    clubId, teamId, leagueId, seasonId - who and what it's for
- *                                          fixtures, standings, playerStats - the parts requested
- *                                            ("1" / "0"; playerStats absent in records written
- *                                            before KAN-72 = not requested)
+ *                                          fixtures, standings, playerStats, gameDetails - the
+ *                                            parts requested ("1" / "0"; playerStats absent in
+ *                                            records written before KAN-72, gameDetails before
+ *                                            KAN-79 = not requested)
  *                                          source    - USER / SCHEDULED
  *                                          state     - PENDING / RUNNING / SUCCEEDED / FAILED
  *                                          startedAt, finishedAt - epoch millis (backend clock)
@@ -130,6 +132,7 @@ class ScrapeRunStatusService {
       boolean fixtures,
       boolean standings,
       boolean playerStats,
+      boolean gameDetails,
       String state,
       String failureReason,
       Instant startedAt,
@@ -257,6 +260,7 @@ class ScrapeRunStatusService {
               "1".equals(string(hash, "fixtures")),
               "1".equals(string(hash, "standings")),
               "1".equals(string(hash, "playerStats")),
+              "1".equals(string(hash, "gameDetails")),
               string(hash, "state"),
               string(hash, "failureReason"),
               Instant.ofEpochMilli(Long.parseLong(string(hash, "startedAt"))),
@@ -352,8 +356,10 @@ class ScrapeRunStatusService {
 
   /**
    * The first failed part the run requested, in the order fixtures, standings, player statistics
-   * (KAN-72); {@code null} if none. A part the run didn't request is ignored, whatever the result
-   * says about it: a run succeeds only if every part it asked for was stored or already up to date.
+   * (KAN-72), game details (KAN-79); {@code null} if none. A part the run didn't request is
+   * ignored, whatever the result says about it: a run succeeds only if every part it asked for was
+   * stored or already up to date. The game details' per-game {@code failures} never fail a run (the
+   * part is {@code STORED}): one broken page must not turn every refresh red.
    */
   private static FailureReason firstFailure(
       Run run, ScrapeResultRequest request, ScrapeResultResponse response) {
@@ -372,7 +378,14 @@ class ScrapeRunStatusService {
       }
     }
     if (run.playerStats()) {
-      return partFailure(response.playerStats().outcome(), scraperReason(request.playerStats()));
+      FailureReason reason =
+          partFailure(response.playerStats().outcome(), scraperReason(request.playerStats()));
+      if (reason != null) {
+        return reason;
+      }
+    }
+    if (run.gameDetails()) {
+      return partFailure(response.gameDetails().outcome(), scraperReason(request.gameDetails()));
     }
     return null;
   }
@@ -403,6 +416,9 @@ class ScrapeRunStatusService {
     }
     if (part instanceof PlayerStatsPart playerStats && playerStats.status() == PartStatus.FAILED) {
       return playerStats.reason();
+    }
+    if (part instanceof GameDetailsPart gameDetails && gameDetails.status() == PartStatus.FAILED) {
+      return gameDetails.reason();
     }
     return null;
   }

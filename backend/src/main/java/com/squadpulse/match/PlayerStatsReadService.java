@@ -90,20 +90,36 @@ class PlayerStatsReadService {
         clubContext.requireClubId(), ids.teamId(), ids.seasonId());
   }
 
-  private List<PlayerStatsResponse.Row> rows(List<StoredPlayerStats> stored) {
-    Map<String, Player> players =
-        playerRepository.findAll().stream()
-            .collect(Collectors.toMap(Player::getId, Function.identity()));
-    // Links whose Player is gone (a delete that raced a link) count as no link.
+  /**
+   * The current club's linked players by {@code player_id}, for any scraped data keyed by it (the
+   * statistics, KAN-79's game details). A link whose {@code Player} is gone (a delete that raced a
+   * link) counts as no link.
+   */
+  Map<Integer, Player> linkedPlayers() {
+    return linkedPlayers(allPlayers());
+  }
+
+  private Map<String, Player> allPlayers() {
+    return playerRepository.findAll().stream()
+        .collect(Collectors.toMap(Player::getId, Function.identity()));
+  }
+
+  private Map<Integer, Player> linkedPlayers(Map<String, Player> players) {
     Map<Integer, Player> linked = new HashMap<>();
-    Set<String> linkedPlayerIds = new HashSet<>();
     for (PlayerStatsLink link : linkRepository.findAll()) {
       Player player = players.get(link.getPlayerId());
       if (player != null) {
         linked.put(link.getSourcePlayerId(), player);
-        linkedPlayerIds.add(player.getId());
       }
     }
+    return linked;
+  }
+
+  private List<PlayerStatsResponse.Row> rows(List<StoredPlayerStats> stored) {
+    Map<String, Player> players = allPlayers();
+    Map<Integer, Player> linked = linkedPlayers(players);
+    Set<String> linkedPlayerIds = new HashSet<>();
+    linked.values().forEach(player -> linkedPlayerIds.add(player.getId()));
 
     Map<String, String> unlinkedNames = new LinkedHashMap<>();
     stored.stream()

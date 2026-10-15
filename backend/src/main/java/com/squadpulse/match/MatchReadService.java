@@ -6,8 +6,10 @@ import com.squadpulse.common.ClubContext;
 import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 /**
@@ -16,6 +18,11 @@ import org.springframework.stereotype.Service;
  * ClubFootballMappings#currentClubMapping()}, by the clubId in {@link ClubContext}) — never from
  * the request. Snapshots stored for an earlier mapping (last season, another team or league) stay
  * in the database but are never shown.
+ *
+ * <p>Each played game of the fixtures carries whether its details (KAN-79) are there: joined by
+ * {@code game_id} against the club's {@link GameDetails} and given-up {@link GameDetailAttempts}
+ * for the same team and season, one query per collection per read. The {@code game_id} itself is
+ * never shown; the details' opaque id is.
  */
 @Service
 class MatchReadService {
@@ -29,16 +36,19 @@ class MatchReadService {
   private final ClubFootballMappings mappings;
   private final LeagueFixturesSnapshotRepository fixturesRepository;
   private final LeagueStandingsSnapshotRepository standingsRepository;
+  private final KnownGames knownGames;
   private final ClubContext clubContext;
 
   MatchReadService(
       ClubFootballMappings mappings,
       LeagueFixturesSnapshotRepository fixturesRepository,
       LeagueStandingsSnapshotRepository standingsRepository,
+      KnownGames knownGames,
       ClubContext clubContext) {
     this.mappings = mappings;
     this.fixturesRepository = fixturesRepository;
     this.standingsRepository = standingsRepository;
+    this.knownGames = knownGames;
     this.clubContext = clubContext;
   }
 
@@ -58,9 +68,12 @@ class MatchReadService {
       return new FixturesResponse(MatchDataState.NO_DATA, null, null, problem, List.of());
     }
     String ownName = snapshot.get().getTeamName();
+    // One query per collection, joined by game_id in memory (KAN-79).
+    Map<Integer, GameDetails> details = knownGames.stored(ids.teamId(), ids.seasonId());
+    Set<Integer> givenUp = knownGames.givenUp(ids.teamId(), ids.seasonId());
     List<FixturesResponse.Game> games =
         snapshot.get().getGames().stream()
-            .map(game -> fromOurSide(game, ownName))
+            .map(game -> fromOurSide(game, ownName, details, givenUp))
             .sorted(GAME_ORDER)
             .toList();
     return new FixturesResponse(
@@ -118,17 +131,22 @@ class MatchReadService {
         .orElse(null);
   }
 
-  private static FixturesResponse.Game fromOurSide(StoredGame game, String ownName) {
+  private static FixturesResponse.Game fromOurSide(
+      StoredGame game, String ownName, Map<Integer, GameDetails> details, Set<Integer> givenUp) {
     boolean home = game.homeTeamName().equals(ownName);
     Integer ownScore = home ? game.homeScore() : game.awayScore();
     Integer opponentScore = home ? game.awayScore() : game.homeScore();
-    FixturesResponse.Result result = null;
-    if (ownScore != null && opponentScore != null) {
-      int compared = Integer.compare(ownScore, opponentScore);
-      result =
-          compared > 0
-              ? FixturesResponse.Result.WIN
-              : compared == 0 ? FixturesResponse.Result.DRAW : FixturesResponse.Result.LOSS;
+    FixturesResponse.Result result = FixturesResponse.Result.of(ownScore, opponentScore);
+    GameDetails stored = game.gameId() == null ? null : details.get(game.gameId());
+    FixturesResponse.DetailsState detailsState;
+    if (stored != null) {
+      detailsState = FixturesResponse.DetailsState.AVAILABLE;
+    } else if (result == null) {
+      detailsState = null; // not played yet
+    } else if (game.gameId() != null && givenUp.contains(game.gameId())) {
+      detailsState = FixturesResponse.DetailsState.UNAVAILABLE;
+    } else {
+      detailsState = FixturesResponse.DetailsState.PENDING;
     }
     return new FixturesResponse.Game(
         game.localDate(),
@@ -138,6 +156,8 @@ class MatchReadService {
         game.venue(),
         ownScore,
         opponentScore,
-        result);
+        result,
+        stored == null ? null : stored.getId(),
+        detailsState);
   }
 }

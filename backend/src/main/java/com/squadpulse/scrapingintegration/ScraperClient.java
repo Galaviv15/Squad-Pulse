@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -41,6 +42,14 @@ class ScraperClient {
    * and {@code playerStats} (KAN-72) only when {@code true}. Since KAN-73 the scraper accepts that
    * property as optional (absent = {@code false}), so leaving a {@code false} out of the JSON is
    * harmless; {@link ScrapeTriggerService#REQUEST_PLAYER_STATS} is {@code true}.
+   *
+   * <p>{@code gameDetails} and {@code knownGameIds} (KAN-79) likewise only when {@code gameDetails}
+   * is {@code true} (and the list only when not empty). Today's scraper rejects either property as
+   * unknown, so {@link ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code false} and neither is
+   * ever in the body until KAN-80 teaches the scraper both.
+   *
+   * @param knownGameIds the games the scraper must not fetch (stored or given up); empty unless
+   *     {@code gameDetails}
    */
   record TriggerRequest(
       String runId,
@@ -49,7 +58,26 @@ class ScraperClient {
       int seasonId,
       boolean fixtures,
       boolean standings,
-      @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean playerStats) {}
+      @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean playerStats,
+      @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean gameDetails,
+      @JsonInclude(JsonInclude.Include.NON_EMPTY) List<Integer> knownGameIds) {
+
+    TriggerRequest {
+      knownGameIds = knownGameIds == null ? List.of() : List.copyOf(knownGameIds);
+    }
+
+    /** Without game details: what every trigger sends today. */
+    TriggerRequest(
+        String runId,
+        int teamId,
+        int leagueId,
+        int seasonId,
+        boolean fixtures,
+        boolean standings,
+        boolean playerStats) {
+      this(runId, teamId, leagueId, seasonId, fixtures, standings, playerStats, false, List.of());
+    }
+  }
 
   /** What the scraper answered. */
   sealed interface Answer {
