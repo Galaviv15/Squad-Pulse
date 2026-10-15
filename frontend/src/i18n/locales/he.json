@@ -304,6 +304,46 @@
         "REJECTED": "הנתונים שהתקבלו נדחו",
         "NO_RESULT": "לא התקבלה תוצאה"
       }
+    },
+    "details": {
+      "action": "פרטי משחק",
+      "actionContext": ": {{opponent}}, {{date}}",
+      "PENDING": "פרטי המשחק עוד לא נאספו. הם יתווספו באחד הרענונים הבאים.",
+      "UNAVAILABLE": "פרטי המשחק לא זמינים כרגע."
+    },
+    "game": {
+      "title": "פרטי משחק",
+      "back": "חזרה למשחקים",
+      "heading": "{{competition}} · מחזור {{round}}",
+      "scopeNote": "נתוני משחק זה בלבד, במסגרת {{competition}}. מסך הסטטיסטיקה סופר את כל המסגרות יחד.",
+      "loadError": "לא הצלחנו לטעון את פרטי המשחק.",
+      "notFound": "המשחק הזה לא נמצא.",
+      "notFoundHint": "ייתכן שהקישור ישן או שהנתונים עודכנו מאז.",
+      "lineup": "ההרכב שלנו",
+      "groupHeading": "{{label}} ({{count}})",
+      "role": {
+        "STARTER": "הרכב פותח",
+        "SUBSTITUTE": "נכנסו מהספסל",
+        "UNUSED": "לא שותפו"
+      },
+      "noLineup": "אין הרכב שמור למשחק הזה.",
+      "shirtNumber": "מספר חולצה {{number}}",
+      "shirtNumberUnknown": "מספר חולצה לא ידוע",
+      "nameHidden": "שם לא מוצג באתר",
+      "captain": "קפטן",
+      "events": "אירועים",
+      "event": {
+        "GOAL": "שער",
+        "YELLOW": "כרטיס צהוב",
+        "SECOND_YELLOW": "כרטיס צהוב שני",
+        "RED": "כרטיס אדום",
+        "SUB_ON": "נכנס",
+        "SUB_OFF": "יצא"
+      },
+      "eventAt": "{{event}} בדקה {{minute}}",
+      "eventNoMinute": "{{event}}, דקה לא ידועה",
+      "legend": "מקרא",
+      "minutesNote": "הדקות כפי שבאתר ההתאחדות."
     }
   },
   "stats": {

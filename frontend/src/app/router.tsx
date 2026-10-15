@@ -104,6 +104,16 @@ export const routes: RouteObject[] = [
                     }),
                     handle: { titleKey: "nav.matches" } satisfies RouteHandle,
                   },
+                  // KAN-81: one played game's details, our side only. `:detailsId` is our opaque id
+                  // (a fixture's detailsId), never a football.org.il one. Below "matches", so the
+                  // sidebar's "משחקים" (a NavLink without `end`) stays the current item.
+                  {
+                    path: "matches/games/:detailsId",
+                    lazy: async () => ({
+                      Component: (await import("@/pages/matches/GamePage")).GamePage,
+                    }),
+                    handle: { titleKey: "matches.game.title" } satisfies RouteHandle,
+                  },
                   // KAN-74: the scraped player statistics and their links to the squad. Its data is
                   // under /matches/player-stats, which the /matches prefix already covers.
                   {

@@ -8,21 +8,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { PlayerStatsRow } from "@/lib/matches/playerStats";
+import { CardMark } from "@/components/matches/CardMark";
 import { cn } from "@/lib/utils";
 import { SquadPlayerCell, type SquadPlayerCellProps } from "./SquadPlayerCell";
-
-/** A small football card, decorative: the header's text carries the meaning. */
-function CardMark({ color }: { color: "yellow" | "red" }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-block h-3.5 w-2.5 shrink-0 rounded-[2px]",
-        color === "yellow" ? "bg-card-yellow" : "bg-card-red",
-      )}
-    />
-  );
-}
 
 /** The site's name: sticky on the start side inside the scroll box on a phone (below md). */
 const STICKY_START = "max-md:sticky max-md:start-0 max-md:z-10";
