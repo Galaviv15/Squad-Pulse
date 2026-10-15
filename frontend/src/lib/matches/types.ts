@@ -2,8 +2,11 @@
  * The matches API's types, mirroring the backend records exactly (match.FixturesResponse,
  * match.LeagueTableResponse, scrapingintegration.RefreshStatusResponse). Instants are ISO-8601
  * strings in UTC ("2026-10-12T17:30:00Z"); `date` is an Israel-local yyyy-MM-dd and `kickoffTime`
- * an Israel-local HH:mm. Neither response carries a team, league, season or game id.
+ * an Israel-local HH:mm. No response carries a team, league, season or game id: a game's
+ * `detailsId` (KAN-79) is our own opaque id.
  */
+
+import type { StatsPlayerRef } from "./playerStats";
 
 /** match.MatchDataState: whether a read has data to show. */
 export const MATCH_DATA_STATES = ["NOT_MAPPED", "NO_DATA", "OK"] as const;
@@ -21,6 +24,10 @@ export type Side = (typeof SIDES)[number];
 export const RESULTS = ["WIN", "DRAW", "LOSS"] as const;
 export type Result = (typeof RESULTS)[number];
 
+/** match.FixturesResponse.DetailsState: whether a played game's details (KAN-79) can be shown. */
+export const DETAILS_STATES = ["AVAILABLE", "UNAVAILABLE", "PENDING"] as const;
+export type DetailsState = (typeof DETAILS_STATES)[number];
+
 /** match.FixturesResponse.Game. */
 export interface Game {
   /** Israel-local yyyy-MM-dd. */
@@ -35,6 +42,10 @@ export interface Game {
   ownScore: number | null;
   opponentScore: number | null;
   result: Result | null;
+  /** Our opaque id of the game's details (GET /matches/games/{id}); null unless AVAILABLE. */
+  detailsId: string | null;
+  /** null for a game not played yet. */
+  detailsState: DetailsState | null;
 }
 
 /** match.FixturesResponse: GET /matches/fixtures. */
@@ -110,4 +121,67 @@ export interface RefreshStatus {
   finishedAt: string | null;
   /** When a POST may next start a scrape; null if it may now. */
   nextRefreshAt: string | null;
+}
+
+/** match.ScrapedGameDetails.Role: how one of our players took part in a game. */
+export const APPEARANCE_ROLES = ["STARTER", "SUBSTITUTE", "UNUSED"] as const;
+export type AppearanceRole = (typeof APPEARANCE_ROLES)[number];
+
+/** match.ScrapedGameDetails.EventKind. A second yellow is one event (no separate red). */
+export const GAME_EVENT_KINDS = [
+  "GOAL",
+  "YELLOW",
+  "SECOND_YELLOW",
+  "RED",
+  "SUB_ON",
+  "SUB_OFF",
+] as const;
+export type GameEventKind = (typeof GAME_EVENT_KINDS)[number];
+
+/** match.GameDetailsResponse.Event. */
+export interface GameEvent {
+  kind: GameEventKind;
+  /** As the site shows it (93, never 90+3); null if unknown. */
+  minute: number | null;
+}
+
+/** match.GameDetailsResponse.Appearance: one of our players in the game. */
+export interface GameAppearance {
+  /** As the site shows it; null if the site masks it. */
+  name: string | null;
+  /** The club's player this one is linked to (KAN-72 links); null if none (or deleted). */
+  linkedPlayer: StatsPlayerRef | null;
+  /** Worn in this game, never the squad's jersey number; null if missing. */
+  shirtNumber: number | null;
+  role: AppearanceRole;
+  goalkeeper: boolean;
+  captain: boolean;
+  /** By minute, an unknown minute last. */
+  events: GameEvent[];
+}
+
+/**
+ * match.GameDetailsResponse: GET /matches/games/{id} (KAN-79), one played game from our team's
+ * point of view, our side only: the opponent is a name and a score. Our team's name isn't in it
+ * (read it from the fixtures). Named apart from components/matches/GameRow's GameDetails.
+ */
+export interface PlayedGameDetails {
+  /** Our opaque id, the same as the fixture's detailsId. */
+  id: string;
+  /** Israel-local yyyy-MM-dd. */
+  date: string;
+  /** Israel-local HH:mm; null if the site gave none. */
+  kickoffTime: string | null;
+  /** As the page's heading shows it, e.g. "ליגה א' דרום". */
+  competition: string;
+  round: number;
+  ownSide: Side;
+  opponentName: string;
+  ownScore: number;
+  opponentScore: number;
+  result: Result;
+  /** When the scraper fetched the page. */
+  lastUpdatedAt: string;
+  /** Starters, then substitutes who came on, then unused; within a role as sent. */
+  players: GameAppearance[];
 }
