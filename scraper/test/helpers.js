@@ -46,15 +46,16 @@ export function fakeClock(start = Date.parse("2026-10-11T09:00:00Z")) {
 }
 
 /**
- * A source whose answers are scripted per path, in order. An answer is
+ * A source whose answers are scripted per path, in order; a key with the query too (e.g.
+ * `/leagues/games/game/?game_id=1`) wins over the bare path. An answer is
  * {status, body, ms?} | {timeout: true} | {network: true}. Records every request.
  */
 export function fakeSource(clock, script, origin = "https://www.football.org.il/") {
   const requests = [];
   const answer = (kind, url, timeoutMs) => {
-    const path = new URL(url).pathname;
+    const { pathname: path, search } = new URL(url);
     requests.push({ kind, url, path, timeoutMs });
-    const queue = script[path];
+    const queue = script[`${path}${search}`] ?? script[path];
     if (!queue || queue.length === 0) throw new Error(`unexpected request ${path}`);
     const next = queue.length > 1 ? queue.shift() : queue[0];
     if (next.timeout) {

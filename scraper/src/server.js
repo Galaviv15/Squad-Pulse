@@ -8,8 +8,11 @@ import { hasControlCharacter } from "./text.js";
 export const MAX_BODY_BYTES = 4096;
 const JAVA_INT_MAX = 2147483647;
 const REQUIRED = ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings"];
-// Optional, absent = false: the backend leaves a false playerStats out of the body (KAN-72/73).
-const OPTIONAL = ["playerStats"];
+// Optional, absent = false / []: the backend leaves a false part and an empty list out of the body
+// (KAN-72/73, KAN-79/80).
+const OPTIONAL = ["playerStats", "gameDetails", "knownGameIds"];
+const PARTS = ["fixtures", "standings", "playerStats", "gameDetails"];
+export const MAX_KNOWN_GAME_IDS = 200;
 
 class BadRequest extends Error {}
 
@@ -24,9 +27,11 @@ export function tokenMatches(authorization, expectedDigest) {
 
 /**
  * Validates a trigger body. → a job, or throws BadRequest with a fixed message. The six REQUIRED
- * properties must be present; `playerStats` is optional (absent = `false`), but a boolean if
- * present. Any other property is rejected. At least one of the three parts must be `true`. The
- * job always has `playerStats` as a boolean.
+ * properties must be present; `playerStats` and `gameDetails` are optional (absent = `false`), but
+ * booleans if present. `knownGameIds` is optional (absent = `[]`) and allowed only with
+ * `gameDetails: true`: at most 200 distinct integers in 1..int max. Any other property is
+ * rejected. At least one of the four parts must be `true`. The job always has `playerStats` and
+ * `gameDetails` as booleans and `knownGameIds` as an array.
  */
 export function parseTrigger(body) {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -56,14 +61,39 @@ export function parseTrigger(body) {
       throw new BadRequest(`${key}: must be an integer in 1..${JAVA_INT_MAX}`);
     }
   }
-  const job = { ...body, playerStats: "playerStats" in body ? body.playerStats : false };
-  for (const key of ["fixtures", "standings", "playerStats"]) {
+  const job = {
+    ...body,
+    playerStats: "playerStats" in body ? body.playerStats : false,
+    gameDetails: "gameDetails" in body ? body.gameDetails : false,
+    knownGameIds: "knownGameIds" in body ? body.knownGameIds : [],
+  };
+  for (const key of PARTS) {
     if (typeof job[key] !== "boolean") throw new BadRequest(`${key}: must be a boolean`);
   }
-  if (!job.fixtures && !job.standings && !job.playerStats) {
-    throw new BadRequest("nothing to scrape: fixtures, standings and playerStats are all false");
+  if ("knownGameIds" in body && !job.gameDetails) {
+    throw new BadRequest("knownGameIds: only allowed with gameDetails true");
+  }
+  validateKnownGameIds(job.knownGameIds);
+  if (!PARTS.some((key) => job[key])) {
+    throw new BadRequest(
+      "nothing to scrape: fixtures, standings, playerStats and gameDetails are all false",
+    );
   }
   return job;
+}
+
+function validateKnownGameIds(ids) {
+  if (!Array.isArray(ids) || ids.length > MAX_KNOWN_GAME_IDS) {
+    throw new BadRequest(`knownGameIds: must be an array of at most ${MAX_KNOWN_GAME_IDS} ids`);
+  }
+  for (const id of ids) {
+    if (!Number.isInteger(id) || id < 1 || id > JAVA_INT_MAX) {
+      throw new BadRequest(`knownGameIds: each id must be an integer in 1..${JAVA_INT_MAX}`);
+    }
+  }
+  if (new Set(ids).size !== ids.length) {
+    throw new BadRequest("knownGameIds: must not contain duplicates");
+  }
 }
 
 export function createTriggerServer({ token, queue, log }) {
@@ -144,6 +174,8 @@ export function createTriggerServer({ token, queue, log }) {
             fixtures: job.fixtures,
             standings: job.standings,
             playerStats: job.playerStats,
+            gameDetails: job.gameDetails,
+            knownGameIds: job.knownGameIds.length,
             ...(result.status === "ALREADY_QUEUED" ? { existingRun: result.runId ?? "-" } : {}),
           },
         );

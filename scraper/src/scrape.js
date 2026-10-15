@@ -1,17 +1,21 @@
-// One scrape: at most 4 requests (+ one retry), paced, capped at 90 s, stopped at once on a block.
+// One scrape: at most 6 requests (+ one retry), paced, capped at 90 s, stopped at once on a block.
 // Builds the result payload for the backend (docs/scraper-backend-contract.md).
 //
 // Order: team games page → player statistics (an in-page fetch from that page) → league page →
-// LeagueTable (KAN-70 findings section 3). The team games page is loaded if `fixtures` or
-// `playerStats` is requested; the stats are fetched only from a page that loaded, never by
-// navigating again.
+// LeagueTable (KAN-70 findings section 3) → up to 2 game pages (KAN-75 findings section 6: last, so
+// a slow site loses them to the cap before anything else). The team games page is loaded if
+// `fixtures`, `playerStats` or `gameDetails` is requested and parsed once; the stats are fetched
+// only from a page that loaded, never by navigating again, and the game pages are picked from its
+// rows only.
 
 import { isBlocked } from "./block.js";
 import { realClock } from "./clock.js";
-import { enforceContract, failedPart } from "./contract.js";
+import { enforceContract, failedPart, gameFailure } from "./contract.js";
 import { parseGamesPage } from "./parseFixtures.js";
+import { parseGameDetails } from "./parseGameDetails.js";
 import { parsePlayerStats } from "./parsePlayerStats.js";
 import { parseLeaguePage, parseLeagueTable } from "./parseStandings.js";
+import { selectGames } from "./selectGames.js";
 import { SourceNetworkError, SourceTimeoutError } from "./sourceErrors.js";
 import { ParseError } from "./text.js";
 
@@ -22,13 +26,16 @@ export const SCRAPE_DEFAULTS = {
   retryDelayMs: 10_000,
   navigationTimeoutMs: 30_000,
   fetchTimeoutMs: 20_000,
+  // A game page is started only if at least this much of the cap is left (KAN-75 findings §6).
+  gameMinRemainingMs: 15_000,
 };
 
 const NOT_ATTEMPTED_BLOCKED = "not attempted: an earlier request was blocked";
 
 /**
- * @param job {runId, teamId, leagueId, seasonId, fixtures, standings, playerStats?}, already
- *   validated; a missing `playerStats` means `false`
+ * @param job {runId, teamId, leagueId, seasonId, fixtures, standings, playerStats?, gameDetails?,
+ *   knownGameIds?}, already validated; a missing `playerStats` / `gameDetails` means `false`, a
+ *   missing `knownGameIds` `[]`
  * @param deps {source, log, clock?, random?, signal?, ...SCRAPE_DEFAULTS overrides}
  */
 export async function runScrape(job, deps) {
@@ -43,6 +50,8 @@ export async function runScrape(job, deps) {
   let retriesLeft = 1;
   let blocked = false;
   let session = null;
+  // Once the team games page loaded: {rows} or, if it didn't parse, {error} (the ParseError message).
+  let teamGames = null;
 
   const timeLimit = (detail = "overall scrape time limit reached") => ({
     failure: failedPart("TIMEOUT", detail),
@@ -114,29 +123,36 @@ export async function runScrape(job, deps) {
 
   const ids = (params) => new URLSearchParams(params).toString();
 
-  /** The team games page, then (from that page) the stats. Sets `fixtures` and `playerStats`. */
+  /**
+   * The team games page, then (from that page) the stats. Sets `fixtures` and `playerStats`, and
+   * `gameDetails` if the page didn't load; parses the page once, into `teamGames`.
+   */
   async function scrapeTeamParts() {
     const url = `${origin}team-details/team-games/?${ids({ team_id: job.teamId, season_id: job.seasonId })}`;
     const { response, failure } = await request("document", url, options.navigationTimeoutMs);
     if (failure) {
       if (job.fixtures) payload.fixtures = failure;
-      if (job.playerStats) {
-        payload.playerStats = blocked
-          ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
-          : failedPart(
-              failure.reason,
-              `not attempted: the team games page didn't load (${failure.detail ?? failure.reason})`,
-            );
-      }
+      const notAttempted = blocked
+        ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
+        : failedPart(
+            failure.reason,
+            `not attempted: the team games page didn't load (${failure.detail ?? failure.reason})`,
+          );
+      if (job.playerStats) payload.playerStats = notAttempted;
+      if (job.gameDetails) payload.gameDetails = notAttempted;
       return;
     }
+    const at = fetchedAt();
+    try {
+      teamGames = { rows: parseGamesPage(response.body) };
+    } catch (error) {
+      if (!(error instanceof ParseError)) throw error;
+      teamGames = { error: error.message };
+    }
     if (job.fixtures) {
-      const at = fetchedAt();
-      payload.fixtures = parsed(() => ({
-        status: "OK",
-        fetchedAt: at,
-        games: parseGamesPage(response.body),
-      }));
+      payload.fixtures = teamGames.rows
+        ? { status: "OK", fetchedAt: at, games: teamGames.rows }
+        : failedPart("PARSE_ERROR", teamGames.error);
     }
     // A fixtures parse failure doesn't stop the stats: the page is loaded, and that's all they need.
     if (job.playerStats) payload.playerStats = await scrapePlayerStats();
@@ -190,6 +206,65 @@ export async function runScrape(job, deps) {
     }));
   }
 
+  /**
+   * Up to 2 game pages picked from the team games rows (`selectGames`), our side of each parsed.
+   * → an `OK` part with `games` and `failures` (a game not started is in neither), or `FAILED` if
+   * the team games page didn't parse. Never logs a name: game ids, counts and reasons only.
+   */
+  async function scrapeGameDetails() {
+    if (teamGames.error !== undefined) {
+      return failedPart(
+        "PARSE_ERROR",
+        `not attempted: the team games page didn't parse (${teamGames.error})`,
+      );
+    }
+    const selected = selectGames(teamGames.rows, job.knownGameIds ?? [], clock.now());
+    log.info(runId, "game details selected", {
+      count: selected.length,
+      gameIds: selected.map((row) => row.gameId).join(",") || "-",
+    });
+    const games = [];
+    const failures = [];
+    for (const [i, row] of selected.entries()) {
+      const { gameId } = row;
+      if (deadline - clock.now() < options.gameMinRemainingMs) {
+        for (const skipped of selected.slice(i)) {
+          log.info(runId, "game details not attempted: time limit", { gameId: skipped.gameId });
+        }
+        break;
+      }
+      const url = `${origin}leagues/games/game/?${ids({ game_id: gameId })}`;
+      const { response, failure } = await request("document", url, options.navigationTimeoutMs);
+      if (failure) {
+        failures.push(gameFailure(gameId, failure.reason, failure.detail));
+        log.info(runId, "game details failed", { gameId, reason: failure.reason });
+        if (blocked) {
+          for (const skipped of selected.slice(i + 1)) {
+            log.info(runId, "game details not attempted: blocked", { gameId: skipped.gameId });
+          }
+          break;
+        }
+        continue;
+      }
+      try {
+        const { game, warnings } = parseGameDetails(response.body, {
+          gameId,
+          teamId: job.teamId,
+          row,
+        });
+        for (const { check, expected, actual } of warnings) {
+          log.warn(runId, "game details check", { gameId, check, expected, actual });
+        }
+        games.push(game);
+      } catch (error) {
+        if (!(error instanceof ParseError)) throw error;
+        failures.push(gameFailure(gameId, "PARSE_ERROR", error.message));
+        log.info(runId, "game details failed", { gameId, reason: "PARSE_ERROR" });
+      }
+    }
+    return { status: "OK", fetchedAt: fetchedAt(), games, failures };
+  }
+
   const payload = {
     runId: job.runId,
     teamId: job.teamId,
@@ -198,6 +273,7 @@ export async function runScrape(job, deps) {
     fixtures: null,
     standings: null,
     playerStats: null,
+    gameDetails: null,
   };
 
   try {
@@ -209,14 +285,21 @@ export async function runScrape(job, deps) {
     if (job.fixtures) payload.fixtures = failure;
     if (job.standings) payload.standings = failure;
     if (job.playerStats) payload.playerStats = failure;
+    if (job.gameDetails) payload.gameDetails = failure;
     return enforceContract(payload);
   }
   try {
-    if (job.fixtures || job.playerStats) await scrapeTeamParts();
+    if (job.fixtures || job.playerStats || job.gameDetails) await scrapeTeamParts();
     if (job.standings) {
       payload.standings = blocked
         ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
         : await scrapeStandings();
+    }
+    // Still null only if the team games page loaded (otherwise it's FAILED "not attempted" above).
+    if (job.gameDetails && payload.gameDetails === null) {
+      payload.gameDetails = blocked
+        ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
+        : await scrapeGameDetails();
     }
   } finally {
     await session.close().catch(() => {});

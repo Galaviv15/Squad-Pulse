@@ -46,7 +46,7 @@ class ContractExampleIntegrationTest {
   static final String SERVICE_TOKEN = "test-only-scraper-token-0123456789abcdef";
 
   /** Surefire runs in backend/, so the repo's docs are one level up. */
-  private static final Path CONTRACT = Path.of("..", "docs", "scraper-backend-contract.md");
+  static final Path CONTRACT = Path.of("..", "docs", "scraper-backend-contract.md");
 
   @Container
   static final MongoDBContainer MONGO_DB_CONTAINER =
@@ -188,7 +188,8 @@ class ContractExampleIntegrationTest {
   }
 
   /** The content of the first {@code ```json} block after {@code marker}. */
-  private static String fencedBlockAfter(String doc, String marker) {
+  /** The fenced {@code json} block after {@code marker} (also {@code ScraperClientTest}). */
+  static String fencedBlockAfter(String doc, String marker) {
     int at = doc.indexOf(marker);
     assertThat(at).as("marker %s in %s", marker, CONTRACT).isNotNegative();
     int open = doc.indexOf("```json\n", at);

@@ -3,7 +3,8 @@ import { request as httpRequest } from "node:http";
 import { after, before, beforeEach, describe, test } from "node:test";
 import { createMemoryLogger } from "../src/log.js";
 import { ScrapeQueue } from "../src/queue.js";
-import { createTriggerServer, parseTrigger } from "../src/server.js";
+import { MAX_BODY_BYTES, createTriggerServer, parseTrigger } from "../src/server.js";
+import { contractExample } from "./helpers.js";
 
 const TOKEN = "s3cret-token-for-tests-0123456789abcdef";
 const BODY = {
@@ -14,6 +15,8 @@ const BODY = {
   fixtures: true,
   standings: true,
 };
+// What parseTrigger adds to BODY: every optional property at its default.
+const DEFAULTS = { playerStats: false, gameDetails: false, knownGameIds: [] };
 
 let server;
 let base;
@@ -74,7 +77,7 @@ describe("POST /scrape", () => {
   test("202 QUEUED, and the scrape runs", async () => {
     assert.deepEqual(await expectStatus(post(BODY), 202), { status: "QUEUED", runId: "r1" });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(started, [{ ...BODY, playerStats: false }]);
+    assert.deepEqual(started, [{ ...BODY, ...DEFAULTS }]);
   });
 
   test("playerStats: absent → false, true → true, and only playerStats true is enough", async () => {
@@ -84,20 +87,92 @@ describe("POST /scrape", () => {
     const statsOnly = { ...BODY, runId: "p4", teamId: 4, fixtures: false, standings: false };
     await expectStatus(post({ ...statsOnly, playerStats: true }), 202);
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(started, [{ ...BODY, runId: "p1", teamId: 1, playerStats: false }]);
+    assert.deepEqual(started, [{ ...BODY, ...DEFAULTS, runId: "p1", teamId: 1 }]);
     assert.deepEqual(parseTrigger({ ...BODY, playerStats: true }).playerStats, true);
     assert.deepEqual(parseTrigger({ ...BODY, playerStats: false }).playerStats, false);
-    assert.deepEqual(parseTrigger(BODY), { ...BODY, playerStats: false });
+    assert.deepEqual(parseTrigger(BODY), { ...BODY, ...DEFAULTS });
     assert.deepEqual(parseTrigger({ ...statsOnly, playerStats: true }), {
       ...statsOnly,
+      ...DEFAULTS,
       playerStats: true,
     });
   });
 
-  test("400 nothing to scrape: all three parts false", async () => {
+  test("gameDetails: absent → false; true with and without knownGameIds", () => {
+    assert.equal(parseTrigger(BODY).gameDetails, false);
+    assert.deepEqual(parseTrigger({ ...BODY, gameDetails: true }), {
+      ...BODY,
+      ...DEFAULTS,
+      gameDetails: true,
+    });
+    assert.deepEqual(parseTrigger({ ...BODY, gameDetails: true, knownGameIds: [5, 1, 3] }), {
+      ...BODY,
+      ...DEFAULTS,
+      gameDetails: true,
+      knownGameIds: [5, 1, 3],
+    });
+    assert.deepEqual(
+      parseTrigger({ ...BODY, gameDetails: true, knownGameIds: [] }).knownGameIds,
+      [],
+    );
+  });
+
+  test("only gameDetails true (the other three false) is a valid trigger", async () => {
     const body = { ...BODY, fixtures: false, standings: false, playerStats: false };
-    assert.deepEqual(await expectStatus(post(body), 400), {
-      error: "nothing to scrape: fixtures, standings and playerStats are all false",
+    assert.deepEqual(await expectStatus(post({ ...body, gameDetails: true }), 202), {
+      status: "QUEUED",
+      runId: "r1",
+    });
+  });
+
+  test("200 knownGameIds are accepted; the largest legal body fits the 4 KB limit", async () => {
+    // Every property at its longest: a 100-character runId, ten-digit ids, all parts true.
+    const ids = Array.from({ length: 200 }, (_, i) => 2147483647 - i);
+    const largest = {
+      runId: "r".repeat(100),
+      teamId: 2147483647,
+      leagueId: 2147483647,
+      seasonId: 2147483647,
+      fixtures: false,
+      standings: false,
+      playerStats: false,
+      gameDetails: true,
+      knownGameIds: ids,
+    };
+    const size = Buffer.byteLength(JSON.stringify(largest));
+    assert.ok(size < MAX_BODY_BYTES, `${size} bytes`);
+    assert.deepEqual(await expectStatus(post(largest), 202), {
+      status: "QUEUED",
+      runId: "r".repeat(100),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(started[0].knownGameIds, ids);
+  });
+
+  test("the contract's trigger example parses", () => {
+    const example = contractExample("contract-example-trigger");
+    assert.deepEqual(parseTrigger(example), { ...example });
+    assert.equal(example.gameDetails, true);
+    assert.equal(example.knownGameIds.length, 2);
+  });
+
+  test("the accepted / deduplicated log lines count knownGameIds, never list them", async () => {
+    const body = { ...BODY, runId: "k1", gameDetails: true, knownGameIds: [1122670, 1143937] };
+    await expectStatus(post(body), 202);
+    await new Promise((resolve) => setImmediate(resolve));
+    await expectStatus(post({ ...body, runId: "k2" }), 202);
+    const lines = log.lines.filter((l) => / run=k[12] trigger (accepted|deduplicated)/.test(l));
+    assert.equal(lines.length, 2);
+    for (const line of lines) {
+      assert.match(line, / gameDetails=true knownGameIds=2( |$)/);
+      assert.ok(!line.includes("1122670") && !line.includes("1143937"));
+    }
+  });
+
+  test("400 nothing to scrape: all four parts false", async () => {
+    const body = { ...BODY, fixtures: false, standings: false, playerStats: false };
+    assert.deepEqual(await expectStatus(post({ ...body, gameDetails: false }), 400), {
+      error: "nothing to scrape: fixtures, standings, playerStats and gameDetails are all false",
     });
   });
 
@@ -177,6 +252,24 @@ describe("POST /scrape", () => {
     'playerStats "true"': { ...BODY, playerStats: "true" },
     "playerStats 1": { ...BODY, playerStats: 1 },
     "an unknown property next to playerStats": { ...BODY, playerStats: true, lineups: true },
+    'gameDetails "true"': { ...BODY, gameDetails: "true" },
+    "gameDetails null": { ...BODY, gameDetails: null },
+    "knownGameIds without gameDetails": { ...BODY, knownGameIds: [1] },
+    "empty knownGameIds without gameDetails": { ...BODY, knownGameIds: [] },
+    "knownGameIds with gameDetails false": { ...BODY, gameDetails: false, knownGameIds: [1] },
+    "201 knownGameIds": {
+      ...BODY,
+      gameDetails: true,
+      knownGameIds: Array.from({ length: 201 }, (_, i) => i + 1),
+    },
+    "a duplicate knownGameId": { ...BODY, gameDetails: true, knownGameIds: [7617, 7617] },
+    "a knownGameId 0": { ...BODY, gameDetails: true, knownGameIds: [0] },
+    "a knownGameId over Java's int": { ...BODY, gameDetails: true, knownGameIds: [2147483648] },
+    "a fractional knownGameId": { ...BODY, gameDetails: true, knownGameIds: [1.5] },
+    "a knownGameId as a string": { ...BODY, gameDetails: true, knownGameIds: ["7617"] },
+    "a null knownGameId": { ...BODY, gameDetails: true, knownGameIds: [null] },
+    "knownGameIds null": { ...BODY, gameDetails: true, knownGameIds: null },
+    "knownGameIds an object": { ...BODY, gameDetails: true, knownGameIds: { 0: 1 } },
   };
   for (const [name, body] of Object.entries(invalid)) {
     test(`400: ${name}, with a fixed message that doesn't echo the input`, async () => {

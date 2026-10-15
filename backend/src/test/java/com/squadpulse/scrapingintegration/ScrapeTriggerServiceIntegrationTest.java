@@ -7,7 +7,7 @@ import static com.squadpulse.scrapingintegration.ScrapeRunStatusService.teamLock
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.redis.testcontainers.RedisContainer;
@@ -143,7 +143,14 @@ class ScrapeTriggerServiceIntegrationTest {
     assertThat(UUID.fromString(request.runId()).toString()).isEqualTo(request.runId());
     assertThat(request.body().propertyNames())
         .containsExactly(
-            "runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats");
+            "runId",
+            "teamId",
+            "leagueId",
+            "seasonId",
+            "fixtures",
+            "standings",
+            "playerStats",
+            "gameDetails");
     assertThat(request.body().get("teamId").intValue()).isEqualTo(7617);
     assertThat(request.body().get("leagueId").intValue()).isEqualTo(1010);
     assertThat(request.body().get("seasonId").intValue()).isEqualTo(28);
@@ -159,9 +166,11 @@ class ScrapeTriggerServiceIntegrationTest {
         .containsEntry("source", "USER")
         .containsEntry("standings", "1")
         .containsEntry("playerStats", "1")
-        .containsEntry("gameDetails", "0");
-    // KAN-79: game details aren't requested yet, so the known games aren't even read.
-    verifyNoInteractions(knownGames);
+        .containsEntry("gameDetails", "1");
+    // KAN-80: game details are requested; this club knows no games, so no knownGameIds are sent.
+    assertThat(request.body().get("gameDetails").booleanValue()).isTrue();
+    assertThat(request.body().has("knownGameIds")).isFalse();
+    verify(knownGames).knownGameIds(IDS.teamId(), IDS.seasonId());
     assertThat(redis.getExpire(runKey(request.runId())))
         .isBetween(Duration.ofDays(7).toSeconds() - 5, Duration.ofDays(7).toSeconds());
     assertThat(redis.getExpire(currentKey(CLUB)))
@@ -201,7 +210,22 @@ class ScrapeTriggerServiceIntegrationTest {
     assertThat(redis.opsForHash().entries(runKey(request.runId()))).containsEntry("standings", "0");
   }
 
-  // --- game details (KAN-79), exercised with the flag true -----------------------------------
+  // --- game details (KAN-79; the flag is true since KAN-80) ----------------------------------
+
+  /** KAN-80: the club's known games reach the trigger body, and the run records the request. */
+  @Test
+  void aTriggerSendsTheClubsKnownGames() {
+    when(knownGames.knownGameIds(IDS.teamId(), IDS.seasonId()))
+        .thenReturn(List.of(1122634, 1122670));
+
+    service(scraper.url(), TOKEN).refresh(TriggerSource.USER);
+
+    FakeScraper.Received request = scraper.received().getFirst();
+    assertThat(request.body().get("gameDetails").booleanValue()).isTrue();
+    assertThat(request.body().get("knownGameIds").toString()).isEqualTo("[1122634,1122670]");
+    assertThat(redis.opsForHash().entries(runKey(request.runId())))
+        .containsEntry("gameDetails", "1");
+  }
 
   @Test
   void upToTwoHundredKnownGamesAreSentAndMoreRequestNoGameDetailsAtAll() {

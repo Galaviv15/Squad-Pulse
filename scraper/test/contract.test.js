@@ -4,12 +4,16 @@ import {
   PARTS,
   enforceContract,
   failedPart,
+  gameFailure,
   partViolation,
   payloadViolation,
 } from "../src/contract.js";
 import { runScrape } from "../src/scrape.js";
 import { createMemoryLogger } from "../src/log.js";
 import { JOB, JOB_ALL, OK_SCRIPT, contractExample, fakeClock, fakeSource } from "./helpers.js";
+
+// The parts a JOB_ALL scrape fills (no gameDetails: it needs game pages, scrapeGameDetails.test.js).
+const THREE_PARTS = ["fixtures", "standings", "playerStats"];
 
 async function fixturePayload(job = JOB) {
   const clock = fakeClock();
@@ -52,7 +56,16 @@ async function threeParts() {
 }
 
 const ALLOWED = {
-  top: ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats"],
+  top: [
+    "runId",
+    "teamId",
+    "leagueId",
+    "seasonId",
+    "fixtures",
+    "standings",
+    "playerStats",
+    "gameDetails",
+  ],
   fixtures: ["status", "fetchedAt", "games"],
   game: [
     "gameId",
@@ -103,7 +116,7 @@ describe("local contract check", () => {
   test("accepts the payload built from the fixtures, with all three parts OK", async () => {
     const payload = await fixturePayload(JOB_ALL);
     assert.equal(payloadViolation(payload), null);
-    for (const part of PARTS) assert.equal(payload[part].status, "OK", part);
+    for (const part of THREE_PARTS) assert.equal(payload[part].status, "OK", part);
     assert.equal(payload.playerStats.players.length, 34);
     assert.deepEqual(enforceContract(payload), payload);
   });
@@ -190,7 +203,7 @@ describe("local contract check", () => {
         assert.equal(enforced[part].status, "FAILED");
         assert.equal(enforced[part].reason, "PARSE_ERROR");
         assert.match(enforced[part].detail, new RegExp(`^contract check: ${part}`));
-        for (const other of PARTS.filter((name) => name !== part)) {
+        for (const other of THREE_PARTS.filter((name) => name !== part)) {
           assert.equal(enforced[other].status, "OK", other);
         }
         assert.equal(payloadViolation(enforced), null);
@@ -263,5 +276,215 @@ describe("local contract check", () => {
     assert.equal(failedPart("TIMEOUT", "").detail, null);
     assert.equal(failedPart("TIMEOUT", "a\nb").detail, "a b");
     assert.equal(failedPart("TIMEOUT", "x".repeat(600)).detail.length, 500);
+  });
+});
+
+/** A made-up game-details game (never the fixtures' names or ids). */
+function madeUpGame(gameId, changes = {}) {
+  return {
+    gameId,
+    date: "2026-09-05",
+    kickoffTime: null,
+    competition: "ליגה א' דרום",
+    round: 1,
+    ownSide: "AWAY",
+    homeTeamName: "קבוצה א",
+    awayTeamName: "קבוצה ב",
+    homeScore: 2,
+    awayScore: 1,
+    players: [
+      {
+        playerId: 920001,
+        name: "שם בדוי",
+        shirtNumber: 1,
+        role: "STARTER",
+        goalkeeper: true,
+        captain: false,
+        events: [{ kind: "GOAL", minute: null }],
+      },
+      {
+        playerId: 920002,
+        name: null,
+        shirtNumber: null,
+        role: "UNUSED",
+        goalkeeper: false,
+        captain: false,
+        events: [],
+      },
+    ],
+    ...changes,
+  };
+}
+
+const detailsPayload = (gameDetails) => ({
+  runId: null,
+  teamId: 1,
+  leagueId: 2,
+  seasonId: 3,
+  gameDetails,
+});
+const okDetails = (games, failures = []) => ({
+  status: "OK",
+  fetchedAt: "2026-10-11T09:00:20Z",
+  games,
+  failures,
+});
+
+describe("local contract check: game details (KAN-80)", () => {
+  test("gameDetails is the fourth part", () => {
+    assert.deepEqual(PARTS, ["fixtures", "standings", "playerStats", "gameDetails"]);
+  });
+
+  test("accepts the game details example in docs/scraper-backend-contract.md", () => {
+    const example = contractExample("contract-example-game-details");
+    assert.equal(example.gameDetails.status, "OK");
+    assert.equal(payloadViolation(example), null);
+    assert.deepEqual(enforceContract(example), example);
+  });
+
+  test("OK with empty games and failures; a FAILED part", () => {
+    assert.equal(payloadViolation(detailsPayload(okDetails([], []))), null);
+    const failed = failedPart("SOURCE_BLOCKED", "not attempted");
+    assert.equal(payloadViolation(detailsPayload(failed)), null);
+  });
+
+  const player = (changes) => [{ ...madeUpGame(1).players[0], ...changes }];
+  const gameRules = {
+    "round 0": [{ round: 0 }, "game.round: must be an integer in 1..99"],
+    "an unknown ownSide": [{ ownSide: "home" }, "game.ownSide: unknown value"],
+    "home = away": [
+      { awayTeamName: " קבוצה א " },
+      "game: homeTeamName must differ from awayTeamName",
+    ],
+    "a score of 100": [{ homeScore: 100 }, "game.homeScore: must be an integer in 0..99"],
+    "an unreal date": [{ date: "2026-02-30" }, "game.date: must be a real yyyy-MM-dd date"],
+    "a kickoffTime of 24:00": [{ kickoffTime: "24:00" }, "game.kickoffTime: must be HH:mm"],
+    "no players": [{ players: [] }, "game.players: must have 1..40 players"],
+    "41 players": [
+      {
+        players: Array.from({ length: 41 }, (_, i) => ({
+          ...madeUpGame(1).players[1],
+          playerId: 1 + i,
+        })),
+      },
+      "game.players: must have 1..40 players",
+    ],
+    "a duplicate playerId": [
+      { players: [madeUpGame(1).players[0], madeUpGame(1).players[0]] },
+      "game.players[1].playerId: must be unique",
+    ],
+    "a name of 101 characters": [
+      { players: player({ name: "א".repeat(101) }) },
+      "game.players[0].name: must be 1..100 characters",
+    ],
+    "a blank name": [
+      { players: player({ name: "  " }) },
+      "game.players[0].name: must be 1..100 characters",
+    ],
+    "a shirt number of 100": [
+      { players: player({ shirtNumber: 100 }) },
+      "game.players[0].shirtNumber: must be an integer in 0..99",
+    ],
+    "an unknown role": [
+      { players: player({ role: "BENCH" }) },
+      "game.players[0].role: unknown value",
+    ],
+    "a null captain": [
+      { players: player({ captain: null }) },
+      "game.players[0].captain: must be a boolean",
+    ],
+    "an unknown event kind": [
+      { players: player({ events: [{ kind: "OWN_GOAL", minute: 3 }] }) },
+      "game.players[0].events[0].kind: unknown value",
+    ],
+    "a minute of -1": [
+      { players: player({ events: [{ kind: "GOAL", minute: -1 }] }) },
+      "game.players[0].events[0].minute: must be an integer in 0..150",
+    ],
+    "11 events": [
+      { players: player({ events: Array(11).fill({ kind: "YELLOW", minute: 1 }) }) },
+      "game.players[0].events: must be a list of at most 10",
+    ],
+    "an unknown property": [{ venue: "x" }, "game: unknown property"],
+  };
+  for (const [name, [changes, rule]] of Object.entries(gameRules)) {
+    test(`a game with ${name} is moved to failures; the other game stays`, () => {
+      const good = madeUpGame(5);
+      const payload = detailsPayload(
+        okDetails([madeUpGame(4, changes), good], [gameFailure(6, "TIMEOUT")]),
+      );
+      assert.equal(payloadViolation(payload), `gameDetails.games[0]${rule.slice(4)}`);
+      const result = enforceContract(payload);
+      assert.deepEqual(result.gameDetails, {
+        ...payload.gameDetails,
+        games: [good],
+        failures: [
+          { gameId: 6, reason: "TIMEOUT", detail: null },
+          { gameId: 4, reason: "PARSE_ERROR", detail: `contract check: ${rule}` },
+        ],
+      });
+      assert.equal(payloadViolation(result), null);
+    });
+  }
+
+  test("a demoted game's detail never carries a value", () => {
+    const name = "שם ארוך מאוד ".repeat(10);
+    const payload = detailsPayload(okDetails([madeUpGame(4, { players: player({ name }) })]));
+    const detail = enforceContract(payload).gameDetails.failures[0].detail;
+    assert.ok(!detail.includes("שם"), detail);
+    assert.ok(!detail.includes("920001"), detail);
+  });
+
+  const partRules = {
+    "no fetchedAt": [{ fetchedAt: undefined }, "gameDetails.fetchedAt: is required"],
+    "a bad fetchedAt": [
+      { fetchedAt: "yesterday" },
+      "gameDetails.fetchedAt: must be an ISO-8601 instant with an offset",
+    ],
+    "no failures": [{ failures: undefined }, "gameDetails.failures: is required"],
+    "games not a list": [{ games: null }, "gameDetails.games: must be a list of at most 10"],
+    "11 failures": [
+      { failures: Array.from({ length: 11 }, (_, i) => gameFailure(100 + i, "TIMEOUT")) },
+      "gameDetails.failures: must be a list of at most 10",
+    ],
+    "a failure with an unknown reason": [
+      { failures: [{ gameId: 9, reason: "GONE", detail: null }] },
+      "gameDetails.failures[0].reason: unknown reason",
+    ],
+    "a failure without a gameId": [
+      { failures: [{ reason: "TIMEOUT", detail: null }] },
+      "gameDetails.failures[0].gameId: is required",
+    ],
+    "a gameId in games and failures": [
+      { failures: [gameFailure(4, "TIMEOUT")] },
+      "gameDetails: gameId must be unique across games and failures",
+    ],
+    "a game without a valid gameId": [
+      { games: [madeUpGame(0)] },
+      "gameDetails.games[0].gameId: must be an integer in 1..2147483647",
+    ],
+    "a null game": [{ games: [null] }, "gameDetails.games[0]: must be an object"],
+    "an unknown property": [{ storedGameIds: [] }, "gameDetails: unknown property"],
+  };
+  for (const [name, [changes, rule]] of Object.entries(partRules)) {
+    test(`part-level: ${name} → the whole part FAILED PARSE_ERROR`, () => {
+      const part = { ...okDetails([madeUpGame(4)]), ...changes };
+      for (const key of Object.keys(part)) if (part[key] === undefined) delete part[key];
+      const result = enforceContract(detailsPayload(part));
+      assert.deepEqual(result.gameDetails, failedPart("PARSE_ERROR", `contract check: ${rule}`));
+    });
+  }
+
+  test("a game-details violation never touches the other parts", async () => {
+    const payload = await fixturePayload(JOB_ALL);
+    const broken = {
+      ...payload,
+      gameDetails: okDetails([madeUpGame(4)], [gameFailure(4, "TIMEOUT")]),
+    };
+    const result = enforceContract(broken);
+    assert.equal(result.gameDetails.status, "FAILED");
+    for (const name of ["fixtures", "standings", "playerStats"]) {
+      assert.deepEqual(result[name], payload[name], name);
+    }
   });
 });

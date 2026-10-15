@@ -1,7 +1,8 @@
 // Local check of a result payload against docs/scraper-backend-contract.md, before it's posted.
 // The backend rejects the whole request (400) on any violation, which would also lose the other
-// parts, so an `OK` part that breaks a rule is turned into `FAILED PARSE_ERROR` here. Each rule
-// mirrors backend/.../scrapingintegration/ScrapeResultRequest.java, which is the source of truth.
+// parts, so an `OK` part that breaks a rule is turned into `FAILED PARSE_ERROR` here; a game-details
+// game that breaks one is moved to that part's `failures` instead (KAN-80). Each rule mirrors
+// backend/.../scrapingintegration/ScrapeResultRequest.java, which is the source of truth.
 
 import { hasControlCharacter } from "./text.js";
 
@@ -9,7 +10,7 @@ export const REASONS = ["SOURCE_BLOCKED", "TIMEOUT", "SOURCE_ERROR", "PARSE_ERRO
 export const MAX_DETAIL_LENGTH = 500;
 const JAVA_INT_MAX = 2147483647;
 
-export const PARTS = ["fixtures", "standings", "playerStats"];
+export const PARTS = ["fixtures", "standings", "playerStats", "gameDetails"];
 const TOP_KEYS = ["runId", "teamId", "leagueId", "seasonId", ...PARTS];
 const FAILED_KEYS = ["status", "reason", "detail"];
 const FIXTURES_KEYS = ["status", "fetchedAt", "games"];
@@ -48,6 +49,35 @@ const PLAYER_COUNTS = [
   "subbedOff",
 ];
 const PLAYER_KEYS = ["playerId", "name", ...PLAYER_COUNTS, "minutes"];
+const GAME_DETAILS_KEYS = ["status", "fetchedAt", "games", "failures"];
+const DETAILS_GAME_KEYS = [
+  "gameId",
+  "date",
+  "kickoffTime",
+  "competition",
+  "round",
+  "ownSide",
+  "homeTeamName",
+  "awayTeamName",
+  "homeScore",
+  "awayScore",
+  "players",
+];
+const APPEARANCE_KEYS = [
+  "playerId",
+  "name",
+  "shirtNumber",
+  "role",
+  "goalkeeper",
+  "captain",
+  "events",
+];
+const EVENT_KEYS = ["kind", "minute"];
+const GAME_FAILURE_KEYS = ["gameId", "reason", "detail"];
+const SIDES = ["HOME", "AWAY"];
+const ROLES = ["STARTER", "SUBSTITUTE", "UNUSED"];
+const EVENT_KINDS = ["GOAL", "YELLOW", "SECOND_YELLOW", "RED", "SUB_ON", "SUB_OFF"];
+const MAX_DETAILS_GAMES = 10;
 
 class Violation extends Error {}
 
@@ -191,6 +221,89 @@ function validatePlayerStats(part, path) {
   });
 }
 
+/**
+ * GameDetailsPart (KAN-79): fetchedAt; games and failures both present, 0–10 each, none null; a
+ * gameId at most once across the two lists. No count checks (starters, goalkeepers, goals vs
+ * score, subs): real pages break them.
+ */
+function validateGameDetails(part, path) {
+  keys(part, GAME_DETAILS_KEYS, path);
+  instant(part.fetchedAt, `${path}.fetchedAt`);
+  for (const list of ["games", "failures"]) {
+    if (!Array.isArray(part[list]) || part[list].length > MAX_DETAILS_GAMES) {
+      fail(`${path}.${list}`, `must be a list of at most ${MAX_DETAILS_GAMES}`);
+    }
+  }
+  part.games.forEach((game, i) => validateDetailsGame(game, `${path}.games[${i}]`));
+  part.failures.forEach((failure, i) => validateGameFailure(failure, `${path}.failures[${i}]`));
+  const ids = new Set();
+  [...part.games, ...part.failures].forEach((entry) => {
+    if (ids.has(entry.gameId)) fail(`${path}`, "gameId must be unique across games and failures");
+    ids.add(entry.gameId);
+  });
+}
+
+/**
+ * GameDetailsGame / GameAppearance / GameEvent. Every field present; kickoffTime, a player's name,
+ * shirtNumber and an event's minute may be null. A violation's path names entries by index, never
+ * by a name or id.
+ */
+function validateDetailsGame(game, at) {
+  keys(game, DETAILS_GAME_KEYS, at);
+  int(game.gameId, `${at}.gameId`, 1, JAVA_INT_MAX);
+  isoDate(game.date, `${at}.date`);
+  if (game.kickoffTime !== null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(game.kickoffTime)) {
+    fail(`${at}.kickoffTime`, "must be HH:mm");
+  }
+  text(game.competition, `${at}.competition`, 100);
+  int(game.round, `${at}.round`, 1, 99);
+  oneOf(game.ownSide, SIDES, `${at}.ownSide`);
+  text(game.homeTeamName, `${at}.homeTeamName`, 100);
+  text(game.awayTeamName, `${at}.awayTeamName`, 100);
+  if (game.homeTeamName.trim() === game.awayTeamName.trim()) {
+    fail(at, "homeTeamName must differ from awayTeamName");
+  }
+  int(game.homeScore, `${at}.homeScore`, 0, 99);
+  int(game.awayScore, `${at}.awayScore`, 0, 99);
+  if (!Array.isArray(game.players) || game.players.length < 1 || game.players.length > 40) {
+    fail(`${at}.players`, "must have 1..40 players");
+  }
+  const playerIds = new Set();
+  game.players.forEach((player, i) => {
+    const p = `${at}.players[${i}]`;
+    keys(player, APPEARANCE_KEYS, p);
+    int(player.playerId, `${p}.playerId`, 1, JAVA_INT_MAX);
+    nullableText(player.name, `${p}.name`, 100);
+    if (player.shirtNumber !== null) int(player.shirtNumber, `${p}.shirtNumber`, 0, 99);
+    oneOf(player.role, ROLES, `${p}.role`);
+    for (const key of ["goalkeeper", "captain"]) {
+      if (typeof player[key] !== "boolean") fail(`${p}.${key}`, "must be a boolean");
+    }
+    if (!Array.isArray(player.events) || player.events.length > 10) {
+      fail(`${p}.events`, "must be a list of at most 10");
+    }
+    player.events.forEach((event, j) => {
+      const e = `${p}.events[${j}]`;
+      keys(event, EVENT_KEYS, e);
+      oneOf(event.kind, EVENT_KINDS, `${e}.kind`);
+      if (event.minute !== null) int(event.minute, `${e}.minute`, 0, 150);
+    });
+    if (playerIds.has(player.playerId)) fail(`${p}.playerId`, "must be unique");
+    playerIds.add(player.playerId);
+  });
+}
+
+function validateGameFailure(failure, at) {
+  keys(failure, GAME_FAILURE_KEYS, at, ["gameId", "reason"]);
+  int(failure.gameId, `${at}.gameId`, 1, JAVA_INT_MAX);
+  if (!REASONS.includes(failure.reason)) fail(`${at}.reason`, "unknown reason");
+  if (failure.detail !== undefined) nullableText(failure.detail, `${at}.detail`, MAX_DETAIL_LENGTH);
+}
+
+function oneOf(value, allowed, path) {
+  if (!allowed.includes(value)) fail(path, "unknown value");
+}
+
 function validateFailed(part, path) {
   keys(part, FAILED_KEYS, path, ["status", "reason"]);
   if (!REASONS.includes(part.reason)) fail(`${path}.reason`, "unknown reason");
@@ -207,6 +320,7 @@ export function partViolation(name, part) {
     else if (name === "fixtures") validateFixtures(part, name);
     else if (name === "standings") validateStandings(part, name);
     else if (name === "playerStats") validatePlayerStats(part, name);
+    else if (name === "gameDetails") validateGameDetails(part, name);
     else fail(name, "unknown part");
     return null;
   } catch (error) {
@@ -240,16 +354,64 @@ export function payloadViolation(payload) {
   return null;
 }
 
-/** A `FAILED` part. `detail` is cleaned to the contract's rules (never `""`). */
-export function failedPart(reason, detail = null) {
+/** A `detail` cleaned to the contract's rules: control characters → spaces, ≤ 500, never `""`. */
+export function cleanDetail(detail) {
   let clean = detail === null ? null : detail.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim();
   if (clean !== null && clean.length > MAX_DETAIL_LENGTH) clean = clean.slice(0, MAX_DETAIL_LENGTH);
-  return { status: "FAILED", reason, detail: clean === "" ? null : clean };
+  return clean === "" ? null : clean;
 }
 
-/** Turns every `OK` part that breaks the contract into `FAILED PARSE_ERROR` (first rule as detail). */
+/** A `FAILED` part. `detail` is cleaned to the contract's rules (never `""`). */
+export function failedPart(reason, detail = null) {
+  return { status: "FAILED", reason, detail: cleanDetail(detail) };
+}
+
+/** A game-details `failures` entry; `detail` cleaned like a part's. */
+export function gameFailure(gameId, reason, detail = null) {
+  return { gameId, reason, detail: cleanDetail(detail) };
+}
+
+/** The first rule one game-details game breaks, its path relative to the game; `null` if none. */
+export function detailsGameViolation(game) {
+  try {
+    validateDetailsGame(game, "game");
+    return null;
+  } catch (error) {
+    if (error instanceof Violation) return error.message;
+    throw error;
+  }
+}
+
+/**
+ * Moves every game of an `OK` game-details part that breaks a rule to `failures`, as `PARSE_ERROR`
+ * `contract check: <rule>`: the other games stay, and the backend counts the moved one as a failed
+ * attempt (KAN-79). A game without a valid `gameId` can't be listed as a failure and stays, so the
+ * whole part fails below, as does any other part-level violation.
+ */
+function demoteGames(part) {
+  if (!isObject(part) || part.status !== "OK") return part;
+  if (!Array.isArray(part.games) || !Array.isArray(part.failures)) return part;
+  const games = [];
+  const failures = [...part.failures];
+  for (const game of part.games) {
+    const violation = detailsGameViolation(game);
+    const id = isObject(game) ? game.gameId : null;
+    if (violation === null || !Number.isInteger(id) || id < 1 || id > JAVA_INT_MAX) {
+      games.push(game);
+    } else {
+      failures.push(gameFailure(id, "PARSE_ERROR", `contract check: ${violation}`));
+    }
+  }
+  return { ...part, games, failures };
+}
+
+/**
+ * Turns every `OK` part that breaks the contract into `FAILED PARSE_ERROR` (first rule as detail),
+ * after moving game-details games that break a rule to that part's `failures`.
+ */
 export function enforceContract(payload) {
   const result = { ...payload };
+  if (result.gameDetails) result.gameDetails = demoteGames(result.gameDetails);
   for (const name of PARTS) {
     const violation = partViolation(name, result[name]);
     if (violation !== null) {
