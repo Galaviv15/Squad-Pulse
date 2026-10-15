@@ -7,6 +7,7 @@ import static com.squadpulse.scrapingintegration.ScrapeRunStatusService.teamLock
 import com.squadpulse.auth.ClubFootballMappings;
 import com.squadpulse.auth.FootballOrgIlIds;
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.match.KnownGames;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.Outcome;
 import com.squadpulse.scrapingintegration.ScrapeRunStatusService.Run;
 import com.squadpulse.scrapingintegration.ScraperClient.Answer;
@@ -72,8 +73,9 @@ public class ScrapeTriggerService {
 
   /**
    * KEYS: team lock, league lock, run key. ARGV: runId, cooldown ms, run TTL ms, clubId, teamId,
-   * leagueId, seasonId, source, startedAt ms, playerStats ("1" / "0"). Returns {@code [HELD, holder
-   * runId]} or {@code [ACQUIRED, "1" if the league lock was taken too, else "0"]}.
+   * leagueId, seasonId, source, startedAt ms, playerStats ("1" / "0"), gameDetails ("1" / "0").
+   * Returns {@code [HELD, holder runId]} or {@code [ACQUIRED, "1" if the league lock was taken too,
+   * else "0"]}.
    */
   @SuppressWarnings("rawtypes")
   static final RedisScript<List> ACQUIRE_SCRIPT =
@@ -88,7 +90,8 @@ public class ScrapeTriggerService {
           end
           redis.call('HSET', KEYS[3], 'clubId', ARGV[4], 'teamId', ARGV[5], 'leagueId', ARGV[6],
                      'seasonId', ARGV[7], 'fixtures', '1', 'standings', standings,
-                     'playerStats', ARGV[10], 'source', ARGV[8], 'state', 'PENDING',
+                     'playerStats', ARGV[10], 'gameDetails', ARGV[11], 'source', ARGV[8],
+                     'state', 'PENDING',
                      'startedAt', ARGV[9], 'failureReason', '')
           redis.call('PEXPIRE', KEYS[3], ARGV[3])
           return {'ACQUIRED', standings}
@@ -127,6 +130,32 @@ public class ScrapeTriggerService {
    */
   static final boolean REQUEST_PLAYER_STATS = true;
 
+  /**
+   * Whether a trigger asks for the details of up to 2 finished games the backend doesn't know yet
+   * (KAN-79), with {@code knownGameIds}. <b>{@code false} until KAN-80</b>: today's scraper rejects
+   * both properties as unknown (a 400, so every refresh would be {@code SCRAPER_UNAVAILABLE}), and
+   * a {@code false} leaves both out of the body. KAN-80 sets it to {@code true} in the same change
+   * that teaches the scraper the properties; deploy order as for {@link #REQUEST_PLAYER_STATS}.
+   */
+  static final boolean REQUEST_GAME_DETAILS = false;
+
+  /**
+   * The most {@code knownGameIds} a trigger carries (≈ 1.8 KB, inside the scraper's 4 KB body
+   * limit). With more, game details aren't requested at all (WARN): a cut list would make the
+   * scraper fetch stored games again.
+   */
+  static final int MAX_KNOWN_GAME_IDS = 200;
+
+  /**
+   * What a trigger asks about game details.
+   *
+   * @param knownGameIds empty unless {@code requested}
+   */
+  record GameDetailsRequest(boolean requested, List<Integer> knownGameIds) {
+
+    static final GameDetailsRequest NONE = new GameDetailsRequest(false, List.of());
+  }
+
   private static final Logger log = LoggerFactory.getLogger(ScrapeTriggerService.class);
 
   private final ClubContext clubContext;
@@ -135,6 +164,7 @@ public class ScrapeTriggerService {
   private final ScraperProperties properties;
   private final ScraperClient scraperClient;
   private final ScrapeRunStatusService statusService;
+  private final KnownGames knownGames;
   private final Clock clock;
 
   @Autowired
@@ -144,8 +174,17 @@ public class ScrapeTriggerService {
       StringRedisTemplate redis,
       ScraperProperties properties,
       ScraperClient scraperClient,
-      ScrapeRunStatusService statusService) {
-    this(clubContext, mappings, redis, properties, scraperClient, statusService, Clock.systemUTC());
+      ScrapeRunStatusService statusService,
+      KnownGames knownGames) {
+    this(
+        clubContext,
+        mappings,
+        redis,
+        properties,
+        scraperClient,
+        statusService,
+        knownGames,
+        Clock.systemUTC());
   }
 
   ScrapeTriggerService(
@@ -155,6 +194,7 @@ public class ScrapeTriggerService {
       ScraperProperties properties,
       ScraperClient scraperClient,
       ScrapeRunStatusService statusService,
+      KnownGames knownGames,
       Clock clock) {
     this.clubContext = clubContext;
     this.mappings = mappings;
@@ -162,6 +202,7 @@ public class ScrapeTriggerService {
     this.properties = properties;
     this.scraperClient = scraperClient;
     this.statusService = statusService;
+    this.knownGames = knownGames;
     this.clock = clock;
   }
 
@@ -189,6 +230,7 @@ public class ScrapeTriggerService {
       return statusService.currentStatus(clubId, ids, Outcome.SCRAPER_UNAVAILABLE);
     }
 
+    GameDetailsRequest gameDetails = gameDetailsRequest(REQUEST_GAME_DETAILS, ids);
     String runId = UUID.randomUUID().toString();
     Instant startedAt = clock.instant();
     List<?> acquired =
@@ -204,7 +246,8 @@ public class ScrapeTriggerService {
             String.valueOf(ids.seasonId()),
             source.name(),
             String.valueOf(startedAt.toEpochMilli()),
-            REQUEST_PLAYER_STATS ? "1" : "0");
+            REQUEST_PLAYER_STATS ? "1" : "0",
+            gameDetails.requested() ? "1" : "0");
     if (acquired == null || acquired.isEmpty()) {
       throw new IllegalStateException("The scrape lock script returned nothing");
     }
@@ -222,7 +265,9 @@ public class ScrapeTriggerService {
                 ids.seasonId(),
                 true,
                 standings,
-                REQUEST_PLAYER_STATS));
+                REQUEST_PLAYER_STATS,
+                gameDetails.requested(),
+                gameDetails.knownGameIds()));
     return switch (answer) {
       case Answer.Queued queued when runId.equals(queued.runId()) -> {
         statusService.markAccepted(clubId, runId);
@@ -237,6 +282,31 @@ public class ScrapeTriggerService {
           unavailable(
               clubId, ids, source, runId, standings, unavailable.status(), unavailable.why());
     };
+  }
+
+  /**
+   * What to ask about game details for the current club's {@code ids}: nothing unless {@code
+   * requested} ({@link #REQUEST_GAME_DETAILS}, a parameter so a test can exercise {@code true});
+   * otherwise the club's known games ({@link KnownGames}: stored ∪ given up, for its current team
+   * and season, club-scoped through {@link ClubContext}) — or nothing, with a WARN, if there are
+   * more than {@value #MAX_KNOWN_GAME_IDS}.
+   */
+  GameDetailsRequest gameDetailsRequest(boolean requested, FootballOrgIlIds ids) {
+    if (!requested) {
+      return GameDetailsRequest.NONE;
+    }
+    List<Integer> known = knownGames.knownGameIds(ids.teamId(), ids.seasonId());
+    if (known.size() > MAX_KNOWN_GAME_IDS) {
+      log.warn(
+          "Team {} season {} has {} known games, more than the {} a trigger can list: game details"
+              + " not requested",
+          ids.teamId(),
+          ids.seasonId(),
+          known.size(),
+          MAX_KNOWN_GAME_IDS);
+      return GameDetailsRequest.NONE;
+    }
+    return new GameDetailsRequest(true, known);
   }
 
   /** The team lock is held: by a run of this club still in progress, or it's the cooldown. */

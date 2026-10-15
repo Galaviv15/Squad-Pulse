@@ -6,12 +6,15 @@ import java.util.List;
  * What {@link ScrapeIngestService#ingest} did with each part of one scrape. Never names a club.
  *
  * @param playerStats the player season statistics (KAN-72)
+ * @param gameDetails the per-game details (KAN-79): never {@link Outcome#STALE}, staleness is per
+ *     game there
  * @param clubsUpdated how many clubs' fixtures snapshots were written
  */
 public record IngestResult(
     PartResult fixtures,
     PartResult standings,
     PartResult playerStats,
+    PartResult gameDetails,
     int clubsUpdated,
     List<Warning> warnings) {
 
@@ -28,7 +31,10 @@ public record IngestResult(
   }
 
   public enum Outcome {
-    /** Written: it replaced the stored snapshot, or was the first one. */
+    /**
+     * Written: it replaced the stored snapshot, or was the first one. For the game details: the
+     * part was processed, whatever each game's own outcome (incl. none, or all not newer).
+     */
     STORED,
     /** Refused, nothing written; see {@link RejectionReason}. */
     REJECTED,

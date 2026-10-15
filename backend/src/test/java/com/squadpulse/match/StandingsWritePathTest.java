@@ -12,7 +12,8 @@ import org.junit.jupiter.api.Test;
  * ScrapeIngestService} calls the standings repository at all besides {@link MatchReadService}'s
  * read, and only the service-token ingest controller calls {@link ScrapeIngestService}. The
  * repository is package-private, so nothing outside {@code match} can reach it in the first place.
- * Likewise for the club-scoped player statistics snapshots (KAN-72).
+ * Likewise for the club-scoped player statistics snapshots (KAN-72) and game details and attempt
+ * counts (KAN-79).
  */
 class StandingsWritePathTest {
 
@@ -58,6 +59,29 @@ class StandingsWritePathTest {
         .check(MAIN_CLASSES);
   }
 
+  /**
+   * The game details and their attempt counts (KAN-79) are club-scoped, and likewise written only
+   * by the ingest: the read side ({@code KnownGames}, {@code MatchReadService}, {@code
+   * GameDetailsReadService}) only finds.
+   */
+  @Test
+  void onlyTheIngestServiceWritesTheGameDetailsAndTheirAttempts() {
+    noClasses()
+        .that()
+        .doNotHaveFullyQualifiedName(ScrapeIngestService.class.getName())
+        .should()
+        .callMethodWhere(
+            com.tngtech.archunit.base.DescribedPredicate.describe(
+                "a write to the game details or attempts repository",
+                call ->
+                    (call.getTargetOwner().isAssignableTo(GameDetailsRepository.class)
+                            || call.getTargetOwner()
+                                .isAssignableTo(GameDetailAttemptsRepository.class))
+                        && !call.getName().startsWith("find")))
+        .because("scraped game details are written only by the scraper's ingest")
+        .check(MAIN_CLASSES);
+  }
+
   @Test
   void onlyTheServiceTokenIngestEndpointCallsTheIngestService() {
     noClasses()
@@ -74,7 +98,8 @@ class StandingsWritePathTest {
             int.class,
             ScrapedFixtures.class,
             ScrapedStandings.class,
-            ScrapedPlayerStats.class)
+            ScrapedPlayerStats.class,
+            ScrapedGameDetails.class)
         .because("no user-facing endpoint may reach the standings' write path")
         .check(MAIN_CLASSES);
   }

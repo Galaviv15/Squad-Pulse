@@ -66,6 +66,8 @@ class ContractExampleIntegrationTest {
     mongoTemplate.getCollection("league_fixtures").deleteMany(new Document());
     mongoTemplate.getCollection("league_standings").deleteMany(new Document());
     mongoTemplate.getCollection("player_season_stats").deleteMany(new Document());
+    mongoTemplate.getCollection("game_details").deleteMany(new Document());
+    mongoTemplate.getCollection("game_detail_attempts").deleteMany(new Document());
     clubs.deleteAllClubs();
   }
 
@@ -143,6 +145,46 @@ class ContractExampleIntegrationTest {
     JsonNode actual = ScrapePayloads.JSON.readTree(response);
     assertThat(actual.get("playerStats").get("outcome").asString()).isEqualTo("STORED");
     assertThat(actual).isEqualTo(expected);
+  }
+
+  /**
+   * KAN-79: the game-details example (the block after {@code <!-- contract-example-game-details
+   * -->}) is accepted, answered as the block after {@code <!--
+   * contract-example-game-details-response -->}, and stores its one game.
+   */
+  @Test
+  void theDocumentedGameDetailsExampleIsAcceptedAndAnsweredAsDocumented() throws Exception {
+    String doc = Files.readString(CONTRACT, StandardCharsets.UTF_8);
+    String requestJson = fencedBlockAfter(doc, "<!-- contract-example-game-details -->");
+    JsonNode expected =
+        ScrapePayloads.JSON.readTree(
+            fencedBlockAfter(doc, "<!-- contract-example-game-details-response -->"));
+    JsonNode request = ScrapePayloads.JSON.readTree(requestJson);
+    assertThat(Instant.parse(request.get("gameDetails").get("fetchedAt").asString()))
+        .isBefore(Instant.now());
+    clubs.createClub(
+        "Example club",
+        request.get("teamId").asInt(),
+        request.get("leagueId").asInt(),
+        request.get("seasonId").asInt());
+
+    String response =
+        mockMvc
+            .perform(
+                post("/internal/scrape-results")
+                    .header("Authorization", "Bearer " + SERVICE_TOKEN)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestJson))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    JsonNode actual = ScrapePayloads.JSON.readTree(response);
+    assertThat(actual.get("gameDetails").get("outcome").asString()).isEqualTo("STORED");
+    assertThat(actual).isEqualTo(expected);
+    assertThat(mongoTemplate.getCollection("game_details").countDocuments()).isEqualTo(1);
+    assertThat(mongoTemplate.getCollection("game_detail_attempts").countDocuments()).isEqualTo(1);
   }
 
   /** The content of the first {@code ```json} block after {@code marker}. */

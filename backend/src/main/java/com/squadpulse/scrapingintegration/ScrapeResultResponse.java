@@ -10,12 +10,15 @@ import java.util.List;
  * club.
  *
  * @param playerStats the player season statistics (KAN-72); {@code NOT_SENT} when absent
+ * @param gameDetails the per-game details (KAN-79); {@code NOT_SENT} when absent, never {@code
+ *     STALE} (staleness is per game, silently)
  * @param clubsUpdated how many clubs' fixtures were written (normally 0 or 1)
  */
 public record ScrapeResultResponse(
     PartOutcome fixtures,
     PartOutcome standings,
     PartOutcome playerStats,
+    PartOutcome gameDetails,
     int clubsUpdated,
     List<Warning> warnings) {
 

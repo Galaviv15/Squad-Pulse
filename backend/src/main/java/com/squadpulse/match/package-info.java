@@ -1,7 +1,8 @@
 /**
- * Match and league domain data: the league table, fixtures, and lineups (with jersey numbers and
- * playing minutes) — the data itself and the logic around it. Data reaches this module from two
- * sources, scraped (via {@code scrapingintegration}) and entered by hand, and both end up here.
+ * Match and league domain data: the league table, fixtures, and per-game lineups (our side's
+ * players with the shirt number worn, goals, cards and substitutions; no playing minutes) — the
+ * data itself and the logic around it. Data reaches this module from two sources, scraped (via
+ * {@code scrapingintegration}) and entered by hand, and both end up here.
  *
  * <p>Club data goes through the central {@code clubId} isolation layer in {@code common}, like the
  * scraped fixtures ({@code LeagueFixturesSnapshot}). The one exception is a league's standings
@@ -19,6 +20,15 @@
  * responses carry an opaque id of ours. {@code match} depends on {@code squad} (to read players);
  * {@code squad} sees the links only through its own {@code squad.PlayerStatsLinks} interface,
  * implemented here, so there is no cycle.
+ *
+ * <p>Game details (KAN-79) are club-scoped too, with no new exception: one {@code GameDetails}
+ * record per club, team, season and game — <b>our side only</b> (the opponent is a name and a
+ * score), written only by the ingest, per game and never older over newer, with an opaque id of
+ * ours kept across replaces — and a {@code GameDetailAttempts} count per game the scraper failed
+ * on, which gives a game up after three broken pages. The per-game shirt number lives only on the
+ * appearance: nothing here writes a {@code Player} or its jersey number, and no football.org.il id
+ * leaves the backend. {@code KnownGames} lists the stored and given-up games for {@code
+ * scrapingintegration}'s trigger; appearances reach the club's players through the KAN-72 links.
  *
  * <p>See docs/spec.md section 07 (Matches, stats &amp; scraping). Tracked in Jira under KAN-14
  * (Match &amp; Scraping Integration).
