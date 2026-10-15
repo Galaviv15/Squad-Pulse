@@ -1,5 +1,6 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n/i18n";
 import he from "@/i18n/locales/he.json";
 import type { PermissionLevel } from "@/lib/auth/permissions";
 import { apiError, meReturns, refreshReturns } from "@/test/msw/auth";
@@ -9,6 +10,7 @@ import {
   fixturesBody,
   fixturesReturns,
   gameBody,
+  gameDetailsReturns,
   leagueTableBody,
   leagueTableReturns,
   playedGame,
@@ -390,5 +392,95 @@ describe("the sidebar's matches item", () => {
         he.nav.matches,
       ),
     ).toBeNull();
+  });
+});
+
+describe("a played game's details on the matches screen (KAN-81)", () => {
+  beforeAll(() => import("@/pages/matches/GamePage"));
+
+  const G = he.matches.game;
+  const D = M.details;
+  const games = [
+    playedGame({ date: "2026-09-05", opponentName: "Maccabi Yavne" }),
+    playedGame({
+      date: "2026-09-12",
+      opponentName: "Beitar Kiryat Gat",
+      detailsState: "PENDING",
+      detailsId: null,
+    }),
+    playedGame({
+      date: "2026-09-19",
+      opponentName: "Hapoel Kiryat Shmona",
+      detailsState: "UNAVAILABLE",
+      detailsId: null,
+    }),
+    // Can't come from the backend: nothing, never a broken link.
+    playedGame({
+      date: "2026-09-26",
+      opponentName: "Ironi Dimona",
+      detailsState: "AVAILABLE",
+      detailsId: null,
+    }),
+    gameBody({ date: "2026-10-17", opponentName: "Hapoel Ashdod" }),
+  ];
+  const fixtures = fixturesBody({ games });
+
+  it("links an AVAILABLE game to its page, named with the opponent and the date", async () => {
+    await renderMatches("/app/matches", { fixtures });
+
+    const row = await gameOf("Maccabi Yavne");
+    const link = within(row).getByRole("link", {
+      name: i18n.t("matches.details.actionLabel", {
+        opponent: "Maccabi Yavne",
+        date: "05.09.2026",
+      }),
+    });
+    expect(link).toHaveAttribute("href", "/app/matches/games/details-2026-09-05");
+    expect(link).toHaveTextContent(D.action);
+    // The only such link: one per AVAILABLE game with an id.
+    expect(screen.getAllByRole("link", { name: /^פרטי המשחק מול/ })).toHaveLength(1);
+  });
+
+  it("says a PENDING game's details aren't collected yet, with no link", async () => {
+    await renderMatches("/app/matches", { fixtures });
+
+    const row = await gameOf("Beitar Kiryat Gat");
+    expect(within(row).getByText(D.PENDING)).toBeVisible();
+    expect(within(row).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("says an UNAVAILABLE game's details aren't available, with no link", async () => {
+    await renderMatches("/app/matches", { fixtures });
+
+    const row = await gameOf("Hapoel Kiryat Shmona");
+    expect(within(row).getByText(D.UNAVAILABLE)).toBeVisible();
+    expect(within(row).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing for AVAILABLE without an id, nor for a game not played", async () => {
+    await renderMatches("/app/matches", { fixtures });
+
+    for (const opponent of ["Ironi Dimona", "Hapoel Ashdod"]) {
+      const row = await gameOf(opponent);
+      expect(within(row).queryByRole("link")).not.toBeInTheDocument();
+      expect(within(row).queryByText(D.PENDING)).not.toBeInTheDocument();
+      expect(within(row).queryByText(D.UNAVAILABLE)).not.toBeInTheDocument();
+    }
+  });
+
+  it("opens the game's page from the link", async () => {
+    const details = gameDetailsReturns();
+    server.use(details.handler);
+    await renderMatches("/app/matches", { fixtures });
+
+    fireEvent.click(
+      within(await gameOf("Maccabi Yavne")).getByRole("link", { name: /Maccabi Yavne/ }),
+    );
+
+    expect(await screen.findByRole("heading", { level: 1, name: G.title })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "ליגה א' דרום · מחזור 6" }),
+    ).toBeVisible();
+    expect(details.requests.ids).toEqual(["details-2026-09-05"]);
   });
 });
