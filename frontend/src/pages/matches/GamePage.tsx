@@ -12,7 +12,9 @@ import { MATCHES_PATH } from "@/lib/matches/tab";
 /**
  * /app/matches/games/:detailsId (KAN-81): one played game, our side only — the header and our
  * lineup with the per-game shirt numbers and events. Read-only, VIEW_ONLY and up; no refresh
- * control (a refresh run's end still refetches it: its query is under MATCHES_DATA_QUERY_KEY).
+ * control, and it doesn't watch the refresh status: it's read again every time it's opened or on
+ * a window refocus (its query is under MATCHES_DATA_QUERY_KEY, so a run end seen on the matches /
+ * stats screens marks a cached game stale).
  *
  * Our team's name isn't in the game's details: it comes from the fixtures (usually cached, coming
  * from the matches screen). The page waits for the game and for the fixtures to settle; failed

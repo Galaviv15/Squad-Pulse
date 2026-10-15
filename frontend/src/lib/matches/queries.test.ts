@@ -50,7 +50,7 @@ describe("gameDetailsQuery (the app's QueryClient: createQueryClient)", () => {
     expect(details.requests.count).toBe(3);
   });
 
-  it("is refetched when MATCHES_DATA_QUERY_KEY is invalidated (a refresh run's end)", async () => {
+  it("is refetched while observed when MATCHES_DATA_QUERY_KEY is invalidated", async () => {
     const details = gameDetailsReturns(gameDetailsBody());
     server.use(details.handler);
     const client = createQueryClient();
