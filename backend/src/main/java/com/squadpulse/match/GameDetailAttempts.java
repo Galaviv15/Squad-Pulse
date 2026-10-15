@@ -1,6 +1,7 @@
 package com.squadpulse.match;
 
 import com.squadpulse.common.ClubScopedEntity;
+import java.time.Duration;
 import java.time.Instant;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Version;
@@ -15,8 +16,15 @@ import org.springframework.data.mongodb.core.mapping.Document;
  * <p>Only a broken page counts ({@link ScrapedGameDetails.FailureReason#countsAsAttempt()}: {@code
  * PARSE_ERROR}, {@code SOURCE_ERROR}); a {@code TIMEOUT} or {@code SOURCE_BLOCKED} updates {@link
  * #lastReason} and {@link #lastAttemptAt} only. After {@value #GIVE_UP_AFTER} counted failures the
- * game is given up: the trigger lists it as known, so the scraper never fetches it again, and the
- * fixtures show its details as unavailable. Nothing resets the count.
+ * game is given up ({@link #givenUp}): the trigger lists it as known, so the scraper doesn't fetch
+ * it, and the fixtures show its details as unavailable. Giving up isn't permanent: {@link
+ * #RETRY_GIVEN_UP_AFTER} after its last <b>counted</b> failure ({@link #lastCountedAttemptAt}) the
+ * game is a candidate again (a markup the parser didn't know may have been fixed, a site error may
+ * have passed). A retry that fails with a counting reason gives it up for another period; one that
+ * succeeds stores the details and deletes this record. {@link #failedAttempts} is never reset.
+ *
+ * <p>A record without {@link #lastCountedAttemptAt} (written before this rule, on an unshipped
+ * branch; no migration) is never given up.
  *
  * <p>An attempt is recorded at most once per scrape: a failure whose {@code fetchedAt} isn't newer
  * than {@link #lastAttemptAt} (a replayed request) is ignored.
@@ -32,6 +40,9 @@ class GameDetailAttempts extends ClubScopedEntity {
 
   /** Counted failures after which a game is given up. */
   static final int GIVE_UP_AFTER = 3;
+
+  /** How long after its last counted failure a given-up game stays given up. */
+  static final Duration RETRY_GIVEN_UP_AFTER = Duration.ofDays(3);
 
   @Id private String id;
 
@@ -49,11 +60,27 @@ class GameDetailAttempts extends ClubScopedEntity {
 
   private ScrapedGameDetails.FailureReason lastReason;
 
-  /** The {@code fetchedAt} of the scrape that last failed on this game. */
+  /**
+   * The {@code fetchedAt} of the scrape that last failed on this game, counted or not: replay
+   * protection and {@link #lastReason}.
+   */
   private Instant lastAttemptAt;
 
-  boolean givenUp() {
-    return failedAttempts >= GIVE_UP_AFTER;
+  /**
+   * The {@code fetchedAt} of the last failure that counted (incremented {@link #failedAttempts});
+   * what the give-up period runs from, so a {@code TIMEOUT} on a retry can't extend it.
+   */
+  private Instant lastCountedAttemptAt;
+
+  /**
+   * The one rule for "given up" (the trigger's known games and the fixtures' {@code UNAVAILABLE}):
+   * at least {@value #GIVE_UP_AFTER} counted failures, the last of them less than {@link
+   * #RETRY_GIVEN_UP_AFTER} before {@code now}. Without {@link #lastCountedAttemptAt}: not given up.
+   */
+  boolean givenUp(Instant now) {
+    return failedAttempts >= GIVE_UP_AFTER
+        && lastCountedAttemptAt != null
+        && lastCountedAttemptAt.isAfter(now.minus(RETRY_GIVEN_UP_AFTER));
   }
 
   String getId() {
@@ -110,5 +137,13 @@ class GameDetailAttempts extends ClubScopedEntity {
 
   void setLastAttemptAt(Instant lastAttemptAt) {
     this.lastAttemptAt = lastAttemptAt;
+  }
+
+  Instant getLastCountedAttemptAt() {
+    return lastCountedAttemptAt;
+  }
+
+  void setLastCountedAttemptAt(Instant lastCountedAttemptAt) {
+    this.lastCountedAttemptAt = lastCountedAttemptAt;
   }
 }

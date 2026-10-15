@@ -25,10 +25,11 @@
  * record per club, team, season and game — <b>our side only</b> (the opponent is a name and a
  * score), written only by the ingest, per game and never older over newer, with an opaque id of
  * ours kept across replaces — and a {@code GameDetailAttempts} count per game the scraper failed
- * on, which gives a game up after three broken pages. The per-game shirt number lives only on the
- * appearance: nothing here writes a {@code Player} or its jersey number, and no football.org.il id
- * leaves the backend. {@code KnownGames} lists the stored and given-up games for {@code
- * scrapingintegration}'s trigger; appearances reach the club's players through the KAN-72 links.
+ * on, which gives a game up after three broken pages, for three days from the last one. The
+ * per-game shirt number lives only on the appearance: nothing here writes a {@code Player} or its
+ * jersey number, and no football.org.il id leaves the backend. {@code KnownGames} lists the stored
+ * and given-up games for {@code scrapingintegration}'s trigger; appearances reach the club's
+ * players through the KAN-72 links.
  *
  * <p>See docs/spec.md section 07 (Matches, stats &amp; scraping). Tracked in Jira under KAN-14
  * (Match &amp; Scraping Integration).

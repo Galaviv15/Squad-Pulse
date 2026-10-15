@@ -260,10 +260,22 @@ class ScrapeResultController {
             .map(
                 failure ->
                     new ScrapedGameDetails.Failure(
-                        failure.gameId(),
-                        ScrapedGameDetails.FailureReason.valueOf(failure.reason().name()),
-                        failure.detail()))
+                        failure.gameId(), toMatchReason(failure.reason()), failure.detail()))
             .toList());
+  }
+
+  /**
+   * Exhaustive, with no {@code default}: a reason added to the contract's enum doesn't compile
+   * until {@code match} has it too ({@code FailureReasonMirrorTest} checks the other direction).
+   */
+  private static ScrapedGameDetails.FailureReason toMatchReason(
+      ScrapeResultRequest.FailureReason reason) {
+    return switch (reason) {
+      case SOURCE_BLOCKED -> ScrapedGameDetails.FailureReason.SOURCE_BLOCKED;
+      case TIMEOUT -> ScrapedGameDetails.FailureReason.TIMEOUT;
+      case SOURCE_ERROR -> ScrapedGameDetails.FailureReason.SOURCE_ERROR;
+      case PARSE_ERROR -> ScrapedGameDetails.FailureReason.PARSE_ERROR;
+    };
   }
 
   private static ScrapeResultResponse.PartOutcome failureRecorded() {

@@ -72,9 +72,10 @@ import org.springframework.stereotype.Service;
  *       if the page was broken ({@code PARSE_ERROR}, {@code SOURCE_ERROR}), not if the site or the
  *       network was ({@code TIMEOUT}, {@code SOURCE_BLOCKED}: only its last reason and time
  *       change); a failure for a game whose details are stored, or one not newer than the last
- *       recorded attempt (a replay), is ignored. Never writes a {@code squad.Player}. Logged with
- *       ids and counts only: never a player's or team's name, never the scraper's {@code detail}
- *       above DEBUG.
+ *       recorded attempt (a replay), is ignored. A given-up game is retried {@code
+ *       GameDetailAttempts.RETRY_GIVEN_UP_AFTER} after its last counted failure. Never writes a
+ *       {@code squad.Player}. Logged with ids and counts only: never a player's or team's name,
+ *       never the scraper's {@code detail} above DEBUG.
  *   <li><b>Staleness</b>: a part whose {@code fetchedAt} isn't newer than the stored snapshot's is
  *       {@link IngestResult.Outcome#STALE}, nothing written — so neither a late old scrape nor a
  *       replay ever overwrites newer data. Load, compare, save, with {@code @Version}: on a lost
@@ -317,6 +318,7 @@ public class ScrapeIngestService {
               attempts.setGameId(failure.gameId());
               if (counts) {
                 attempts.setFailedAttempts(attempts.getFailedAttempts() + 1);
+                attempts.setLastCountedAttemptAt(fetchedAt);
               }
               attempts.setLastReason(failure.reason());
               attempts.setLastAttemptAt(fetchedAt);
