@@ -50,6 +50,7 @@ const STORED = {
   fixtures: { outcome: "STORED", reason: null },
   standings: { outcome: "REJECTED", reason: "NOT_MAPPED" },
   playerStats: { outcome: "STORED", reason: null },
+  gameDetails: { outcome: "STORED", reason: null },
   clubsUpdated: 1,
   warnings: [
     { code: "TEAM_NOT_IN_STANDINGS", count: null },
@@ -88,6 +89,7 @@ test("200: outcomes logged; REJECTED and TEAM_NOT_IN_STANDINGS at WARN, other wa
     );
   has(/ INFO run=\S+ backend outcome part=fixtures outcome=STORED$/);
   has(/ INFO run=\S+ backend outcome part=playerStats outcome=STORED$/);
+  has(/ INFO run=\S+ backend outcome part=gameDetails outcome=STORED$/);
   has(/ WARN run=\S+ backend outcome part=standings outcome=REJECTED reason=NOT_MAPPED$/);
   has(/ WARN run=\S+ backend warning code=TEAM_NOT_IN_STANDINGS$/);
   has(/ INFO run=\S+ backend warning code=UNRESOLVED_TEAM_NAMES count=2$/);
