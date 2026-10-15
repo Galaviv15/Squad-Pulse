@@ -44,9 +44,10 @@ class ScraperClient {
    * harmless; {@link ScrapeTriggerService#REQUEST_PLAYER_STATS} is {@code true}.
    *
    * <p>{@code gameDetails} and {@code knownGameIds} (KAN-79) likewise only when {@code gameDetails}
-   * is {@code true} (and the list only when not empty). Today's scraper rejects either property as
-   * unknown, so {@link ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code false} and neither is
-   * ever in the body until KAN-80 teaches the scraper both.
+   * is {@code true} (and the list only when not empty): the scraper accepts {@code knownGameIds}
+   * only with {@code gameDetails: true}. Since KAN-80 the scraper accepts both and {@link
+   * ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code true}, so every trigger asks for game
+   * details unless the club has too many known games.
    *
    * @param knownGameIds the games the scraper must not fetch (stored or given up); empty unless
    *     {@code gameDetails}
@@ -66,7 +67,7 @@ class ScraperClient {
       knownGameIds = knownGameIds == null ? List.of() : List.copyOf(knownGameIds);
     }
 
-    /** Without game details: what every trigger sends today. */
+    /** Without game details (as before KAN-80; tests). */
     TriggerRequest(
         String runId,
         int teamId,

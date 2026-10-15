@@ -132,12 +132,14 @@ public class ScrapeTriggerService {
 
   /**
    * Whether a trigger asks for the details of up to 2 finished games the backend doesn't know yet
-   * (KAN-79), with {@code knownGameIds}. <b>{@code false} until KAN-80</b>: today's scraper rejects
-   * both properties as unknown (a 400, so every refresh would be {@code SCRAPER_UNAVAILABLE}), and
-   * a {@code false} leaves both out of the body. KAN-80 sets it to {@code true} in the same change
-   * that teaches the scraper the properties; deploy order as for {@link #REQUEST_PLAYER_STATS}.
+   * (KAN-79), with {@code knownGameIds}. {@code true} since KAN-80, which taught the scraper both
+   * properties in the same change: every refresh asks for them (unless the club has more than
+   * {@value #MAX_KNOWN_GAME_IDS} known games), and the run counts the part. A scraper without
+   * KAN-80 rejects both properties as unknown (a 400, so every refresh is {@code
+   * SCRAPER_UNAVAILABLE}): deploy the scraper first, or together with the backend, as for {@link
+   * #REQUEST_PLAYER_STATS}.
    */
-  static final boolean REQUEST_GAME_DETAILS = false;
+  static final boolean REQUEST_GAME_DETAILS = true;
 
   /**
    * The most {@code knownGameIds} a trigger carries (≈ 1.8 KB, inside the scraper's 4 KB body
@@ -286,7 +288,7 @@ public class ScrapeTriggerService {
 
   /**
    * What to ask about game details for the current club's {@code ids}: nothing unless {@code
-   * requested} ({@link #REQUEST_GAME_DETAILS}, a parameter so a test can exercise {@code true});
+   * requested} ({@link #REQUEST_GAME_DETAILS}, a parameter so a test can exercise either value);
    * otherwise the club's known games ({@link KnownGames}: stored ∪ given up, for its current team
    * and season, club-scoped through {@link ClubContext}) — or nothing, with a WARN, if there are
    * more than {@value #MAX_KNOWN_GAME_IDS}.

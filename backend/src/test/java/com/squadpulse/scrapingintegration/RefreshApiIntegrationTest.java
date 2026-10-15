@@ -243,7 +243,7 @@ class RefreshApiIntegrationTest {
     String runA = SCRAPER.received().getFirst().runId();
 
     statusOf(clubB).andExpect(jsonPath("$.state").value("IDLE"));
-    ingest(withRunId(runA, allThree())).andExpect(status().isOk());
+    ingest(withRunId(runA, allFour())).andExpect(status().isOk());
 
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
     statusOf(clubB)
@@ -313,7 +313,7 @@ class RefreshApiIntegrationTest {
   void aRefreshWithinTheCooldownIsRefusedAndOneAfterItStarts() throws Exception {
     refresh(clubA, PermissionLevel.EDIT_FULL).andExpect(status().isAccepted());
     String first = SCRAPER.received().getFirst().runId();
-    ingest(withRunId(first, allThree())).andExpect(status().isOk());
+    ingest(withRunId(first, allFour())).andExpect(status().isOk());
 
     Instant before = Instant.now();
     String cooldown = refreshBody(clubA);
@@ -338,7 +338,7 @@ class RefreshApiIntegrationTest {
 
     // The same data again: every part STALE, which is still a success.
     String second = SCRAPER.received().get(1).runId();
-    ingest(withRunId(second, allThree()))
+    ingest(withRunId(second, allFour()))
         .andExpect(jsonPath("$.fixtures.outcome").value("STALE"))
         .andExpect(jsonPath("$.standings.outcome").value("STALE"))
         .andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
@@ -369,7 +369,7 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
     Instant before = Instant.now();
 
-    ingest(withRunId(runId, allThree())).andExpect(status().isOk());
+    ingest(withRunId(runId, allFour())).andExpect(status().isOk());
 
     JsonNode node = JSON.readTree(statusBody(clubA));
     assertThat(node.get("state").stringValue()).isEqualTo("SUCCEEDED");
@@ -525,7 +525,8 @@ class RefreshApiIntegrationTest {
                     SEASON,
                     fixtures(FETCHED_AT),
                     null,
-                    ScrapePayloads.playerStats(FETCHED_AT))))
+                    ScrapePayloads.playerStats(FETCHED_AT),
+                    noGames())))
         .andExpect(jsonPath("$.fixtures.outcome").value("STORED"));
 
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
@@ -556,7 +557,7 @@ class RefreshApiIntegrationTest {
     assertThat(logs.events())
         .anyMatch(e -> e.getFormattedMessage().contains(runId + " is now FAILED (NO_RESULT)"));
 
-    ingest(withRunId(runId, allThree())).andExpect(status().isOk());
+    ingest(withRunId(runId, allFour())).andExpect(status().isOk());
 
     statusOf(clubA)
         .andExpect(jsonPath("$.state").value("SUCCEEDED"))
@@ -567,7 +568,7 @@ class RefreshApiIntegrationTest {
   void aResultBeforeTheTriggerReturnsIsNotOverwritten() throws Exception {
     SCRAPER.answer(
         FakeScraper.after(
-            request -> ingest(withRunId(request.runId(), allThree())).andExpect(status().isOk()),
+            request -> ingest(withRunId(request.runId(), allFour())).andExpect(status().isOk()),
             FakeScraper.queued()));
 
     refresh(clubA, PermissionLevel.EDIT_FULL)
@@ -633,7 +634,14 @@ class RefreshApiIntegrationTest {
     JsonNode body = SCRAPER.received().getFirst().body();
     assertThat(body.propertyNames())
         .containsExactly(
-            "runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats");
+            "runId",
+            "teamId",
+            "leagueId",
+            "seasonId",
+            "fixtures",
+            "standings",
+            "playerStats",
+            "gameDetails");
     assertThat(body.get("playerStats").booleanValue()).isTrue();
     assertThat(redis.opsForHash().get(runKey(runId), "playerStats")).isEqualTo("1");
   }
@@ -641,14 +649,13 @@ class RefreshApiIntegrationTest {
   @Test
   void aRunThatRequestedStatsSucceedsWhenTheyreStoredOrAlreadyUpToDate() throws Exception {
     String runId = start(clubA);
-    ingest(withRunId(runId, allThree()))
+    ingest(withRunId(runId, allFour()))
         .andExpect(jsonPath("$.playerStats.outcome").value("STORED"));
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
 
     redis.getConnectionFactory().getConnection().serverCommands().flushAll();
     String again = start(clubA);
-    ingest(withRunId(again, allThree()))
-        .andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
+    ingest(withRunId(again, allFour())).andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
   }
 
@@ -728,7 +735,7 @@ class RefreshApiIntegrationTest {
   void aRunThatDidntRequestStatsIgnoresThem() throws Exception {
     String runId = start(clubA);
     redis.opsForHash().put(runKey(runId), "playerStats", "0");
-    Map<String, Object> result = allThree();
+    Map<String, Object> result = allFour();
     result.put("playerStats", failed("SOURCE_BLOCKED", null));
 
     ingest(withRunId(runId, result)).andExpect(status().isOk());
@@ -741,7 +748,7 @@ class RefreshApiIntegrationTest {
   void anOldRunRecordWithoutTheFlagIgnoresTheStats() throws Exception {
     String withStats = start(clubA);
     redis.opsForHash().delete(runKey(withStats), "playerStats");
-    Map<String, Object> result = allThree();
+    Map<String, Object> result = allFour();
     result.put("playerStats", failed("TIMEOUT", null));
     ingest(withRunId(withStats, result)).andExpect(status().isOk());
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
@@ -749,21 +756,34 @@ class RefreshApiIntegrationTest {
     redis.getConnectionFactory().getConnection().serverCommands().flushAll();
     String withoutStats = start(clubA);
     redis.opsForHash().delete(runKey(withoutStats), "playerStats");
-    ingest(withRunId(withoutStats, ScrapePayloads.full())).andExpect(status().isOk());
+    Map<String, Object> withoutStatsResult = ScrapePayloads.full();
+    withoutStatsResult.put("gameDetails", noGames());
+    ingest(withRunId(withoutStats, withoutStatsResult)).andExpect(status().isOk());
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
   }
 
-  // --- game details (KAN-79, defined but not requested yet) ----------------------------------
+  // --- game details (KAN-79, requested since KAN-80) ----------------------------------------
 
-  /** Today's trigger has exactly KAN-73's properties, and its run record says "not requested". */
+  /**
+   * KAN-80: every trigger asks for game details (no knownGameIds while the club has none), and its
+   * run record says "requested".
+   */
   @Test
-  void theTriggerDoesntAskForGameDetailsYet() throws Exception {
+  void theTriggerAsksForGameDetails() throws Exception {
     String runId = start(clubA);
 
     assertThat(SCRAPER.received().getFirst().body().propertyNames())
         .containsExactly(
-            "runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats");
-    assertThat(redis.opsForHash().get(runKey(runId), "gameDetails")).isEqualTo("0");
+            "runId",
+            "teamId",
+            "leagueId",
+            "seasonId",
+            "fixtures",
+            "standings",
+            "playerStats",
+            "gameDetails");
+    assertThat(SCRAPER.received().getFirst().body().get("gameDetails").booleanValue()).isTrue();
+    assertThat(redis.opsForHash().get(runKey(runId), "gameDetails")).isEqualTo("1");
   }
 
   /** A run that requested game details: per-game failures never fail it, the part's do. */
@@ -838,8 +858,9 @@ class RefreshApiIntegrationTest {
   }
 
   /**
-   * A run that didn't ask for game details (every run today, flag {@code "0"}), or whose record
-   * predates KAN-79 (no flag), is judged on the other parts, whether the part was sent or not.
+   * A run that didn't ask for game details (flag {@code "0"}: since KAN-80 only a club with more
+   * than 200 known games), or whose record predates KAN-79 (no flag), is judged on the other parts,
+   * whether the part was sent or not.
    */
   @Test
   void aRunThatDidntRequestGameDetailsIgnoresThem() throws Exception {
@@ -849,6 +870,8 @@ class RefreshApiIntegrationTest {
         String runId = start(clubA);
         if (oldRecord) {
           redis.opsForHash().delete(runKey(runId), "gameDetails");
+        } else {
+          redis.opsForHash().put(runKey(runId), "gameDetails", "0");
         }
         Map<String, Object> result = allThree();
         if (sent) {
@@ -866,11 +889,18 @@ class RefreshApiIntegrationTest {
 
   // --- helpers -------------------------------------------------------------------------------
 
-  /** A started run whose record says game details were requested, as KAN-80's trigger will. */
+  /**
+   * A started run whose record says game details were requested, as every trigger's since KAN-80.
+   */
   private String startWithGameDetails() throws Exception {
     String runId = start(clubA);
     redis.opsForHash().put(runKey(runId), "gameDetails", "1");
     return runId;
+  }
+
+  /** An {@code OK} game-details part with nothing fetched: what a caught-up scrape sends. */
+  private static Map<String, Object> noGames() {
+    return ScrapePayloads.gameDetailsWith(FETCHED_AT, List.of());
   }
 
   private static Map<String, Object> allFour() {

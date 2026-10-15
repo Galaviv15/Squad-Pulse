@@ -2,6 +2,9 @@ package com.squadpulse.scrapingintegration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -64,9 +67,9 @@ class ScraperClientTest {
 
   /**
    * KAN-79: {@code gameDetails} and {@code knownGameIds} are left out of the body unless asked for
-   * (today's scraper rejects both as unknown) — a {@code false} by {@code NON_DEFAULT}, an empty
-   * list by {@code NON_EMPTY}, checked with this Jackson version — and {@link
-   * ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code false} until KAN-80.
+   * (the scraper accepts {@code knownGameIds} only with {@code gameDetails: true}) — a {@code
+   * false} by {@code NON_DEFAULT}, an empty list by {@code NON_EMPTY}, checked with this Jackson
+   * version — and KAN-80: {@link ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code true}.
    */
   @Test
   void gameDetailsAndKnownGameIdsAreInTheBodyOnlyWhenAskedFor() {
@@ -103,6 +106,43 @@ class ScraperClientTest {
     assertThat(nothingKnown.get("gameDetails").booleanValue()).isTrue();
     assertThat(nothingKnown.has("knownGameIds")).isFalse();
 
-    assertThat(ScrapeTriggerService.REQUEST_GAME_DETAILS).isFalse();
+    assertThat(ScrapeTriggerService.REQUEST_GAME_DETAILS).isTrue();
+  }
+
+  /**
+   * KAN-80: the body sent for the inputs of the contract's trigger example (the block after {@code
+   * <!-- contract-example-trigger -->}, which the scraper's own trigger validation also accepts)
+   * has exactly that example's properties and values.
+   */
+  @Test
+  void theBodyEqualsTheContractsTriggerExample() throws Exception {
+    JsonMapper json = JsonMapper.builder().build();
+    JsonNode example =
+        json.readTree(
+            ContractExampleIntegrationTest.fencedBlockAfter(
+                Files.readString(ContractExampleIntegrationTest.CONTRACT, StandardCharsets.UTF_8),
+                "<!-- contract-example-trigger -->"));
+    List<Integer> knownGameIds = new ArrayList<>();
+    example.get("knownGameIds").forEach(id -> knownGameIds.add(id.intValue()));
+
+    try (FakeScraper scraper = new FakeScraper()) {
+      ScraperClient client =
+          new ScraperClient(new ScraperProperties(TOKEN, scraper.url(), null, null), json);
+      client.trigger(
+          new ScraperClient.TriggerRequest(
+              example.get("runId").stringValue(),
+              example.get("teamId").intValue(),
+              example.get("leagueId").intValue(),
+              example.get("seasonId").intValue(),
+              example.get("fixtures").booleanValue(),
+              example.get("standings").booleanValue(),
+              ScrapeTriggerService.REQUEST_PLAYER_STATS,
+              ScrapeTriggerService.REQUEST_GAME_DETAILS,
+              knownGameIds));
+
+      JsonNode body = scraper.received().getLast().body();
+      assertThat(body.propertyNames()).containsExactlyInAnyOrderElementsOf(example.propertyNames());
+      assertThat(body).isEqualTo(example);
+    }
   }
 }
