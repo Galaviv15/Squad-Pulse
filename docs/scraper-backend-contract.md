@@ -43,6 +43,15 @@ The first six properties are required (`runId` may be `null`); `playerStats` is 
 
 **`gameDetails` and `knownGameIds` (KAN-79): defined, not sent yet.** Today's scraper rejects both as unknown properties (`400`, so every refresh would be `SCRAPER_UNAVAILABLE`), so the backend sets `gameDetails` from one constant, `ScrapeTriggerService.REQUEST_GAME_DETAILS`, which is `false`, and leaves a `false` `gameDetails` and an empty `knownGameIds` out of the JSON (its trigger record: `NON_DEFAULT` / `NON_EMPTY`). KAN-80 sets the constant to `true` in the same change that teaches the scraper both properties; deploy as for `playerStats`: **the scraper first, or together with the backend.** When it's `true`, the backend builds `knownGameIds` from the triggering club's own data only (club-scoped reads inside its `ClubContext`, the HTTP and a scheduled path alike), for the club's current team and season: its stored games and its given-up games, ascending, without duplicates. With more than 200 such ids it doesn't ask for `gameDetails` at all for that trigger (a WARN with ids and counts): a cut list would make the scraper fetch stored games again. 200 ten-digit ids fit the 4 KB body limit with everything else. The run record keeps the flag (`gameDetails` `"1"` / `"0"`; today always `"0"`).
 
+A trigger with game details and two known games. The scraper's tests check `parseTrigger` accepts this block; `ScraperClientTest` checks the backend's body for the same inputs has exactly these properties and values:
+
+<!-- contract-example-trigger -->
+```json
+{ "runId": "3f2b6c1e-8a4d-4b7e-9c51-2d6f0e8a7b13", "teamId": 7617, "leagueId": 62, "seasonId": 28,
+  "fixtures": true, "standings": true, "playerStats": true,
+  "gameDetails": true, "knownGameIds": [1122634, 1122670] }
+```
+
 **What the backend sends (KAN-68).** `POST <SCRAPER_URL>/scrape` from `scrapingintegration.ScraperClient`. `SCRAPER_URL` is the scraper's origin only (`http(s)://host[:port]`, an optional trailing `/` is dropped); one with a path, user-info, a query or a fragment stops the backend from starting. It's sent only after the backend took the per-team lock (below), with a new UUID as `runId`, the club's own mapping as the ids, `fixtures: true` always, and `standings: true` only if it also took the per-league lock — otherwise `false`, because another club of the same league and season had the table scraped within the cooldown. and `playerStats: true` always. The stats share the per-team lock (same scrape, same team); the league lock doesn't concern them. Connect timeout 2 s, read timeout 5 s, no redirects followed, no retry. It treats the answers as follows:
 
 | Answer | Backend |
