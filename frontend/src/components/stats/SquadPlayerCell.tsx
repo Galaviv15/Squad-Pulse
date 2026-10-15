@@ -10,9 +10,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { PlayerStatsRow, StatsPlayerRef } from "@/lib/matches/playerStats";
+import type { PlayerStatsRow } from "@/lib/matches/playerStats";
 import { useNewPlayerFromStatsPath } from "@/lib/matches/statsReturn";
-import { playerPath } from "@/lib/squad/paths";
+import { LinkedPlayerName } from "./LinkedPlayerName";
 
 export interface SquadPlayerCellProps {
   row: PlayerStatsRow;
@@ -56,7 +56,7 @@ export function SquadPlayerCell({
     content = (
       <div className="flex items-center gap-2">
         {canEdit && <Link2 aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
-        <PlayerName player={linkedPlayer} />
+        <LinkedPlayerName player={linkedPlayer} />
         {canEdit && (
           <LinkActionsMenu row={row} pending={pending} onPick={onPick} onUnlink={onUnlink} />
         )}
@@ -138,21 +138,6 @@ export function SquadPlayerCell({
 
 function UnlinkedActions({ children }: { children: ReactNode }) {
   return <div className="flex items-center gap-1.5">{children}</div>;
-}
-
-/** The squad player's name as a link to their card, with the badge if released. */
-function PlayerName({ player }: { player: StatsPlayerRef }) {
-  return (
-    <>
-      <Link
-        to={playerPath(player.id)}
-        className="rounded-sm font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        {player.fullName}
-      </Link>
-      {!player.active && <ReleasedBadge />}
-    </>
-  );
 }
 
 type LinkAction = "change" | "unlink";
