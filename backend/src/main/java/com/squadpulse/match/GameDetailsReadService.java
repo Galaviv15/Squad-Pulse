@@ -2,6 +2,7 @@ package com.squadpulse.match;
 
 import com.squadpulse.auth.ClubFootballMappings;
 import com.squadpulse.auth.FootballOrgIlIds;
+import com.squadpulse.common.ClubContext;
 import com.squadpulse.common.NotFoundException;
 import com.squadpulse.squad.Player;
 import java.util.Comparator;
@@ -18,6 +19,11 @@ import org.springframework.stereotype.Service;
  * the database but are never shown, like the snapshots. Linked players come from the KAN-72 links
  * ({@link PlayerStatsReadService#linkedPlayers()}), with the same rule for a link to a deleted
  * player.
+ *
+ * <p>The one thing it reads besides (KAN-84): the club's cup snapshots for the current team and
+ * season (club-scoped, one query), so a cup game gets its {@code result}, {@code extraTime}, {@code
+ * penalties} and {@code decidedBy} by the same rule as on {@code GET /matches/fixtures} ({@link
+ * MatchOutcome}). Nothing else of the read changes.
  */
 @Service
 class GameDetailsReadService {
@@ -28,14 +34,20 @@ class GameDetailsReadService {
   private final ClubFootballMappings mappings;
   private final GameDetailsRepository repository;
   private final PlayerStatsReadService playerStatsReadService;
+  private final CupFixturesSnapshotRepository cupRepository;
+  private final ClubContext clubContext;
 
   GameDetailsReadService(
       ClubFootballMappings mappings,
       GameDetailsRepository repository,
-      PlayerStatsReadService playerStatsReadService) {
+      PlayerStatsReadService playerStatsReadService,
+      CupFixturesSnapshotRepository cupRepository,
+      ClubContext clubContext) {
     this.mappings = mappings;
     this.repository = repository;
     this.playerStatsReadService = playerStatsReadService;
+    this.cupRepository = cupRepository;
+    this.clubContext = clubContext;
   }
 
   /**
@@ -55,6 +67,7 @@ class GameDetailsReadService {
     boolean home = details.getOwnSide() == FixturesResponse.Side.HOME;
     int ownScore = home ? details.getHomeScore() : details.getAwayScore();
     int opponentScore = home ? details.getAwayScore() : details.getHomeScore();
+    MatchOutcome outcome = outcome(ids, details.getGameId(), ownScore, opponentScore);
     Map<Integer, Player> linked = playerStatsReadService.linkedPlayers();
     List<GameDetailsResponse.Appearance> players =
         details.getAppearances().stream()
@@ -71,9 +84,29 @@ class GameDetailsReadService {
         home ? details.getAwayTeamName() : details.getHomeTeamName(),
         ownScore,
         opponentScore,
-        FixturesResponse.Result.of(ownScore, opponentScore),
+        outcome.result(),
+        outcome.extraTime(),
+        outcome.penalties(),
+        outcome.decidedBy(),
         details.getFetchedAt(),
         players);
+  }
+
+  /**
+   * How the game ended (KAN-84): from the club's current cup snapshots' game with this {@code
+   * gameId} if there is one, by the shared rule ({@link MatchOutcome#ofCup}); otherwise (a league
+   * game) from the page's score.
+   */
+  private MatchOutcome outcome(
+      FootballOrgIlIds ids, Integer gameId, int ownScore, int opponentScore) {
+    return cupRepository
+        .findByClubIdAndTeamIdAndSeasonId(clubContext.requireClubId(), ids.teamId(), ids.seasonId())
+        .stream()
+        .flatMap(snapshot -> snapshot.getGames().stream())
+        .filter(game -> Objects.equals(game.gameId(), gameId))
+        .findFirst()
+        .map(MatchOutcome::ofCup)
+        .orElseGet(() -> MatchOutcome.ofScore(ownScore, opponentScore));
   }
 
   private static GameDetailsResponse.Appearance toResponse(

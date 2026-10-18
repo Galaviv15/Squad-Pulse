@@ -464,7 +464,7 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
 
     statusService.recordResult(
-        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null),
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null, null),
         new ScrapeResultResponse(
             new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.STORED, null),
             new ScrapeResultResponse.PartOutcome(
@@ -472,6 +472,7 @@ class RefreshApiIntegrationTest {
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
             new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.NOT_SENT, null),
             new ScrapeResultResponse.PartOutcome(ScrapeResultResponse.Outcome.NOT_SENT, null),
+            ScrapeResultResponse.CupGamesOutcome.NOT_SENT,
             1,
             List.of()));
 
@@ -692,7 +693,7 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
 
     statusService.recordResult(
-        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null),
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null, null),
         new ScrapeResultResponse(
             outcome(ScrapeResultResponse.Outcome.STORED),
             outcome(ScrapeResultResponse.Outcome.STORED),
@@ -700,6 +701,7 @@ class RefreshApiIntegrationTest {
                 ScrapeResultResponse.Outcome.REJECTED,
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
             outcome(ScrapeResultResponse.Outcome.NOT_SENT),
+            ScrapeResultResponse.CupGamesOutcome.NOT_SENT,
             1,
             List.of()));
 
@@ -841,7 +843,7 @@ class RefreshApiIntegrationTest {
     String runId = startWithGameDetails();
 
     statusService.recordResult(
-        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null),
+        new ScrapeResultRequest(runId, SDEROT, LEAGUE, SEASON, null, null, null, null, null),
         new ScrapeResultResponse(
             outcome(ScrapeResultResponse.Outcome.STORED),
             outcome(ScrapeResultResponse.Outcome.STORED),
@@ -849,6 +851,7 @@ class RefreshApiIntegrationTest {
             new ScrapeResultResponse.PartOutcome(
                 ScrapeResultResponse.Outcome.REJECTED,
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
+            ScrapeResultResponse.CupGamesOutcome.NOT_SENT,
             1,
             List.of()));
 
@@ -887,7 +890,143 @@ class RefreshApiIntegrationTest {
     }
   }
 
+  // --- cup games (KAN-84; not requested by the trigger until KAN-85) --------------------------
+
+  /** Today's trigger doesn't request cup games, and its run record says so. */
+  @Test
+  void theTriggerDoesntAskForCupGamesYet() throws Exception {
+    String runId = start(clubA);
+
+    assertThat(SCRAPER.received().getFirst().body().has("cupGames")).isFalse();
+    assertThat(redis.opsForHash().get(runKey(runId), "cupGames")).isEqualTo("0");
+  }
+
+  @Test
+  void aRunThatRequestedCupGamesSucceedsWhenEveryCompetitionIsFine() throws Exception {
+    for (boolean stale : new boolean[] {false, true}) {
+      String runId = startWithCupGames();
+      ingest(withRunId(runId, allFive())).andExpect(status().isOk());
+
+      statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
+      if (!stale) {
+        redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+      }
+    }
+  }
+
+  @Test
+  void aFailedCupCompetitionFailsTheRunWithItsReason() throws Exception {
+    String runId = startWithCupGames();
+    Map<String, Object> result = allFive();
+    ScrapePayloads.part(result, "cupGames")
+        .put("competitions", List.of(ScrapePayloads.failedCompetition("STATE_CUP", "PARSE_ERROR")));
+
+    ingest(withRunId(runId, result))
+        .andExpect(jsonPath("$.cupGames.competitions[0].outcome").value("FAILURE_RECORDED"));
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("PARSE_ERROR"));
+  }
+
+  @Test
+  void aRejectedCupCompetitionFailsTheRun() throws Exception {
+    String runId = startWithCupGames();
+    Map<String, Object> result = allFive();
+    List<Map<String, Object>> games = ScrapePayloads.cupGames(result, 0);
+    games.add(new java.util.LinkedHashMap<>(games.getFirst()));
+
+    ingest(withRunId(runId, result))
+        .andExpect(jsonPath("$.cupGames.competitions[0].reason").value("DUPLICATE_GAME"));
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("REJECTED"));
+  }
+
+  @Test
+  void aFailedCupPartFailsTheRunWithItsReason() throws Exception {
+    String runId = startWithCupGames();
+    Map<String, Object> result = allFive();
+    result.put("cupGames", failed("SOURCE_BLOCKED", null));
+
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+    statusOf(clubA).andExpect(jsonPath("$.failureReason").value("SOURCE_BLOCKED"));
+  }
+
+  @Test
+  void requestedCupGamesThatWerentSentFailTheRun() throws Exception {
+    String runId = startWithCupGames();
+
+    ingest(withRunId(runId, allFour())).andExpect(status().isOk());
+
+    statusOf(clubA)
+        .andExpect(jsonPath("$.state").value("FAILED"))
+        .andExpect(jsonPath("$.failureReason").value("NO_RESULT"));
+  }
+
+  /** Order: fixtures, standings, playerStats, cupGames, gameDetails. */
+  @Test
+  void theCupGamesAreCheckedAfterThePlayerStatsAndBeforeTheGameDetails() throws Exception {
+    String runId = startWithCupGames();
+    Map<String, Object> result = allFive();
+    result.put("playerStats", failed("TIMEOUT", null));
+    result.put("cupGames", failed("PARSE_ERROR", null));
+    result.put("gameDetails", failed("SOURCE_ERROR", null));
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+    statusOf(clubA).andExpect(jsonPath("$.failureReason").value("SOURCE_TIMEOUT"));
+
+    redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+    runId = startWithCupGames();
+    result = allFive();
+    result.put("cupGames", failed("PARSE_ERROR", null));
+    result.put("gameDetails", failed("SOURCE_ERROR", null));
+    ingest(withRunId(runId, result)).andExpect(status().isOk());
+    statusOf(clubA).andExpect(jsonPath("$.failureReason").value("PARSE_ERROR"));
+  }
+
+  /**
+   * A run that didn't request cup games — flag {@code "0"} (every trigger until KAN-85) or no flag
+   * (a record written before KAN-84, i.e. a run in flight at deploy) — ignores a failing cup part.
+   */
+  @Test
+  void aRunThatDidntRequestCupGamesIgnoresThem() throws Exception {
+    for (boolean oldRecord : new boolean[] {false, true}) {
+      redis.getConnectionFactory().getConnection().serverCommands().flushAll();
+      String runId = start(clubA);
+      redis.opsForHash().put(runKey(runId), "gameDetails", "1");
+      if (oldRecord) {
+        redis.opsForHash().delete(runKey(runId), "cupGames");
+      }
+      Map<String, Object> result = allFour();
+      result.put("cupGames", failed("PARSE_ERROR", null));
+
+      ingest(withRunId(runId, result)).andExpect(status().isOk());
+
+      statusOf(clubA)
+          .andExpect(jsonPath("$.state").value("SUCCEEDED"))
+          .andExpect(jsonPath("$.failureReason").isEmpty());
+    }
+  }
+
   // --- helpers -------------------------------------------------------------------------------
+
+  /** A started run whose record says game details and cup games were requested (KAN-85's). */
+  private String startWithCupGames() throws Exception {
+    String runId = startWithGameDetails();
+    redis.opsForHash().put(runKey(runId), "cupGames", "1");
+    return runId;
+  }
+
+  private static Map<String, Object> allFive() {
+    Map<String, Object> request = allFour();
+    request.put(
+        "cupGames",
+        ScrapePayloads.cupGamesWith(
+            FETCHED_AT, ScrapePayloads.stateCup(ScrapePayloads.shimshonCupGame())));
+    return request;
+  }
 
   /**
    * A started run whose record says game details were requested, as every trigger's since KAN-80.

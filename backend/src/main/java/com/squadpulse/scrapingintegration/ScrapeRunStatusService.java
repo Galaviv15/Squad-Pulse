@@ -1,9 +1,12 @@
 package com.squadpulse.scrapingintegration;
 
 import com.squadpulse.auth.FootballOrgIlIds;
+import com.squadpulse.match.CupCompetition;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.FailureReason;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.Outcome;
 import com.squadpulse.scrapingintegration.RefreshStatusResponse.State;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.CupCompetitionPart;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.CupGamesPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.FixturesPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.GameDetailsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PartStatus;
@@ -16,7 +19,9 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,10 +37,11 @@ import org.springframework.stereotype.Service;
  *
  * <pre>
  * scrape:run:{runId}               HASH    clubId, teamId, leagueId, seasonId - who and what it's for
- *                                          fixtures, standings, playerStats, gameDetails - the
- *                                            parts requested ("1" / "0"; playerStats absent in
- *                                            records written before KAN-72, gameDetails before
- *                                            KAN-79 = not requested)
+ *                                          fixtures, standings, playerStats, gameDetails,
+ *                                            cupGames - the parts requested ("1" / "0";
+ *                                            playerStats absent in records written before KAN-72,
+ *                                            gameDetails before KAN-79, cupGames before KAN-84 =
+ *                                            not requested)
  *                                          source    - USER / SCHEDULED
  *                                          state     - PENDING / RUNNING / SUCCEEDED / FAILED
  *                                          startedAt, finishedAt - epoch millis (backend clock)
@@ -122,6 +128,12 @@ class ScrapeRunStatusService {
           """,
           Long.class);
 
+  /**
+   * The cup competitions a processed cup part must contain for a run that requested cup games
+   * (KAN-84): one missing fails the run ({@code NO_RESULT}), as an absent part does.
+   */
+  static final Set<CupCompetition> EXPECTED_CUP_COMPETITIONS = Set.of(CupCompetition.STATE_CUP);
+
   private static final Logger log = LoggerFactory.getLogger(ScrapeRunStatusService.class);
 
   /** One run record, as read from Redis. */
@@ -133,6 +145,7 @@ class ScrapeRunStatusService {
       boolean standings,
       boolean playerStats,
       boolean gameDetails,
+      boolean cupGames,
       String state,
       String failureReason,
       Instant startedAt,
@@ -261,6 +274,7 @@ class ScrapeRunStatusService {
               "1".equals(string(hash, "standings")),
               "1".equals(string(hash, "playerStats")),
               "1".equals(string(hash, "gameDetails")),
+              "1".equals(string(hash, "cupGames")),
               string(hash, "state"),
               string(hash, "failureReason"),
               Instant.ofEpochMilli(Long.parseLong(string(hash, "startedAt"))),
@@ -356,10 +370,12 @@ class ScrapeRunStatusService {
 
   /**
    * The first failed part the run requested, in the order fixtures, standings, player statistics
-   * (KAN-72), game details (KAN-79); {@code null} if none. A part the run didn't request is
-   * ignored, whatever the result says about it: a run succeeds only if every part it asked for was
-   * stored or already up to date. The game details' per-game {@code failures} never fail a run (the
-   * part is {@code STORED}): one broken page must not turn every refresh red.
+   * (KAN-72), cup games (KAN-84), game details (KAN-79); {@code null} if none. A part the run
+   * didn't request is ignored, whatever the result says about it: a run succeeds only if every part
+   * it asked for was stored or already up to date. The game details' per-game {@code failures}
+   * never fail a run (the part is {@code STORED}): one broken page must not turn every refresh red.
+   * The cup games, unlike them, fail it per competition ({@link #cupGamesFailure}): a competition
+   * the scraper couldn't read (e.g. a name mismatch) must be visible, not silent.
    */
   private static FailureReason firstFailure(
       Run run, ScrapeResultRequest request, ScrapeResultResponse response) {
@@ -384,8 +400,58 @@ class ScrapeRunStatusService {
         return reason;
       }
     }
+    if (run.cupGames()) {
+      FailureReason reason =
+          cupGamesFailure(response.cupGames(), request.cupGames(), EXPECTED_CUP_COMPETITIONS);
+      if (reason != null) {
+        return reason;
+      }
+    }
     if (run.gameDetails()) {
       return partFailure(response.gameDetails().outcome(), scraperReason(request.gameDetails()));
+    }
+    return null;
+  }
+
+  /**
+   * What a requested cup part means for its run: the part {@code FAILURE_RECORDED} → the scraper's
+   * reason, {@code REJECTED} → {@code REJECTED}, {@code NOT_SENT} → {@code NO_RESULT}; processed,
+   * but a competition of {@code expected} missing → {@code NO_RESULT}; else the first competition,
+   * in the request's order, that the scraper reported {@code FAILED} (its reason) or the ingest
+   * rejected ({@code REJECTED}, whatever the reason); {@code null} if every competition was stored
+   * or already up to date.
+   *
+   * @param expected {@link #EXPECTED_CUP_COMPETITIONS}; a parameter so a test can exercise a
+   *     missing competition while the enum has a single value
+   */
+  static FailureReason cupGamesFailure(
+      ScrapeResultResponse.CupGamesOutcome response,
+      CupGamesPart request,
+      Set<CupCompetition> expected) {
+    FailureReason partReason = partFailure(response.outcome(), scraperReason(request));
+    if (partReason != null) {
+      return partReason;
+    }
+    Set<CupCompetition> present =
+        response.competitions().stream()
+            .map(ScrapeResultResponse.CompetitionOutcome::competition)
+            .collect(Collectors.toSet());
+    if (!present.containsAll(expected)) {
+      return FailureReason.NO_RESULT;
+    }
+    for (ScrapeResultResponse.CompetitionOutcome competition : response.competitions()) {
+      ScrapeResultRequest.FailureReason scraperReason =
+          request == null
+              ? null
+              : request.competitions().stream()
+                  .filter(sent -> sent.competition() == competition.competition())
+                  .findFirst()
+                  .map(ScrapeRunStatusService::scraperReason)
+                  .orElse(null);
+      FailureReason reason = partFailure(competition.outcome(), scraperReason);
+      if (reason != null) {
+        return reason;
+      }
     }
     return null;
   }
@@ -419,6 +485,13 @@ class ScrapeRunStatusService {
     }
     if (part instanceof GameDetailsPart gameDetails && gameDetails.status() == PartStatus.FAILED) {
       return gameDetails.reason();
+    }
+    if (part instanceof CupGamesPart cupGames && cupGames.status() == PartStatus.FAILED) {
+      return cupGames.reason();
+    }
+    if (part instanceof CupCompetitionPart competition
+        && competition.status() == PartStatus.FAILED) {
+      return competition.reason();
     }
     return null;
   }

@@ -74,6 +74,7 @@ class ScrapeIngestServiceIntegrationTest {
   @Autowired private PlayerSeasonStatsSnapshotRepository playerStatsRepository;
   @Autowired private GameDetailsRepository gameDetailsRepository;
   @Autowired private GameDetailAttemptsRepository attemptsRepository;
+  @Autowired private CupFixturesSnapshotRepository cupRepository;
   @Autowired private ClubFootballMappings mappings;
   @Autowired private ClubContext clubContext;
   @Autowired private MongoTemplate mongoTemplate;
@@ -124,7 +125,7 @@ class ScrapeIngestServiceIntegrationTest {
     ScrapeIngestService racing = racingStandings(T0.plusSeconds(10));
 
     IngestResult result =
-        racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)), null, null);
+        racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)), null, null, null);
 
     assertThat(result.standings().outcome()).isEqualTo(Outcome.STORED);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(20));
@@ -135,7 +136,7 @@ class ScrapeIngestServiceIntegrationTest {
     ScrapeIngestService racing = racingStandings(T0.plusSeconds(20));
 
     IngestResult result =
-        racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(10)), null, null);
+        racing.ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(10)), null, null, null);
 
     assertThat(result.standings().outcome()).isEqualTo(Outcome.STALE);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(20));
@@ -147,13 +148,13 @@ class ScrapeIngestServiceIntegrationTest {
 
     IngestResult newer =
         racingStandings(T0.plusSeconds(10))
-            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)), null, null);
+            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(20)), null, null, null);
     assertThat(newer.standings().outcome()).isEqualTo(Outcome.STORED);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(20));
 
     IngestResult older =
         racingStandings(T0.plusSeconds(40))
-            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(30)), null, null);
+            .ingest(TEAM, LEAGUE, SEASON, null, standings(T0.plusSeconds(30)), null, null, null);
     assertThat(older.standings().outcome()).isEqualTo(Outcome.STALE);
     assertThat(storedStandings().getFetchedAt()).isEqualTo(T0.plusSeconds(40));
   }
@@ -173,11 +174,12 @@ class ScrapeIngestServiceIntegrationTest {
             playerStatsRepository,
             gameDetailsRepository,
             attemptsRepository,
+            cupRepository,
             mappings,
             clubContext);
 
     IngestResult result =
-        racing.ingest(TEAM, LEAGUE, SEASON, fixtures(T0.plusSeconds(10)), null, null, null);
+        racing.ingest(TEAM, LEAGUE, SEASON, fixtures(T0.plusSeconds(10)), null, null, null, null);
 
     assertThat(result.fixtures().outcome()).isEqualTo(Outcome.STALE);
     assertThat(result.clubsUpdated()).isZero();
@@ -211,6 +213,7 @@ class ScrapeIngestServiceIntegrationTest {
                         SEASON,
                         fixtures(fetchedAt),
                         standings(fetchedAt),
+                        null,
                         null,
                         null);
                   }));
@@ -250,7 +253,7 @@ class ScrapeIngestServiceIntegrationTest {
       assertThat(mongoTemplate.getConverter().convertToMongoType(LocalDate.of(2026, 9, 5)))
           .isEqualTo(java.util.Date.from(Instant.parse("2026-09-05T04:00:00Z")));
 
-      service.ingest(TEAM, LEAGUE, SEASON, fixtures(T0), null, null, null);
+      service.ingest(TEAM, LEAGUE, SEASON, fixtures(T0), null, null, null, null);
 
       Document stored = mongoTemplate.getCollection("league_fixtures").find().first();
       Document game = stored.getList("games", Document.class).get(0);
@@ -289,6 +292,7 @@ class ScrapeIngestServiceIntegrationTest {
         playerStatsRepository,
         gameDetailsRepository,
         attemptsRepository,
+        cupRepository,
         mappings,
         clubContext);
   }

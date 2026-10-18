@@ -79,7 +79,7 @@ class ScraperClientTest {
             json.readTree(
                     json.writeValueAsString(
                         new ScraperClient.TriggerRequest(
-                            "r", 1, 2, 3, true, true, true, false, List.of())))
+                            "r", 1, 2, 3, true, true, true, false, List.of(), false)))
                 .propertyNames())
         .containsExactly(
             "runId", "teamId", "leagueId", "seasonId", "fixtures", "standings", "playerStats");
@@ -87,7 +87,7 @@ class ScraperClientTest {
             json.readTree(
                     json.writeValueAsString(
                         new ScraperClient.TriggerRequest(
-                            "r", 1, 2, 3, true, true, true, false, null)))
+                            "r", 1, 2, 3, true, true, true, false, null, false)))
                 .propertyNames())
         .doesNotContain("gameDetails", "knownGameIds");
 
@@ -95,18 +95,56 @@ class ScraperClientTest {
         json.readTree(
             json.writeValueAsString(
                 new ScraperClient.TriggerRequest(
-                    "r", 1, 2, 3, true, true, true, true, List.of(1122601, 1143937))));
+                    "r", 1, 2, 3, true, true, true, true, List.of(1122601, 1143937), false)));
     assertThat(asked.get("gameDetails").booleanValue()).isTrue();
     assertThat(asked.get("knownGameIds").toString()).isEqualTo("[1122601,1143937]");
 
     JsonNode nothingKnown =
         json.readTree(
             json.writeValueAsString(
-                new ScraperClient.TriggerRequest("r", 1, 2, 3, true, true, true, true, List.of())));
+                new ScraperClient.TriggerRequest(
+                    "r", 1, 2, 3, true, true, true, true, List.of(), false)));
     assertThat(nothingKnown.get("gameDetails").booleanValue()).isTrue();
     assertThat(nothingKnown.has("knownGameIds")).isFalse();
 
     assertThat(ScrapeTriggerService.REQUEST_GAME_DETAILS).isTrue();
+  }
+
+  /**
+   * KAN-84: {@code cupGames} is defined but not sent yet — a {@code false} is left out of the body
+   * ({@code NON_DEFAULT}, verified here with this Jackson version) and {@link
+   * ScrapeTriggerService#REQUEST_CUP_GAMES} is {@code false} — and a {@code true} is sent as such.
+   */
+  @Test
+  void cupGamesIsInTheBodyOnlyWhenTrue() {
+    JsonMapper json = JsonMapper.builder().build();
+
+    assertThat(
+            json.readTree(
+                    json.writeValueAsString(
+                        new ScraperClient.TriggerRequest(
+                            "r", 1, 2, 3, true, true, true, true, List.of(5), false)))
+                .propertyNames())
+        .containsExactly(
+            "runId",
+            "teamId",
+            "leagueId",
+            "seasonId",
+            "fixtures",
+            "standings",
+            "playerStats",
+            "gameDetails",
+            "knownGameIds");
+
+    JsonNode asked =
+        json.readTree(
+            json.writeValueAsString(
+                new ScraperClient.TriggerRequest(
+                    "r", 1, 2, 3, true, true, true, true, List.of(), true)));
+    assertThat(asked.get("cupGames").isBoolean()).isTrue();
+    assertThat(asked.get("cupGames").booleanValue()).isTrue();
+
+    assertThat(ScrapeTriggerService.REQUEST_CUP_GAMES).isFalse();
   }
 
   /**
@@ -138,7 +176,8 @@ class ScraperClientTest {
               example.get("standings").booleanValue(),
               ScrapeTriggerService.REQUEST_PLAYER_STATS,
               ScrapeTriggerService.REQUEST_GAME_DETAILS,
-              knownGameIds));
+              knownGameIds,
+              ScrapeTriggerService.REQUEST_CUP_GAMES));
 
       JsonNode body = scraper.received().getLast().body();
       assertThat(body.propertyNames()).containsExactlyInAnyOrderElementsOf(example.propertyNames());

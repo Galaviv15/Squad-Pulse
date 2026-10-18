@@ -49,6 +49,10 @@ class ScraperClient {
    * ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code true}, so every trigger asks for game
    * details unless the club has too many known games.
    *
+   * <p>{@code cupGames} (KAN-84) likewise only when {@code true}: defined, but not sent yet — a
+   * scraper without KAN-85 rejects it as unknown, so {@link ScrapeTriggerService#REQUEST_CUP_GAMES}
+   * is {@code false} until KAN-85 flips it.
+   *
    * @param knownGameIds the games the scraper must not fetch (stored or given up); empty unless
    *     {@code gameDetails}
    */
@@ -61,7 +65,8 @@ class ScraperClient {
       boolean standings,
       @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean playerStats,
       @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean gameDetails,
-      @JsonInclude(JsonInclude.Include.NON_EMPTY) List<Integer> knownGameIds) {
+      @JsonInclude(JsonInclude.Include.NON_EMPTY) List<Integer> knownGameIds,
+      @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean cupGames) {
 
     TriggerRequest {
       knownGameIds = knownGameIds == null ? List.of() : List.copyOf(knownGameIds);
@@ -76,7 +81,17 @@ class ScraperClient {
         boolean fixtures,
         boolean standings,
         boolean playerStats) {
-      this(runId, teamId, leagueId, seasonId, fixtures, standings, playerStats, false, List.of());
+      this(
+          runId,
+          teamId,
+          leagueId,
+          seasonId,
+          fixtures,
+          standings,
+          playerStats,
+          false,
+          List.of(),
+          false);
     }
   }
 
