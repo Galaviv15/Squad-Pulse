@@ -1,21 +1,23 @@
-// One scrape: at most 6 requests (+ one retry), paced, capped at 90 s, stopped at once on a block.
+// One scrape: at most 8 requests (+ one retry), paced, capped at 90 s, stopped at once on a block.
 // Builds the result payload for the backend (docs/scraper-backend-contract.md).
 //
 // Order: team games page → player statistics (an in-page fetch from that page) → league page →
-// LeagueTable (KAN-70 findings section 3) → up to 2 game pages (KAN-75 findings section 6: last, so
-// a slow site loses them to the cap before anything else). The team games page is loaded if
-// `fixtures`, `playerStats` or `gameDetails` is requested and parsed once; the stats are fetched
-// only from a page that loaded, never by navigating again, and the game pages are picked from its
-// rows only.
+// LeagueTable (KAN-70 findings section 3) → team page → GetTeamNatCupData (an in-page fetch from
+// the team page; KAN-76 findings, "Decided for KAN-84 / KAN-85 / KAN-86") → up to 2 game pages
+// (KAN-75 findings section 6: last, so a slow site loses them to the cap before anything else). The
+// team games page is loaded if `fixtures`, `playerStats` or `gameDetails` is requested and parsed
+// once; the stats are fetched only from a page that loaded, never by navigating again. The game
+// pages are picked from its rows, plus this scrape's State Cup rows if that list parsed.
 
 import { isBlocked } from "./block.js";
 import { realClock } from "./clock.js";
-import { enforceContract, failedPart, gameFailure } from "./contract.js";
+import { cupCompetitionViolation, enforceContract, failedPart, gameFailure } from "./contract.js";
+import { STATE_CUP, parseCupGames, parseOwnName } from "./parseCupGames.js";
 import { parseGamesPage } from "./parseFixtures.js";
 import { parseGameDetails } from "./parseGameDetails.js";
 import { parsePlayerStats } from "./parsePlayerStats.js";
 import { parseLeaguePage, parseLeagueTable } from "./parseStandings.js";
-import { selectGames } from "./selectGames.js";
+import { combineRows, selectGames } from "./selectGames.js";
 import { SourceNetworkError, SourceTimeoutError } from "./sourceErrors.js";
 import { ParseError } from "./text.js";
 
@@ -28,14 +30,16 @@ export const SCRAPE_DEFAULTS = {
   fetchTimeoutMs: 20_000,
   // A game page is started only if at least this much of the cap is left (KAN-75 findings §6).
   gameMinRemainingMs: 15_000,
+  // Likewise the team page of the cup step (KAN-76 findings, "Decided", 8).
+  cupMinRemainingMs: 15_000,
 };
 
 const NOT_ATTEMPTED_BLOCKED = "not attempted: an earlier request was blocked";
 
 /**
  * @param job {runId, teamId, leagueId, seasonId, fixtures, standings, playerStats?, gameDetails?,
- *   knownGameIds?}, already validated; a missing `playerStats` / `gameDetails` means `false`, a
- *   missing `knownGameIds` `[]`
+ *   knownGameIds?, cupGames?}, already validated; a missing `playerStats` / `gameDetails` /
+ *   `cupGames` means `false`, a missing `knownGameIds` `[]`
  * @param deps {source, log, clock?, random?, signal?, ...SCRAPE_DEFAULTS overrides}
  */
 export async function runScrape(job, deps) {
@@ -52,6 +56,8 @@ export async function runScrape(job, deps) {
   let session = null;
   // Once the team games page loaded: {rows} or, if it didn't parse, {error} (the ParseError message).
   let teamGames = null;
+  // The State Cup rows, only if that list parsed in this scrape (they join the game-details pick).
+  let cupRows = [];
 
   const timeLimit = (detail = "overall scrape time limit reached") => ({
     failure: failedPart("TIMEOUT", detail),
@@ -207,7 +213,71 @@ export async function runScrape(job, deps) {
   }
 
   /**
-   * Up to 2 game pages picked from the team games rows (`selectGames`), our side of each parsed.
+   * The team page (our full club name) then, from it, the State Cup list. → the cup part: `FAILED`
+   * only if the team page wasn't read (not attempted, failed, or its `h1` didn't parse); otherwise
+   * `OK` with the `STATE_CUP` competition's own status. Never logs a name or a round.
+   */
+  async function scrapeCupGames() {
+    if (deadline - clock.now() < options.cupMinRemainingMs) {
+      log.info(runId, "cup games not attempted: time limit");
+      return failedPart(
+        "TIMEOUT",
+        `not attempted: less than ${options.cupMinRemainingMs / 1000} s of the scrape time limit left`,
+      );
+    }
+    const teamUrl = new URL(
+      `${origin}team-details/?${ids({ team_id: job.teamId, season_id: job.seasonId })}`,
+    ).href;
+    const team = await request("document", teamUrl, options.navigationTimeoutMs);
+    if (team.failure) return team.failure;
+    let at = fetchedAt();
+    let ownName;
+    try {
+      ownName = parseOwnName(team.response.body);
+    } catch (error) {
+      if (error instanceof ParseError) return failedPart("PARSE_ERROR", error.message);
+      throw error;
+    }
+    const competition = (entry) => {
+      log.info(runId, "cup competition", {
+        competition: STATE_CUP,
+        status: entry.status,
+        ...(entry.status === "OK" ? { games: entry.games.length } : { reason: entry.reason }),
+      });
+      return { status: "OK", fetchedAt: at, competitions: [{ competition: STATE_CUP, ...entry }] };
+    };
+    // snake_case ids, unlike the stats. Serialized by URL so it equals, character for character,
+    // the URL the browser reports.
+    const cupUrl = new URL(
+      `${origin}Components.asmx/GetTeamNatCupData?${ids({ team_id: job.teamId, season_id: job.seasonId })}`,
+    ).href;
+    const cup = await request("fetch", cupUrl, options.fetchTimeoutMs);
+    if (cup.failure) return competition(cup.failure);
+    at = fetchedAt();
+    let parsedCup;
+    try {
+      parsedCup = parseCupGames(cup.response.body, ownName);
+    } catch (error) {
+      if (error instanceof ParseError) return competition(failedPart("PARSE_ERROR", error.message));
+      throw error;
+    }
+    for (const key of parsedCup.extras) {
+      log.info(runId, "cup list field present", { competition: STATE_CUP, field: key });
+    }
+    // Checked here, not only before posting: rows join the game-details pick only from a list
+    // that will be sent OK.
+    const entry = { status: "OK", games: parsedCup.games };
+    const violation = cupCompetitionViolation({ competition: STATE_CUP, ...entry });
+    if (violation !== null) {
+      return competition(failedPart("PARSE_ERROR", `contract check: ${violation}`));
+    }
+    cupRows = parsedCup.games;
+    return competition(entry);
+  }
+
+  /**
+   * Up to 2 game pages picked from the team games rows and this scrape's State Cup rows
+   * (`selectGames`), our side of each parsed.
    * → an `OK` part with `games` and `failures` (a game not started is in neither), or `FAILED` if
    * the team games page didn't parse. Never logs a name: game ids, counts and reasons only.
    */
@@ -218,7 +288,11 @@ export async function runScrape(job, deps) {
         `not attempted: the team games page didn't parse (${teamGames.error})`,
       );
     }
-    const selected = selectGames(teamGames.rows, job.knownGameIds ?? [], clock.now());
+    const { rows, duplicates } = combineRows(teamGames.rows, cupRows);
+    for (const gameId of duplicates) {
+      log.warn(runId, "game in both the league and the cup list", { gameId });
+    }
+    const selected = selectGames(rows, job.knownGameIds ?? [], clock.now());
     log.info(runId, "game details selected", {
       count: selected.length,
       gameIds: selected.map((row) => row.gameId).join(",") || "-",
@@ -251,6 +325,7 @@ export async function runScrape(job, deps) {
           gameId,
           teamId: job.teamId,
           row,
+          kind: row.kind,
         });
         for (const { check, expected, actual } of warnings) {
           log.warn(runId, "game details check", { gameId, check, expected, actual });
@@ -274,6 +349,7 @@ export async function runScrape(job, deps) {
     standings: null,
     playerStats: null,
     gameDetails: null,
+    cupGames: null,
   };
 
   try {
@@ -286,6 +362,7 @@ export async function runScrape(job, deps) {
     if (job.standings) payload.standings = failure;
     if (job.playerStats) payload.playerStats = failure;
     if (job.gameDetails) payload.gameDetails = failure;
+    if (job.cupGames) payload.cupGames = failure;
     return enforceContract(payload);
   }
   try {
@@ -294,6 +371,11 @@ export async function runScrape(job, deps) {
       payload.standings = blocked
         ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
         : await scrapeStandings();
+    }
+    if (job.cupGames) {
+      payload.cupGames = blocked
+        ? failedPart("SOURCE_BLOCKED", NOT_ATTEMPTED_BLOCKED)
+        : await scrapeCupGames();
     }
     // Still null only if the team games page loaded (otherwise it's FAILED "not attempted" above).
     if (job.gameDetails && payload.gameDetails === null) {

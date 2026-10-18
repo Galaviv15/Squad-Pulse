@@ -197,3 +197,43 @@ test("a full scrape and post from the fixtures logs no player name or player_id"
     assert.ok(!new RegExp(`\\b${playerId}\\b`).test(all), "a player_id was logged");
   }
 });
+
+test("each cup competition's outcome is logged, a REJECTED one at WARN with its reason (KAN-85)", async () => {
+  const answer = {
+    ...STORED,
+    cupGames: {
+      outcome: "STORED",
+      reason: null,
+      competitions: [{ competition: "STATE_CUP", outcome: "REJECTED", reason: "DUPLICATE_GAME" }],
+    },
+  };
+  const { log } = await send([{ status: 200, body: answer }]);
+  const has = (pattern) =>
+    assert.ok(
+      log.lines.some((l) => pattern.test(l)),
+      String(pattern),
+    );
+  has(/ INFO run=\S+ backend outcome part=cupGames outcome=STORED$/);
+  has(
+    / WARN run=\S+ backend cup outcome competition=STATE_CUP outcome=REJECTED reason=DUPLICATE_GAME$/,
+  );
+
+  const stored = {
+    ...answer,
+    cupGames: {
+      ...answer.cupGames,
+      competitions: [{ competition: "STATE_CUP", outcome: "STORED", reason: null }],
+    },
+  };
+  const second = await send([{ status: 200, body: stored }]);
+  assert.ok(
+    second.log.lines.some((l) =>
+      / INFO run=\S+ backend cup outcome competition=STATE_CUP outcome=STORED$/.test(l),
+    ),
+  );
+});
+
+test("an answer without cupGames (an older backend) logs no cup outcome", async () => {
+  const { log } = await send([{ status: 200, body: STORED }]);
+  assert.ok(!log.lines.some((l) => / backend cup outcome /.test(l)));
+});

@@ -1,4 +1,5 @@
-// Which game pages one scrape fetches (KAN-75 findings, "Decided for KAN-79"; KAN-80).
+// Which game pages one scrape fetches (KAN-75 findings, "Decided for KAN-79"; KAN-80; cup rows
+// since KAN-85).
 
 export const MAX_GAMES_PER_SCRAPE = 2;
 export const SETTLE_MS = 24 * 60 * 60 * 1000;
@@ -17,7 +18,23 @@ const ISRAEL = new Intl.DateTimeFormat("en-US", {
 });
 
 /**
- * From the team-games rows: games with a `gameId` and both scores, not in `knownGameIds`, whose
+ * The rows game details pick from: the team-games rows (`kind` `LEAGUE`), then the cup rows (`kind`
+ * `CUP`, from a cup list that parsed in this scrape). A `gameId` in both lists is kept once, as its
+ * league row, and listed in `duplicates` (unseen: the team-games page has no cup game).
+ */
+export function combineRows(leagueRows, cupRows) {
+  const rows = leagueRows.map((row) => ({ ...row, kind: "LEAGUE" }));
+  const leagueIds = new Set(leagueRows.map((row) => row.gameId).filter((id) => id !== null));
+  const duplicates = [];
+  for (const row of cupRows) {
+    if (row.gameId !== null && leagueIds.has(row.gameId)) duplicates.push(row.gameId);
+    else rows.push({ ...row, kind: "CUP" });
+  }
+  return { rows, duplicates };
+}
+
+/**
+ * From the rows ({@link combineRows}, or the team-games rows alone): games with a `gameId` and both scores, not in `knownGameIds`, whose
  * kickoff (Israel time) is at least 24 h before `now`; sorted by date, then kickoff time, then
  * `gameId` (ids aren't chronological); the first {@link MAX_GAMES_PER_SCRAPE}, oldest first.
  */
