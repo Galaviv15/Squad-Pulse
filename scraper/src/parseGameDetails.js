@@ -39,11 +39,15 @@ const WRAPPED_EVENTS = new Map([
  * @param html the game page
  * @param gameId the id requested; the page must be that game's
  * @param teamId our team; picks our side by the header's `team_id`
- * @param row the game's team-games row ({@link parseGamesPage}): names and scores are checked
- *   against it, and `date` / `kickoffTime` come from it
+ * @param row the game's row: `date` / `kickoffTime` come from it, and it's checked against the page
+ *   by `kind`
+ * @param kind `LEAGUE`: a team-games row ({@link parseGamesPage}), checked by both names and the
+ *   score; `CUP`: a State Cup row (KAN-85), checked by `ownSide` and the 90-minute score, never by
+ *   names (the list has full club names, the page short ones)
  * @returns {{game, warnings: Array<{check, expected, actual}>}}; throws ParseError
  */
-export function parseGameDetails(html, { gameId, teamId, row }) {
+export function parseGameDetails(html, { gameId, teamId, row, kind }) {
+  if (kind !== "LEAGUE" && kind !== "CUP") throw new TypeError("kind must be LEAGUE or CUP");
   const $ = load(html);
   const section = $(`section#gfd_${gameId}`);
   if (section.length !== 1) throw new ParseError("no game section with the requested game id");
@@ -71,16 +75,20 @@ export function parseGameDetails(html, { gameId, teamId, row }) {
   const ownSide = ownHome ? "HOME" : "AWAY";
   const [homeScore, awayScore] = parseScore($, time);
 
-  if (home.name !== row.homeTeamName) {
-    throw new ParseError("homeTeamName differs from the team-games row");
+  // The page's main score is the 90-minute one (extra time and a shootout have their own lines).
+  const rowName = kind === "CUP" ? "cup row" : "team-games row";
+  if (kind === "CUP") {
+    if (ownSide !== row.ownSide) throw new ParseError("ownSide differs from the cup row");
+  } else {
+    if (home.name !== row.homeTeamName) {
+      throw new ParseError("homeTeamName differs from the team-games row");
+    }
+    if (away.name !== row.awayTeamName) {
+      throw new ParseError("awayTeamName differs from the team-games row");
+    }
   }
-  if (away.name !== row.awayTeamName) {
-    throw new ParseError("awayTeamName differs from the team-games row");
-  }
-  if (homeScore !== row.homeScore)
-    throw new ParseError("homeScore differs from the team-games row");
-  if (awayScore !== row.awayScore)
-    throw new ParseError("awayScore differs from the team-games row");
+  if (homeScore !== row.homeScore) throw new ParseError(`homeScore differs from the ${rowName}`);
+  if (awayScore !== row.awayScore) throw new ParseError(`awayScore differs from the ${rowName}`);
 
   checkTimeline($, section);
   const players = parsePlayers($, section, ownSide === "HOME" ? "home" : "guest");

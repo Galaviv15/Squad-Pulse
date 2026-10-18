@@ -65,6 +65,7 @@ const ALLOWED = {
     "standings",
     "playerStats",
     "gameDetails",
+    "cupGames",
   ],
   fixtures: ["status", "fetchedAt", "games"],
   game: [
@@ -331,8 +332,8 @@ const okDetails = (games, failures = []) => ({
 });
 
 describe("local contract check: game details (KAN-80)", () => {
-  test("gameDetails is the fourth part", () => {
-    assert.deepEqual(PARTS, ["fixtures", "standings", "playerStats", "gameDetails"]);
+  test("cupGames is the fifth part (KAN-85)", () => {
+    assert.deepEqual(PARTS, ["fixtures", "standings", "playerStats", "gameDetails", "cupGames"]);
   });
 
   test("accepts the game details example in docs/scraper-backend-contract.md", () => {
@@ -486,5 +487,243 @@ describe("local contract check: game details (KAN-80)", () => {
     for (const name of ["fixtures", "standings", "playerStats"]) {
       assert.deepEqual(result[name], payload[name], name);
     }
+  });
+});
+
+describe("local contract check: cup games (KAN-85)", () => {
+  const example = () => structuredClone(contractExample("contract-example-cup-games"));
+  const game = () => structuredClone(example().cupGames.competitions[0].games[0]);
+  const ids = { runId: null, teamId: 7617, leagueId: 62, seasonId: 28 };
+  const okPart = (competitions) => ({
+    status: "OK",
+    fetchedAt: "2026-10-11T09:00:30Z",
+    competitions,
+  });
+  const stateCup = (games) => ({ competition: "STATE_CUP", status: "OK", games });
+  const payload = (cupGames, extra = {}) => ({ ...ids, ...extra, cupGames });
+
+  test("the cup example in docs/scraper-backend-contract.md passes unchanged", () => {
+    const doc = example();
+    assert.equal(payloadViolation(doc), null);
+    assert.deepEqual(enforceContract(doc), doc);
+  });
+
+  test("cupGames alone is a payload; OK with an empty list; a FAILED part; a FAILED competition", () => {
+    assert.equal(payloadViolation(payload(okPart([stateCup([])]))), null);
+    assert.equal(payloadViolation(payload(failedPart("TIMEOUT", "not attempted"))), null);
+    const failed = { competition: "STATE_CUP", ...failedPart("SOURCE_ERROR", "500 from source") };
+    assert.equal(payloadViolation(payload(okPart([failed]))), null);
+    assert.equal(
+      payloadViolation(
+        payload(okPart([{ competition: "STATE_CUP", status: "FAILED", reason: "TIMEOUT" }])),
+      ),
+      null,
+    );
+  });
+
+  // Each CupGame rule: the change, the rule's message relative to the competition.
+  const gameRules = {
+    "a missing field": [(g) => delete g.venue, "competition.games[0].venue: is required"],
+    "an unknown field": [(g) => (g.result = "W"), "competition.games[0]: unknown property"],
+    "gameId 0": [
+      (g) => (g.gameId = 0),
+      "competition.games[0].gameId: must be an integer in 1..2147483647",
+    ],
+    "gameId over int max": [
+      (g) => (g.gameId = 2147483648),
+      "competition.games[0].gameId: must be an integer in 1..2147483647",
+    ],
+    "a blank round": [
+      (g) => (g.round = "  "),
+      "competition.games[0].round: must be 1..100 characters",
+    ],
+    "a round over 100": [
+      (g) => (g.round = "א".repeat(101)),
+      "competition.games[0].round: must be 1..100 characters",
+    ],
+    "a control character in a name": [
+      (g) => (g.homeTeamName = "א\u0007ב"),
+      "competition.games[0].homeTeamName: must not contain control characters",
+    ],
+    "a name over 100": [
+      (g) => (g.awayTeamName = "א".repeat(101)),
+      "competition.games[0].awayTeamName: must be 1..100 characters",
+    ],
+    "home = away after trimming": [
+      (g) => (g.awayTeamName = ` ${g.homeTeamName} `),
+      "competition.games[0]: homeTeamName must differ from awayTeamName",
+    ],
+    "an unreal date": [
+      (g) => (g.date = "2026-02-30"),
+      "competition.games[0].date: must be a real yyyy-MM-dd date",
+    ],
+    "kickoff not HH:mm": [
+      (g) => (g.kickoffTime = "7:00"),
+      "competition.games[0].kickoffTime: must be HH:mm",
+    ],
+    "an unknown ownSide": [
+      (g) => (g.ownSide = "home"),
+      "competition.games[0].ownSide: unknown value",
+    ],
+    "an empty venue": [
+      (g) => (g.venue = ""),
+      "competition.games[0].venue: must be 1..200 characters",
+    ],
+    "a venue over 200": [
+      (g) => (g.venue = "א".repeat(201)),
+      "competition.games[0].venue: must be 1..200 characters",
+    ],
+    "one 90-minute score": [
+      (g) => (g.awayScore = null),
+      "competition.games[0]: homeScore and awayScore: both or neither",
+    ],
+    "a score of 100": [
+      (g) => (g.homeScore = 100),
+      "competition.games[0].homeScore: must be an integer in 0..99",
+    ],
+    "a score as a string": [
+      (g) => (g.awayScore = "0"),
+      "competition.games[0].awayScore: must be an integer in 0..99",
+    ],
+    "one extra-time score": [
+      (g) => (g.extraTimeHomeScore = 2),
+      "competition.games[0]: extraTimeHomeScore and extraTimeAwayScore: both or neither",
+    ],
+    "extra time as a raw string": [
+      (g) => Object.assign(g, { extraTimeHomeScore: "2-3", extraTimeAwayScore: "x" }),
+      "competition.games[0].extraTimeHomeScore: must be an integer in 0..99",
+    ],
+    "one penalties score": [
+      (g) => (g.penaltiesAwayScore = 4),
+      "competition.games[0]: penaltiesHomeScore and penaltiesAwayScore: both or neither",
+    ],
+    "a penalties score of -1": [
+      (g) => Object.assign(g, { penaltiesHomeScore: -1, penaltiesAwayScore: 1 }),
+      "competition.games[0].penaltiesHomeScore: must be an integer in 0..99",
+    ],
+    "extra time without the 90 minutes": [
+      (g) =>
+        Object.assign(g, {
+          homeScore: null,
+          awayScore: null,
+          extraTimeHomeScore: 1,
+          extraTimeAwayScore: 0,
+        }),
+      "competition.games[0]: extra time or penalties need homeScore and awayScore",
+    ],
+    "penalties without the 90 minutes": [
+      (g) =>
+        Object.assign(g, {
+          homeScore: null,
+          awayScore: null,
+          penaltiesHomeScore: 4,
+          penaltiesAwayScore: 3,
+        }),
+      "competition.games[0]: extra time or penalties need homeScore and awayScore",
+    ],
+  };
+  for (const [name, [change, rule]] of Object.entries(gameRules)) {
+    test(`${name}: only that competition becomes FAILED PARSE_ERROR`, () => {
+      const broken = game();
+      change(broken);
+      const before = payload(okPart([stateCup([game(), broken])]), {
+        fixtures: { status: "FAILED", reason: "TIMEOUT", detail: null },
+      });
+      const after = enforceContract(before);
+      assert.deepEqual(after.cupGames, {
+        status: "OK",
+        fetchedAt: "2026-10-11T09:00:30Z",
+        competitions: [
+          {
+            competition: "STATE_CUP",
+            status: "FAILED",
+            reason: "PARSE_ERROR",
+            detail: `contract check: ${rule.replace("games[0]", "games[1]")}`,
+          },
+        ],
+      });
+      assert.deepEqual(after.fixtures, before.fixtures);
+      assert.equal(payloadViolation(after), null);
+      assert.ok(payloadViolation(before).startsWith("cupGames.competitions[0].games[1]"));
+    });
+  }
+
+  test("accepted on purpose: penalties without extra time, an unequal shootout, extra time < 90 min", () => {
+    const g = game();
+    Object.assign(g, {
+      extraTimeHomeScore: null,
+      extraTimeAwayScore: null,
+      penaltiesHomeScore: 5,
+      penaltiesAwayScore: 5,
+    });
+    const h = {
+      ...game(),
+      homeScore: 3,
+      awayScore: 3,
+      extraTimeHomeScore: 1,
+      extraTimeAwayScore: 0,
+    };
+    assert.equal(payloadViolation(payload(okPart([stateCup([g, h])]))), null);
+  });
+
+  test("a duplicate game is not the scraper's to reject (the backend's DUPLICATE_GAME)", () => {
+    assert.equal(payloadViolation(payload(okPart([stateCup([game(), game()])]))), null);
+  });
+
+  test("over 50 games demotes the competition only", () => {
+    const after = enforceContract(payload(okPart([stateCup(Array.from({ length: 51 }, game))])));
+    assert.equal(after.cupGames.status, "OK");
+    assert.deepEqual(
+      after.cupGames.competitions[0].detail,
+      "contract check: competition.games: must be a list of at most 50",
+    );
+  });
+
+  const partRules = {
+    "a duplicate competition": [
+      okPart([stateCup([]), stateCup([])]),
+      "cupGames.competitions[1].competition: must appear at most once",
+    ],
+    "no competitions": [okPart([]), "cupGames.competitions: must have 1..5 competitions"],
+    "an unknown competition": [
+      okPart([{ competition: "TOTO_CUP", status: "OK", games: [] }]),
+      "cupGames.competitions[0].competition: unknown value",
+    ],
+    "a null competition": [okPart([null]), "cupGames.competitions[0]: must be an object"],
+    "OK with a reason": [
+      { ...okPart([stateCup([])]), reason: "TIMEOUT" },
+      "cupGames: unknown property",
+    ],
+    "no fetchedAt": [
+      { status: "OK", competitions: [stateCup([])] },
+      "cupGames.fetchedAt: is required",
+    ],
+    "a FAILED part without a reason": [{ status: "FAILED" }, "cupGames.reason: is required"],
+  };
+  for (const [name, [part, rule]] of Object.entries(partRules)) {
+    test(`${name}: the whole part becomes FAILED PARSE_ERROR, the others stay`, () => {
+      const before = payload(part, {
+        standings: { status: "FAILED", reason: "TIMEOUT", detail: null },
+      });
+      assert.equal(payloadViolation(before), rule);
+      const after = enforceContract(before);
+      assert.deepEqual(after.cupGames, failedPart("PARSE_ERROR", `contract check: ${rule}`));
+      assert.deepEqual(after.standings, before.standings);
+    });
+  }
+
+  test("a FAILED competition with an unknown reason, or with games, fails the part", () => {
+    const unknown = okPart([{ competition: "STATE_CUP", status: "FAILED", reason: "GONE" }]);
+    assert.equal(
+      payloadViolation(payload(unknown)),
+      "cupGames.competitions[0].reason: unknown reason",
+    );
+    const withGames = okPart([
+      { competition: "STATE_CUP", status: "FAILED", reason: "TIMEOUT", games: [] },
+    ]);
+    assert.equal(
+      payloadViolation(payload(withGames)),
+      "cupGames.competitions[0]: unknown property",
+    );
   });
 });

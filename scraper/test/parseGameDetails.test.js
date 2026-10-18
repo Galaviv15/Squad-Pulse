@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { parseCupGames } from "../src/parseCupGames.js";
 import { parseGameDetails } from "../src/parseGameDetails.js";
 import { parseGamesPage } from "../src/parseFixtures.js";
 import { ParseError } from "../src/text.js";
@@ -27,7 +28,7 @@ const ROW = {
 const HTML = Object.fromEntries(Object.keys(ROW).map((id) => [id, fixture(`game-${id}.html`)]));
 
 const parse = (gameId, html = HTML[gameId], row = ROW[gameId]) =>
-  parseGameDetails(html, { gameId, teamId: 7617, row });
+  parseGameDetails(html, { gameId, teamId: 7617, row, kind: "LEAGUE" });
 const gameOf = (gameId, html, row) => parse(gameId, html, row).game;
 
 /** Replaces `from` with `to` once, and fails if `from` isn't there (a stale variant). */
@@ -617,5 +618,109 @@ describe("game details: warnings, never failures", () => {
     assert.deepEqual(parse(1122670, html).warnings, [
       { check: "subsOnVsOff", expected: 4, actual: 5 },
     ]);
+  });
+});
+
+describe("cup rows (KAN-85): checked by ownSide and the 90-minute score, never by names", () => {
+  const cupRow = (natcup, ownName, gameId) => {
+    const row = parseCupGames(fixture(natcup), ownName).games.find((g) => g.gameId === gameId);
+    assert.ok(row, `no cup row ${gameId}`);
+    return row;
+  };
+  const SDEROT = "מועדון כדורגל שדרות";
+  const ROW_1142007 = cupRow("natcup-7617-s28.xml", SDEROT, 1142007);
+  const ROW_1123491 = cupRow("natcup-7617-s28.xml", SDEROT, 1123491);
+  const ROW_1123493 = cupRow("natcup-2194-s28.xml", "הפועל ניר רמת השרון", 1123493);
+  const ROW_1123518 = cupRow("natcup-2338-s28.xml", "הפועל בני מוסמוס", 1123518);
+  const cup = (gameId, row, { teamId = 7617, html = fixture(`game-${gameId}.html`) } = {}) =>
+    parseGameDetails(html, { gameId, teamId, row, kind: "CUP" });
+
+  test("game-1142007 against its cup row: passes with different (full) names; the page's names are sent", () => {
+    assert.notEqual(ROW_1142007.awayTeamName, "מ.כ. שדרות");
+    const { game } = cup(1142007, ROW_1142007);
+    assert.deepEqual(
+      [game.ownSide, game.homeTeamName, game.awayTeamName, game.homeScore, game.awayScore],
+      ["AWAY", "הפועל רהט", "מ.כ. שדרות", 1, 4],
+    );
+    assert.deepEqual([game.competition, game.round], ["גביע המדינה ווינר", 4]);
+    assert.deepEqual([game.date, game.kickoffTime], [ROW_1142007.date, ROW_1142007.kickoffTime]);
+    assert.deepEqual(Object.keys(game), Object.keys(gameOf(1142007)));
+  });
+
+  test("the same full-name row as a LEAGUE row still fails on the names (unchanged)", () => {
+    assert.throws(
+      () =>
+        parseGameDetails(HTML[1142007], {
+          gameId: 1142007,
+          teamId: 7617,
+          row: ROW_1142007,
+          kind: "LEAGUE",
+        }),
+      { message: "awayTeamName differs from the team-games row" },
+    );
+  });
+
+  test("a cup row with the other ownSide, or another score → ParseError", () => {
+    assert.throws(() => cup(1142007, { ...ROW_1142007, ownSide: "HOME" }), {
+      message: "ownSide differs from the cup row",
+    });
+    assert.throws(() => cup(1142007, { ...ROW_1142007, homeScore: 4, awayScore: 1 }), {
+      message: "homeScore differs from the cup row",
+    });
+    assert.throws(() => cup(1142007, { ...ROW_1142007, awayScore: 5 }), {
+      message: "awayScore differs from the cup row",
+    });
+  });
+
+  test("a missing or unknown kind is a programming error, not a ParseError", () => {
+    for (const kind of [undefined, "cup"]) {
+      assert.throws(
+        () =>
+          parseGameDetails(HTML[1142007], {
+            gameId: 1142007,
+            teamId: 7617,
+            row: ROW_1142007,
+            kind,
+          }),
+        (error) => error instanceof TypeError,
+      );
+    }
+  });
+
+  test("game-1123491, a preliminary round: its h1 is 'גביע המדינה ווינר מחזור 2' and it parses", () => {
+    const { game } = cup(1123491, ROW_1123491);
+    assert.deepEqual(
+      [game.competition, game.round, game.ownSide],
+      ["גביע המדינה ווינר", 2, "HOME"],
+    );
+    assert.deepEqual([game.homeScore, game.awayScore], [1, 0]);
+    assert.equal(game.players.length, 19);
+  });
+
+  test("game-1123493 (extra time): the page's main score is the 90-minute one", () => {
+    assert.deepEqual([ROW_1123493.homeScore, ROW_1123493.awayScore], [2, 2]);
+    assert.deepEqual([ROW_1123493.extraTimeHomeScore, ROW_1123493.extraTimeAwayScore], [3, 2]);
+    // The row check passes with the 90-minute score; the page then fails on an in-play penalty
+    // (pinned as today: own goals and penalties fail a game until their markup is decided).
+    assert.throws(() => cup(1123493, ROW_1123493, { teamId: 2194 }), {
+      message: "unknown timeline icon: penalty.svg",
+    });
+    // With the after-extra-time score as the row's, it's the score check that fails.
+    const afterExtraTime = { ...ROW_1123493, homeScore: 3, awayScore: 2 };
+    assert.throws(() => cup(1123493, afterExtraTime, { teamId: 2194 }), {
+      message: "homeScore differs from the cup row",
+    });
+  });
+
+  test("game-1123518 (a shootout) is pinned as today: a PARSE_ERROR on the kick takers' penalty icons", () => {
+    assert.deepEqual([ROW_1123518.penaltiesHomeScore, ROW_1123518.penaltiesAwayScore], [3, 1]);
+    assert.throws(
+      () => cup(1123518, ROW_1123518, { teamId: 2338 }),
+      (error) => {
+        assert.ok(error instanceof ParseError);
+        assert.equal(error.message, "unknown event icon: penalty.svg");
+        return true;
+      },
+    );
   });
 });

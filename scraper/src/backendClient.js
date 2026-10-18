@@ -97,6 +97,16 @@ function logOutcomes(runId, answer, log) {
       log.info(runId, "backend outcome", { part, outcome });
     }
   }
+  // KAN-85: each cup competition's own outcome (enum values only).
+  const competitions = answer.cupGames?.competitions;
+  for (const entry of Array.isArray(competitions) ? competitions : []) {
+    const fields = { competition: entry?.competition, outcome: entry?.outcome };
+    if (entry?.outcome === "REJECTED") {
+      log.warn(runId, "backend cup outcome", { ...fields, reason: entry?.reason });
+    } else {
+      log.info(runId, "backend cup outcome", fields);
+    }
+  }
   log.info(runId, "backend clubs updated", { clubsUpdated: answer.clubsUpdated });
   for (const warning of Array.isArray(answer.warnings) ? answer.warnings : []) {
     const fields = { code: warning?.code, count: warning?.count ?? undefined };

@@ -116,7 +116,7 @@ export function parseDate(text) {
 }
 
 /** `HH:mm`; the `00:00` placeholder (and an empty cell) mean "not set yet". */
-function parseTime(text) {
+export function parseTime(text) {
   if (text === "" || text === "00:00") {
     return null;
   }

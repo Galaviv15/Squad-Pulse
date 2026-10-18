@@ -1,7 +1,8 @@
 // Local check of a result payload against docs/scraper-backend-contract.md, before it's posted.
 // The backend rejects the whole request (400) on any violation, which would also lose the other
 // parts, so an `OK` part that breaks a rule is turned into `FAILED PARSE_ERROR` here; a game-details
-// game that breaks one is moved to that part's `failures` instead (KAN-80). Each rule mirrors
+// game that breaks one is moved to that part's `failures` instead (KAN-80), and a cup competition
+// whose games break one becomes that competition's `FAILED PARSE_ERROR` (KAN-85). Each rule mirrors
 // backend/.../scrapingintegration/ScrapeResultRequest.java, which is the source of truth.
 
 import { hasControlCharacter } from "./text.js";
@@ -10,7 +11,7 @@ export const REASONS = ["SOURCE_BLOCKED", "TIMEOUT", "SOURCE_ERROR", "PARSE_ERRO
 export const MAX_DETAIL_LENGTH = 500;
 const JAVA_INT_MAX = 2147483647;
 
-export const PARTS = ["fixtures", "standings", "playerStats", "gameDetails"];
+export const PARTS = ["fixtures", "standings", "playerStats", "gameDetails", "cupGames"];
 const TOP_KEYS = ["runId", "teamId", "leagueId", "seasonId", ...PARTS];
 const FAILED_KEYS = ["status", "reason", "detail"];
 const FIXTURES_KEYS = ["status", "fetchedAt", "games"];
@@ -74,6 +75,34 @@ const APPEARANCE_KEYS = [
 ];
 const EVENT_KEYS = ["kind", "minute"];
 const GAME_FAILURE_KEYS = ["gameId", "reason", "detail"];
+const CUP_GAMES_KEYS = ["status", "fetchedAt", "competitions"];
+const CUP_COMPETITION_OK_KEYS = ["competition", "status", "games"];
+const CUP_COMPETITION_FAILED_KEYS = ["competition", "status", "reason", "detail"];
+const CUP_GAME_KEYS = [
+  "gameId",
+  "round",
+  "date",
+  "kickoffTime",
+  "homeTeamName",
+  "awayTeamName",
+  "ownSide",
+  "venue",
+  "homeScore",
+  "awayScore",
+  "extraTimeHomeScore",
+  "extraTimeAwayScore",
+  "penaltiesHomeScore",
+  "penaltiesAwayScore",
+];
+const CUP_SCORE_PAIRS = [
+  ["homeScore", "awayScore"],
+  ["extraTimeHomeScore", "extraTimeAwayScore"],
+  ["penaltiesHomeScore", "penaltiesAwayScore"],
+];
+// backend match.CupCompetition: only the State Cup today.
+export const CUP_COMPETITIONS = ["STATE_CUP"];
+const MAX_CUP_COMPETITIONS = 5;
+const MAX_CUP_GAMES = 50;
 const SIDES = ["HOME", "AWAY"];
 const ROLES = ["STARTER", "SUBSTITUTE", "UNUSED"];
 const EVENT_KINDS = ["GOAL", "YELLOW", "SECOND_YELLOW", "RED", "SUB_ON", "SUB_OFF"];
@@ -300,6 +329,84 @@ function validateGameFailure(failure, at) {
   if (failure.detail !== undefined) nullableText(failure.detail, `${at}.detail`, MAX_DETAIL_LENGTH);
 }
 
+/**
+ * CupGamesPart (KAN-84): `OK` → fetchedAt and 1–5 competitions, none null, each competition at
+ * most once. A duplicate game within a competition is deliberately not checked (the backend
+ * rejects that competition alone, `DUPLICATE_GAME`).
+ */
+function validateCupGames(part, path) {
+  keys(part, CUP_GAMES_KEYS, path);
+  instant(part.fetchedAt, `${path}.fetchedAt`);
+  if (
+    !Array.isArray(part.competitions) ||
+    part.competitions.length < 1 ||
+    part.competitions.length > MAX_CUP_COMPETITIONS
+  ) {
+    fail(`${path}.competitions`, `must have 1..${MAX_CUP_COMPETITIONS} competitions`);
+  }
+  const seen = new Set();
+  part.competitions.forEach((entry, i) => {
+    const at = `${path}.competitions[${i}]`;
+    validateCupCompetition(entry, at);
+    if (seen.has(entry.competition)) fail(`${at}.competition`, "must appear at most once");
+    seen.add(entry.competition);
+  });
+}
+
+/** CupCompetitionPart: `OK` → games (0–50, none null); `FAILED` → a known reason, no games. */
+function validateCupCompetition(entry, at) {
+  if (!isObject(entry)) fail(at, "must be an object");
+  oneOf(entry.competition, CUP_COMPETITIONS, `${at}.competition`);
+  if (entry.status === "FAILED") {
+    keys(entry, CUP_COMPETITION_FAILED_KEYS, at, ["competition", "status", "reason"]);
+    if (!REASONS.includes(entry.reason)) fail(`${at}.reason`, "unknown reason");
+    if (entry.detail !== undefined) nullableText(entry.detail, `${at}.detail`, MAX_DETAIL_LENGTH);
+    return;
+  }
+  if (entry.status !== "OK") fail(`${at}.status`, "must be OK or FAILED");
+  keys(entry, CUP_COMPETITION_OK_KEYS, at);
+  if (!Array.isArray(entry.games) || entry.games.length > MAX_CUP_GAMES) {
+    fail(`${at}.games`, `must be a list of at most ${MAX_CUP_GAMES}`);
+  }
+  entry.games.forEach((game, i) => validateCupGame(game, `${at}.games[${i}]`));
+}
+
+/**
+ * CupGame: every field present; gameId null or 1..int max; round and names 1–100 after trimming,
+ * no control characters, names different; date yyyy-MM-dd; kickoffTime null or HH:mm; ownSide;
+ * venue null or 1–200; each score pair 0–99, both or neither; extra time or penalties need the
+ * 90-minute score. Nothing else across the scores (not extra time ≥ the 90 minutes, not an unequal
+ * shootout). A violation's path names the game by index, never by a name or a round.
+ */
+function validateCupGame(game, at) {
+  keys(game, CUP_GAME_KEYS, at);
+  if (game.gameId !== null) int(game.gameId, `${at}.gameId`, 1, JAVA_INT_MAX);
+  text(game.round, `${at}.round`, 100);
+  isoDate(game.date, `${at}.date`);
+  if (game.kickoffTime !== null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(game.kickoffTime)) {
+    fail(`${at}.kickoffTime`, "must be HH:mm");
+  }
+  text(game.homeTeamName, `${at}.homeTeamName`, 100);
+  text(game.awayTeamName, `${at}.awayTeamName`, 100);
+  if (game.homeTeamName.trim() === game.awayTeamName.trim()) {
+    fail(at, "homeTeamName must differ from awayTeamName");
+  }
+  oneOf(game.ownSide, SIDES, `${at}.ownSide`);
+  nullableText(game.venue, `${at}.venue`, 200);
+  for (const [home, away] of CUP_SCORE_PAIRS) {
+    if ((game[home] === null) !== (game[away] === null))
+      fail(at, `${home} and ${away}: both or neither`);
+    if (game[home] !== null) {
+      int(game[home], `${at}.${home}`, 0, 99);
+      int(game[away], `${at}.${away}`, 0, 99);
+    }
+  }
+  const later = CUP_SCORE_PAIRS.slice(1).some(([home]) => game[home] !== null);
+  if (later && game.homeScore === null) {
+    fail(at, "extra time or penalties need homeScore and awayScore");
+  }
+}
+
 function oneOf(value, allowed, path) {
   if (!allowed.includes(value)) fail(path, "unknown value");
 }
@@ -321,6 +428,7 @@ export function partViolation(name, part) {
     else if (name === "standings") validateStandings(part, name);
     else if (name === "playerStats") validatePlayerStats(part, name);
     else if (name === "gameDetails") validateGameDetails(part, name);
+    else if (name === "cupGames") validateCupGames(part, name);
     else fail(name, "unknown part");
     return null;
   } catch (error) {
@@ -405,13 +513,53 @@ function demoteGames(part) {
   return { ...part, games, failures };
 }
 
+/** The first rule one cup competition entry breaks, its path relative to it; `null` if none. */
+export function cupCompetitionViolation(entry) {
+  try {
+    validateCupCompetition(entry, "competition");
+    return null;
+  } catch (error) {
+    if (error instanceof Violation) return error.message;
+    throw error;
+  }
+}
+
+/**
+ * Turns every `OK` cup competition whose own content breaks a rule into that competition's
+ * `FAILED PARSE_ERROR` `contract check: <rule>` (the path relative to the competition): the other
+ * competitions and parts stay. A competition that isn't an object or has an unknown `competition`
+ * stays, so the whole part fails below, as does any other part-level violation (e.g. a duplicate
+ * competition).
+ */
+function demoteCompetitions(part) {
+  if (!isObject(part) || part.status !== "OK" || !Array.isArray(part.competitions)) return part;
+  const competitions = part.competitions.map((entry) => {
+    if (
+      !isObject(entry) ||
+      entry.status !== "OK" ||
+      !CUP_COMPETITIONS.includes(entry.competition)
+    ) {
+      return entry;
+    }
+    const violation = cupCompetitionViolation(entry);
+    if (violation === null) return entry;
+    return {
+      competition: entry.competition,
+      ...failedPart("PARSE_ERROR", `contract check: ${violation}`),
+    };
+  });
+  return { ...part, competitions };
+}
+
 /**
  * Turns every `OK` part that breaks the contract into `FAILED PARSE_ERROR` (first rule as detail),
- * after moving game-details games that break a rule to that part's `failures`.
+ * after moving game-details games that break a rule to that part's `failures` and failing cup
+ * competitions that break one on their own.
  */
 export function enforceContract(payload) {
   const result = { ...payload };
   if (result.gameDetails) result.gameDetails = demoteGames(result.gameDetails);
+  if (result.cupGames) result.cupGames = demoteCompetitions(result.cupGames);
   for (const name of PARTS) {
     const violation = partViolation(name, result[name]);
     if (violation !== null) {

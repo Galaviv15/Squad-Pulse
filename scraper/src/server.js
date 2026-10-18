@@ -9,9 +9,9 @@ export const MAX_BODY_BYTES = 4096;
 const JAVA_INT_MAX = 2147483647;
 const REQUIRED = ["runId", "teamId", "leagueId", "seasonId", "fixtures", "standings"];
 // Optional, absent = false / []: the backend leaves a false part and an empty list out of the body
-// (KAN-72/73, KAN-79/80).
-const OPTIONAL = ["playerStats", "gameDetails", "knownGameIds"];
-const PARTS = ["fixtures", "standings", "playerStats", "gameDetails"];
+// (KAN-72/73, KAN-79/80, KAN-84/85).
+const OPTIONAL = ["playerStats", "gameDetails", "knownGameIds", "cupGames"];
+const PARTS = ["fixtures", "standings", "playerStats", "gameDetails", "cupGames"];
 export const MAX_KNOWN_GAME_IDS = 200;
 
 class BadRequest extends Error {}
@@ -27,11 +27,11 @@ export function tokenMatches(authorization, expectedDigest) {
 
 /**
  * Validates a trigger body. → a job, or throws BadRequest with a fixed message. The six REQUIRED
- * properties must be present; `playerStats` and `gameDetails` are optional (absent = `false`), but
- * booleans if present. `knownGameIds` is optional (absent = `[]`) and allowed only with
- * `gameDetails: true`: at most 200 distinct integers in 1..int max. Any other property is
- * rejected. At least one of the four parts must be `true`. The job always has `playerStats` and
- * `gameDetails` as booleans and `knownGameIds` as an array.
+ * properties must be present; `playerStats`, `gameDetails` and `cupGames` are optional (absent =
+ * `false`), but booleans if present (`null` is rejected). `knownGameIds` is optional (absent =
+ * `[]`) and allowed only with `gameDetails: true`: at most 200 distinct integers in 1..int max.
+ * Any other property is rejected. At least one of the five parts must be `true`. The job always has
+ * `playerStats`, `gameDetails` and `cupGames` as booleans and `knownGameIds` as an array.
  */
 export function parseTrigger(body) {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -66,6 +66,7 @@ export function parseTrigger(body) {
     playerStats: "playerStats" in body ? body.playerStats : false,
     gameDetails: "gameDetails" in body ? body.gameDetails : false,
     knownGameIds: "knownGameIds" in body ? body.knownGameIds : [],
+    cupGames: "cupGames" in body ? body.cupGames : false,
   };
   for (const key of PARTS) {
     if (typeof job[key] !== "boolean") throw new BadRequest(`${key}: must be a boolean`);
@@ -76,7 +77,7 @@ export function parseTrigger(body) {
   validateKnownGameIds(job.knownGameIds);
   if (!PARTS.some((key) => job[key])) {
     throw new BadRequest(
-      "nothing to scrape: fixtures, standings, playerStats and gameDetails are all false",
+      "nothing to scrape: fixtures, standings, playerStats, gameDetails and cupGames are all false",
     );
   }
   return job;
@@ -176,6 +177,7 @@ export function createTriggerServer({ token, queue, log }) {
             playerStats: job.playerStats,
             gameDetails: job.gameDetails,
             knownGameIds: job.knownGameIds.length,
+            cupGames: job.cupGames,
             ...(result.status === "ALREADY_QUEUED" ? { existingRun: result.runId ?? "-" } : {}),
           },
         );

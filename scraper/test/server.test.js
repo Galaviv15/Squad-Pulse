@@ -16,7 +16,7 @@ const BODY = {
   standings: true,
 };
 // What parseTrigger adds to BODY: every optional property at its default.
-const DEFAULTS = { playerStats: false, gameDetails: false, knownGameIds: [] };
+const DEFAULTS = { playerStats: false, gameDetails: false, knownGameIds: [], cupGames: false };
 
 let server;
 let base;
@@ -151,7 +151,7 @@ describe("POST /scrape", () => {
 
   test("the contract's trigger example parses", () => {
     const example = contractExample("contract-example-trigger");
-    assert.deepEqual(parseTrigger(example), { ...example });
+    assert.deepEqual(parseTrigger(example), { ...example, cupGames: false });
     assert.equal(example.gameDetails, true);
     assert.equal(example.knownGameIds.length, 2);
   });
@@ -169,11 +169,37 @@ describe("POST /scrape", () => {
     }
   });
 
-  test("400 nothing to scrape: all four parts false", async () => {
+  test("400 nothing to scrape: all five parts false", async () => {
     const body = { ...BODY, fixtures: false, standings: false, playerStats: false };
-    assert.deepEqual(await expectStatus(post({ ...body, gameDetails: false }), 400), {
-      error: "nothing to scrape: fixtures, standings, playerStats and gameDetails are all false",
-    });
+    const error = {
+      error:
+        "nothing to scrape: fixtures, standings, playerStats, gameDetails and cupGames are all false",
+    };
+    assert.deepEqual(await expectStatus(post({ ...body, gameDetails: false }), 400), error);
+    assert.deepEqual(
+      await expectStatus(post({ ...body, gameDetails: false, cupGames: false }), 400),
+      error,
+    );
+  });
+
+  test("cupGames (KAN-85): absent → false, a boolean, never null or another type", () => {
+    assert.equal(parseTrigger(BODY).cupGames, false);
+    assert.equal(parseTrigger({ ...BODY, cupGames: true }).cupGames, true);
+    assert.equal(parseTrigger({ ...BODY, cupGames: false }).cupGames, false);
+    for (const value of [null, "true", 1, [], {}]) {
+      assert.throws(() => parseTrigger({ ...BODY, cupGames: value }), {
+        message: "cupGames: must be a boolean",
+      });
+    }
+  });
+
+  test("cupGames alone is a valid trigger", async () => {
+    const body = { ...BODY, runId: "c1", fixtures: false, standings: false, cupGames: true };
+    assert.deepEqual(parseTrigger(body), { ...DEFAULTS, ...body });
+    assert.deepEqual(await expectStatus(post(body), 202), { status: "QUEUED", runId: "c1" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const line = log.lines.find((l) => / run=c1 trigger accepted/.test(l));
+    assert.match(line, / cupGames=true( |$)/);
   });
 
   test("runId null is accepted and echoed", async () => {
