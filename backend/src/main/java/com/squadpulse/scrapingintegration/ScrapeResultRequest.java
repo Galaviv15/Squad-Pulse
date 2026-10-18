@@ -3,6 +3,7 @@ package com.squadpulse.scrapingintegration;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.OptBoolean;
 import com.squadpulse.common.NoControlCharacters;
+import com.squadpulse.match.CupCompetition;
 import com.squadpulse.match.FixturesResponse;
 import com.squadpulse.match.ScrapedGameDetails;
 import jakarta.validation.Valid;
@@ -23,10 +24,10 @@ import java.util.Set;
 
 /**
  * The body of {@code POST /internal/scrape-results}: one scrape of one team's league fixtures, its
- * league's standings, the team's player season statistics (KAN-72) and the details of some of its
- * played games (KAN-79), posted by the scraper (KAN-66). <b>These records are the scraper ↔ backend
- * contract</b>, and docs/scraper-backend-contract.md is its public description: keep the two in
- * sync.
+ * league's standings, the team's player season statistics (KAN-72), the details of some of its
+ * played games (KAN-79) and its cup games (KAN-84), posted by the scraper (KAN-66). <b>These
+ * records are the scraper ↔ backend contract</b>, and docs/scraper-backend-contract.md is its
+ * public description: keep the two in sync.
  *
  * <p>No string in it may contain a control character ({@link NoControlCharacters}): the backend
  * joins team names with one to build a game's key.
@@ -42,6 +43,7 @@ import java.util.Set;
  * @param standings {@code null} / absent if not attempted
  * @param playerStats {@code null} / absent if not attempted (KAN-72)
  * @param gameDetails {@code null} / absent if not attempted (KAN-79)
+ * @param cupGames {@code null} / absent if not attempted (KAN-84)
  */
 public record ScrapeResultRequest(
     @Size(max = 100) @NoControlCharacters String runId,
@@ -51,11 +53,16 @@ public record ScrapeResultRequest(
     @Valid FixturesPart fixtures,
     @Valid StandingsPart standings,
     @Valid PlayerStatsPart playerStats,
-    @Valid GameDetailsPart gameDetails) {
+    @Valid GameDetailsPart gameDetails,
+    @Valid CupGamesPart cupGames) {
 
-  @AssertTrue(message = "fixtures, standings, playerStats or gameDetails must be present")
+  @AssertTrue(message = "fixtures, standings, playerStats, gameDetails or cupGames must be present")
   boolean isAnyPartPresent() {
-    return fixtures != null || standings != null || playerStats != null || gameDetails != null;
+    return fixtures != null
+        || standings != null
+        || playerStats != null
+        || gameDetails != null
+        || cupGames != null;
   }
 
   /** Whether a part succeeded; {@code FAILED} carries a {@link FailureReason} instead of data. */
@@ -362,6 +369,130 @@ public record ScrapeResultRequest(
       @NotNull @Positive Integer gameId,
       @NotNull FailureReason reason,
       @Size(max = 500) @NoControlCharacters String detail) {}
+
+  /**
+   * The team's cup games (KAN-84), one entry per cup competition, each with its own status. {@code
+   * OK}: {@code fetchedAt} and {@code competitions} (1–5, each competition at most once), no {@code
+   * reason} / {@code detail}. {@code FAILED} — only when the team page failed, so no row could be
+   * read: {@code reason} (and optionally {@code detail}), no {@code fetchedAt} / {@code
+   * competitions}.
+   *
+   * <p>A duplicate game within a competition is deliberately <b>not</b> checked here: a 400 would
+   * lose the request's other parts, so the ingest rejects that competition alone ({@code
+   * DUPLICATE_GAME}).
+   */
+  public record CupGamesPart(
+      @NotNull PartStatus status,
+      Instant fetchedAt,
+      @Size(min = 1, max = 5) List<@NotNull @Valid CupCompetitionPart> competitions,
+      FailureReason reason,
+      @Size(max = 500) @NoControlCharacters String detail) {
+
+    @AssertTrue(
+        message =
+            "status OK needs fetchedAt and competitions and no reason or detail; FAILED needs a"
+                + " reason and no fetchedAt or competitions")
+    boolean isConsistentWithStatus() {
+      return isConsistent(
+          status,
+          fetchedAt != null && competitions != null,
+          fetchedAt != null || competitions != null,
+          reason,
+          detail);
+    }
+
+    @AssertTrue(message = "each competition must appear at most once")
+    boolean isCompetitionsUnique() {
+      if (competitions == null) {
+        return true;
+      }
+      Set<CupCompetition> seen = new HashSet<>();
+      return competitions.stream()
+          .filter(Objects::nonNull)
+          .allMatch(entry -> entry.competition() == null || seen.add(entry.competition()));
+    }
+  }
+
+  /**
+   * One cup competition's list. {@code OK}: {@code games} (0–50; empty is a valid list, the site's
+   * {@code Games: null}), no {@code reason} / {@code detail}. {@code FAILED}: {@code reason} (and
+   * optionally {@code detail}), no {@code games}.
+   *
+   * @param competition an unknown value is a 400 (Jackson rejects it)
+   * @param detail free text for the operator; never logged above DEBUG
+   */
+  public record CupCompetitionPart(
+      @NotNull CupCompetition competition,
+      @NotNull PartStatus status,
+      @Size(max = 50) List<@NotNull @Valid CupGame> games,
+      FailureReason reason,
+      @Size(max = 500) @NoControlCharacters String detail) {
+
+    @AssertTrue(
+        message =
+            "status OK needs games and no reason or detail; FAILED needs a reason and no games")
+    boolean isConsistentWithStatus() {
+      return isConsistent(status, games != null, games != null, reason, detail);
+    }
+  }
+
+  /**
+   * One game of a cup list, home / away (the scraper swaps the list's away-first result). There's
+   * no team id in a cup row: the names are full club names as the list shows them, and our side is
+   * the scraper's {@code ownSide} (exact match to the team page's {@code h1}); the backend does no
+   * name matching for cups.
+   *
+   * <p>{@code extraTime} / {@code penalties} are never interpreted (their format is unseen), so
+   * they're deliberately loose and not checked against the scores: one set while the scores are
+   * {@code null} is accepted.
+   *
+   * @param gameId the site's {@code game_id}, {@code null} without a link; an attribute, never the
+   *     key; never leaves the backend
+   * @param round as the cup list shows it (free text); trimmed here. Never the game page's {@code
+   *     מחזור N}
+   * @param date Israel local, {@code yyyy-MM-dd}
+   * @param kickoffTime Israel local, {@code HH:mm}; {@code null} while not set (the site's {@code
+   *     00:00})
+   * @param homeTeamName full club name; trimmed here
+   * @param ownSide decided by the scraper
+   * @param venue {@code null} when none; trimmed here
+   * @param homeScore both scores or neither (not played); home first
+   * @param extraTime the extra-time cell, raw; {@code null} when empty; trimmed here
+   * @param penalties the penalties cell, raw; {@code null} when empty; trimmed here
+   */
+  public record CupGame(
+      @Positive Integer gameId,
+      @NotBlank @Size(max = 100) @NoControlCharacters String round,
+      @NotNull @JsonFormat(pattern = "uuuu-MM-dd", lenient = OptBoolean.FALSE) LocalDate date,
+      @JsonFormat(pattern = "HH:mm", lenient = OptBoolean.FALSE) LocalTime kickoffTime,
+      @NotBlank @Size(max = 100) @NoControlCharacters String homeTeamName,
+      @NotBlank @Size(max = 100) @NoControlCharacters String awayTeamName,
+      @NotNull FixturesResponse.Side ownSide,
+      @Size(min = 1, max = 200) @NoControlCharacters String venue,
+      @Min(0) @Max(99) Integer homeScore,
+      @Min(0) @Max(99) Integer awayScore,
+      @Size(min = 1, max = 50) @NoControlCharacters String extraTime,
+      @Size(min = 1, max = 50) @NoControlCharacters String penalties) {
+
+    public CupGame {
+      round = trim(round);
+      homeTeamName = trim(homeTeamName);
+      awayTeamName = trim(awayTeamName);
+      venue = trim(venue);
+      extraTime = trim(extraTime);
+      penalties = trim(penalties);
+    }
+
+    @AssertTrue(message = "homeScore and awayScore must both be set or both be null")
+    boolean isScoreComplete() {
+      return (homeScore == null) == (awayScore == null);
+    }
+
+    @AssertTrue(message = "homeTeamName and awayTeamName must differ")
+    boolean isTwoTeams() {
+      return homeTeamName == null || !homeTeamName.equals(awayTeamName);
+    }
+  }
 
   private static boolean isConsistent(
       PartStatus status,

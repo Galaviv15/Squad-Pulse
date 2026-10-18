@@ -68,6 +68,7 @@ class ContractExampleIntegrationTest {
     mongoTemplate.getCollection("player_season_stats").deleteMany(new Document());
     mongoTemplate.getCollection("game_details").deleteMany(new Document());
     mongoTemplate.getCollection("game_detail_attempts").deleteMany(new Document());
+    mongoTemplate.getCollection("cup_fixtures").deleteMany(new Document());
     clubs.deleteAllClubs();
   }
 
@@ -185,6 +186,47 @@ class ContractExampleIntegrationTest {
     assertThat(actual).isEqualTo(expected);
     assertThat(mongoTemplate.getCollection("game_details").countDocuments()).isEqualTo(1);
     assertThat(mongoTemplate.getCollection("game_detail_attempts").countDocuments()).isEqualTo(1);
+  }
+
+  /**
+   * KAN-84: the cup-games example (the block after {@code <!-- contract-example-cup-games -->}) is
+   * accepted, answered as the block after {@code <!-- contract-example-cup-games-response -->}, and
+   * stores one State Cup snapshot with its two games.
+   */
+  @Test
+  void theDocumentedCupGamesExampleIsAcceptedAndAnsweredAsDocumented() throws Exception {
+    String doc = Files.readString(CONTRACT, StandardCharsets.UTF_8);
+    String requestJson = fencedBlockAfter(doc, "<!-- contract-example-cup-games -->");
+    JsonNode expected =
+        ScrapePayloads.JSON.readTree(
+            fencedBlockAfter(doc, "<!-- contract-example-cup-games-response -->"));
+    JsonNode request = ScrapePayloads.JSON.readTree(requestJson);
+    assertThat(Instant.parse(request.get("cupGames").get("fetchedAt").asString()))
+        .isBefore(Instant.now());
+    clubs.createClub(
+        "Example club",
+        request.get("teamId").asInt(),
+        request.get("leagueId").asInt(),
+        request.get("seasonId").asInt());
+
+    String response =
+        mockMvc
+            .perform(
+                post("/internal/scrape-results")
+                    .header("Authorization", "Bearer " + SERVICE_TOKEN)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestJson))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    JsonNode actual = ScrapePayloads.JSON.readTree(response);
+    assertThat(actual.get("cupGames").get("outcome").asString()).isEqualTo("STORED");
+    assertThat(actual).isEqualTo(expected);
+    Document snapshot = mongoTemplate.getCollection("cup_fixtures").find().first();
+    assertThat(snapshot).isNotNull();
+    assertThat(snapshot.getList("games", Document.class)).hasSize(2);
   }
 
   /** The content of the first {@code ```json} block after {@code marker}. */

@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
  * read, and only the service-token ingest controller calls {@link ScrapeIngestService}. The
  * repository is package-private, so nothing outside {@code match} can reach it in the first place.
  * Likewise for the club-scoped player statistics snapshots (KAN-72) and game details and attempt
- * counts (KAN-79).
+ * counts (KAN-79), and the cup fixtures snapshots (KAN-84).
  */
 class StandingsWritePathTest {
 
@@ -82,6 +82,44 @@ class StandingsWritePathTest {
         .check(MAIN_CLASSES);
   }
 
+  /**
+   * The cup fixtures snapshots (KAN-84) are club-scoped, and likewise written only by the ingest:
+   * {@code MatchReadService} and {@code GameDetailsReadService} only find.
+   */
+  @Test
+  void onlyTheIngestServiceWritesTheCupFixtures() {
+    noClasses()
+        .that()
+        .doNotHaveFullyQualifiedName(ScrapeIngestService.class.getName())
+        .should()
+        .callMethodWhere(
+            com.tngtech.archunit.base.DescribedPredicate.describe(
+                "a write to the cup fixtures repository",
+                call ->
+                    call.getTargetOwner().isAssignableTo(CupFixturesSnapshotRepository.class)
+                        && !call.getName().startsWith("find")))
+        .because("scraped cup games are written only by the scraper's ingest")
+        .check(MAIN_CLASSES);
+  }
+
+  /**
+   * The signature below must be the real one: {@code callMethod} with a method that doesn't exist
+   * matches nothing, and the rule would pass vacuously.
+   */
+  @Test
+  void theIngestSignatureCheckedBelowExists() throws NoSuchMethodException {
+    ScrapeIngestService.class.getMethod(
+        "ingest",
+        int.class,
+        int.class,
+        int.class,
+        ScrapedFixtures.class,
+        ScrapedStandings.class,
+        ScrapedPlayerStats.class,
+        ScrapedGameDetails.class,
+        ScrapedCupGames.class);
+  }
+
   @Test
   void onlyTheServiceTokenIngestEndpointCallsTheIngestService() {
     noClasses()
@@ -99,7 +137,8 @@ class StandingsWritePathTest {
             ScrapedFixtures.class,
             ScrapedStandings.class,
             ScrapedPlayerStats.class,
-            ScrapedGameDetails.class)
+            ScrapedGameDetails.class,
+            ScrapedCupGames.class)
         .because("no user-facing endpoint may reach the standings' write path")
         .check(MAIN_CLASSES);
   }

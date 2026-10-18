@@ -73,9 +73,9 @@ public class ScrapeTriggerService {
 
   /**
    * KEYS: team lock, league lock, run key. ARGV: runId, cooldown ms, run TTL ms, clubId, teamId,
-   * leagueId, seasonId, source, startedAt ms, playerStats ("1" / "0"), gameDetails ("1" / "0").
-   * Returns {@code [HELD, holder runId]} or {@code [ACQUIRED, "1" if the league lock was taken too,
-   * else "0"]}.
+   * leagueId, seasonId, source, startedAt ms, playerStats ("1" / "0"), gameDetails ("1" / "0"),
+   * cupGames ("1" / "0", KAN-84). Returns {@code [HELD, holder runId]} or {@code [ACQUIRED, "1" if
+   * the league lock was taken too, else "0"]}.
    */
   @SuppressWarnings("rawtypes")
   static final RedisScript<List> ACQUIRE_SCRIPT =
@@ -90,7 +90,8 @@ public class ScrapeTriggerService {
           end
           redis.call('HSET', KEYS[3], 'clubId', ARGV[4], 'teamId', ARGV[5], 'leagueId', ARGV[6],
                      'seasonId', ARGV[7], 'fixtures', '1', 'standings', standings,
-                     'playerStats', ARGV[10], 'gameDetails', ARGV[11], 'source', ARGV[8],
+                     'playerStats', ARGV[10], 'gameDetails', ARGV[11], 'cupGames', ARGV[12],
+                     'source', ARGV[8],
                      'state', 'PENDING',
                      'startedAt', ARGV[9], 'failureReason', '')
           redis.call('PEXPIRE', KEYS[3], ARGV[3])
@@ -140,6 +141,21 @@ public class ScrapeTriggerService {
    * #REQUEST_PLAYER_STATS}.
    */
   static final boolean REQUEST_GAME_DETAILS = true;
+
+  /**
+   * Whether a trigger asks for the team's cup games (KAN-84): the scraper would load the team page
+   * and fetch the team's cup lists. <b>{@code false} until KAN-85</b>, which teaches the scraper
+   * the property: {@code scraper/src/server.js} rejects unknown properties with a 400, which the
+   * backend treats as "scraper unavailable" — sending it now would break every refresh. KAN-85
+   * flips it together with the scraper, like {@link #REQUEST_PLAYER_STATS} and {@link
+   * #REQUEST_GAME_DETAILS}.
+   *
+   * <p><b>Deploy order</b>: flipping it puts cup games into {@code GET /matches/fixtures}, and
+   * today's frontend decides "played" from {@code result}, which is {@code null} for a cup game
+   * with extra time or penalties. So the frontend (KAN-86) must be live first, or together; then
+   * the scraper (KAN-85); then the backend with this {@code true} — or all together.
+   */
+  static final boolean REQUEST_CUP_GAMES = false;
 
   /**
    * The most {@code knownGameIds} a trigger carries (≈ 1.8 KB, inside the scraper's 4 KB body
@@ -249,7 +265,8 @@ public class ScrapeTriggerService {
             source.name(),
             String.valueOf(startedAt.toEpochMilli()),
             REQUEST_PLAYER_STATS ? "1" : "0",
-            gameDetails.requested() ? "1" : "0");
+            gameDetails.requested() ? "1" : "0",
+            REQUEST_CUP_GAMES ? "1" : "0");
     if (acquired == null || acquired.isEmpty()) {
       throw new IllegalStateException("The scrape lock script returned nothing");
     }
@@ -269,7 +286,8 @@ public class ScrapeTriggerService {
                 standings,
                 REQUEST_PLAYER_STATS,
                 gameDetails.requested(),
-                gameDetails.knownGameIds()));
+                gameDetails.knownGameIds(),
+                REQUEST_CUP_GAMES));
     return switch (answer) {
       case Answer.Queued queued when runId.equals(queued.runId()) -> {
         statusService.markAccepted(clubId, runId);

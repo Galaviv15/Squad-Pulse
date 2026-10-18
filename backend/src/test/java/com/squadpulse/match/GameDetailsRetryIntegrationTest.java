@@ -65,6 +65,7 @@ class GameDetailsRetryIntegrationTest {
   @Autowired private GameDetailAttemptsRepository attemptsRepository;
   @Autowired private LeagueFixturesSnapshotRepository fixturesRepository;
   @Autowired private LeagueStandingsSnapshotRepository standingsRepository;
+  @Autowired private CupFixturesSnapshotRepository cupRepository;
   @Autowired private ClubFootballMappings mappings;
   @Autowired private ClubContext clubContext;
   @Autowired private MongoTemplate mongoTemplate;
@@ -81,7 +82,12 @@ class GameDetailsRetryIntegrationTest {
     knownGames = new KnownGames(detailsRepository, attemptsRepository, clubContext, clock);
     readService =
         new MatchReadService(
-            mappings, fixturesRepository, standingsRepository, knownGames, clubContext);
+            mappings,
+            fixturesRepository,
+            cupRepository,
+            standingsRepository,
+            knownGames,
+            clubContext);
     // The game, played, in the club's fixtures.
     ingestService.ingest(
         TEAM,
@@ -109,6 +115,7 @@ class GameDetailsRetryIntegrationTest {
                     null,
                     null,
                     null))),
+        null,
         null,
         null,
         null);
@@ -180,7 +187,8 @@ class GameDetailsRetryIntegrationTest {
         null,
         null,
         null,
-        new ScrapedGameDetails(retry, List.of(game()), List.of()));
+        new ScrapedGameDetails(retry, List.of(game()), List.of()),
+        null);
 
     clubContext.setClubId(clubId);
     assertThat(attemptsRepository.findAll()).isEmpty();
@@ -234,7 +242,8 @@ class GameDetailsRetryIntegrationTest {
             List.of(),
             List.of(
                 new ScrapedGameDetails.Failure(
-                    GAME, ScrapedGameDetails.FailureReason.valueOf(reason), null))));
+                    GAME, ScrapedGameDetails.FailureReason.valueOf(reason), null))),
+        null);
   }
 
   private void assertGivenUp(boolean givenUp) {

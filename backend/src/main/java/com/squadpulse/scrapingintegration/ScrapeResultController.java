@@ -1,12 +1,16 @@
 package com.squadpulse.scrapingintegration;
 
 import com.squadpulse.common.BadRequestException;
+import com.squadpulse.match.CupCompetition;
 import com.squadpulse.match.IngestResult;
 import com.squadpulse.match.ScrapeIngestService;
+import com.squadpulse.match.ScrapedCupGames;
 import com.squadpulse.match.ScrapedFixtures;
 import com.squadpulse.match.ScrapedGameDetails;
 import com.squadpulse.match.ScrapedPlayerStats;
 import com.squadpulse.match.ScrapedStandings;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.CupCompetitionPart;
+import com.squadpulse.scrapingintegration.ScrapeResultRequest.CupGamesPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.FixturesPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.GameDetailsPart;
 import com.squadpulse.scrapingintegration.ScrapeResultRequest.PartStatus;
@@ -16,6 +20,9 @@ import jakarta.validation.Valid;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,7 +42,9 @@ import org.springframework.web.bind.annotation.RestController;
  * ScrapeResultBodyLimit}), and a {@code fetchedAt} at most {@link #CLOCK_SKEW} in the future here —
  * so a 400 writes nothing. A part the scraper reports as {@code FAILED} is logged at INFO with its
  * reason and the ids only ({@code detail} at DEBUG) and written nowhere. The successful parts go to
- * {@link ScrapeIngestService}.
+ * {@link ScrapeIngestService}. Likewise for each cup competition (KAN-84): one reported {@code
+ * FAILED} is logged the same way, answered {@code FAILURE_RECORDED} and never handed to the ingest,
+ * so its stored games stay; the others are.
  *
  * <p>Once the ingest has returned normally, the outcomes it computed set the status of the run
  * named by {@code runId} ({@link ScrapeRunStatusService#recordResult}, KAN-68): so a 400, 409 or
@@ -83,11 +92,20 @@ class ScrapeResultController {
     if (request.gameDetails() != null && isAfter(request.gameDetails().fetchedAt(), latest)) {
       throw new BadRequestException("gameDetails.fetchedAt", "must not be in the future");
     }
+    if (request.cupGames() != null && isAfter(request.cupGames().fetchedAt(), latest)) {
+      throw new BadRequestException("cupGames.fetchedAt", "must not be in the future");
+    }
 
     boolean fixturesFailed = reportFailure("fixtures", request, request.fixtures());
     boolean standingsFailed = reportFailure("standings", request, request.standings());
     boolean playerStatsFailed = reportFailure("playerStats", request, request.playerStats());
     boolean gameDetailsFailed = reportFailure("gameDetails", request, request.gameDetails());
+    boolean cupGamesFailed = reportFailure("cupGames", request, request.cupGames());
+    if (!cupGamesFailed && request.cupGames() != null) {
+      for (CupCompetitionPart competition : request.cupGames().competitions()) {
+        reportFailure("cupGames." + competition.competition(), request, competition);
+      }
+    }
     IngestResult result =
         ingestService.ingest(
             request.teamId(),
@@ -96,7 +114,8 @@ class ScrapeResultController {
             fixturesFailed ? null : toFixtures(request.fixtures()),
             standingsFailed ? null : toStandings(request.standings()),
             playerStatsFailed ? null : toPlayerStats(request.playerStats()),
-            gameDetailsFailed ? null : toGameDetails(request.gameDetails()));
+            gameDetailsFailed ? null : toGameDetails(request.gameDetails()),
+            cupGamesFailed ? null : toCupGames(request.cupGames()));
 
     ScrapeResultResponse response =
         new ScrapeResultResponse(
@@ -104,6 +123,7 @@ class ScrapeResultController {
             standingsFailed ? failureRecorded() : outcome(result.standings()),
             playerStatsFailed ? failureRecorded() : outcome(result.playerStats()),
             gameDetailsFailed ? failureRecorded() : outcome(result.gameDetails()),
+            cupGamesOutcome(request.cupGames(), cupGamesFailed, result.cupGames()),
             result.clubsUpdated(),
             result.warnings().stream()
                 .map(warning -> new ScrapeResultResponse.Warning(warning.code(), warning.count()))
@@ -135,6 +155,14 @@ class ScrapeResultController {
         && gameDetails.status() == PartStatus.FAILED) {
       reason = gameDetails.reason();
       detail = gameDetails.detail();
+    } else if (partBody instanceof CupGamesPart cupGames
+        && cupGames.status() == PartStatus.FAILED) {
+      reason = cupGames.reason();
+      detail = cupGames.detail();
+    } else if (partBody instanceof CupCompetitionPart competition
+        && competition.status() == PartStatus.FAILED) {
+      reason = competition.reason();
+      detail = competition.detail();
     } else {
       return false;
     }
@@ -262,6 +290,79 @@ class ScrapeResultController {
                     new ScrapedGameDetails.Failure(
                         failure.gameId(), toMatchReason(failure.reason()), failure.detail()))
             .toList());
+  }
+
+  /** Only the competitions the scraper read; a {@code FAILED} one stays out of the ingest. */
+  private static ScrapedCupGames toCupGames(CupGamesPart part) {
+    if (part == null) {
+      return null;
+    }
+    return new ScrapedCupGames(
+        part.fetchedAt(),
+        part.competitions().stream()
+            .filter(competition -> competition.status() == PartStatus.OK)
+            .map(
+                competition ->
+                    new ScrapedCupGames.Competition(
+                        competition.competition(),
+                        competition.games().stream()
+                            .map(
+                                game ->
+                                    new ScrapedCupGames.Game(
+                                        game.gameId(),
+                                        game.round(),
+                                        game.date(),
+                                        game.kickoffTime(),
+                                        game.homeTeamName(),
+                                        game.awayTeamName(),
+                                        game.ownSide(),
+                                        game.venue(),
+                                        game.homeScore(),
+                                        game.awayScore(),
+                                        game.extraTime(),
+                                        game.penalties()))
+                            .toList()))
+            .toList());
+  }
+
+  /**
+   * The cup part's answer: every competition of the request in its order — a {@code FAILED} one as
+   * {@code FAILURE_RECORDED}, the others as the ingest decided.
+   */
+  private static ScrapeResultResponse.CupGamesOutcome cupGamesOutcome(
+      CupGamesPart part, boolean failed, IngestResult.CupGamesResult result) {
+    if (part == null) {
+      return ScrapeResultResponse.CupGamesOutcome.NOT_SENT;
+    }
+    if (failed) {
+      return new ScrapeResultResponse.CupGamesOutcome(
+          ScrapeResultResponse.Outcome.FAILURE_RECORDED, null, List.of());
+    }
+    Map<CupCompetition, IngestResult.PartResult> byCompetition =
+        new EnumMap<>(CupCompetition.class);
+    result
+        .competitions()
+        .forEach(competition -> byCompetition.put(competition.competition(), competition.result()));
+    List<ScrapeResultResponse.CompetitionOutcome> competitions =
+        part.competitions().stream()
+            .map(
+                competition -> {
+                  if (competition.status() == PartStatus.FAILED) {
+                    return new ScrapeResultResponse.CompetitionOutcome(
+                        competition.competition(),
+                        ScrapeResultResponse.Outcome.FAILURE_RECORDED,
+                        null);
+                  }
+                  IngestResult.PartResult ingested = byCompetition.get(competition.competition());
+                  return new ScrapeResultResponse.CompetitionOutcome(
+                      competition.competition(),
+                      ScrapeResultResponse.Outcome.valueOf(ingested.outcome().name()),
+                      ingested.reason());
+                })
+            .toList();
+    ScrapeResultResponse.PartOutcome partOutcome = outcome(result.part());
+    return new ScrapeResultResponse.CupGamesOutcome(
+        partOutcome.outcome(), partOutcome.reason(), competitions);
   }
 
   /**

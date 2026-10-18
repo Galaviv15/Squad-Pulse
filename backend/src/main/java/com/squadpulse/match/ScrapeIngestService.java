@@ -2,6 +2,8 @@ package com.squadpulse.match;
 
 import com.squadpulse.auth.ClubFootballMappings;
 import com.squadpulse.common.ClubContext;
+import com.squadpulse.match.IngestResult.CompetitionResult;
+import com.squadpulse.match.IngestResult.CupGamesResult;
 import com.squadpulse.match.IngestResult.PartResult;
 import com.squadpulse.match.IngestResult.RejectionReason;
 import com.squadpulse.match.IngestResult.Warning;
@@ -32,13 +34,14 @@ import org.springframework.stereotype.Service;
 /**
  * Applies one scrape's successful parts to the stored snapshots (KAN-66). The only writer of {@link
  * LeagueStandingsSnapshot}, {@link LeagueFixturesSnapshot}, {@link PlayerSeasonStatsSnapshot}
- * (KAN-72), {@link GameDetails} and {@link GameDetailAttempts} (KAN-79), called only by the
- * service-token ingest endpoint in {@code scrapingintegration}, which validated the input and
- * handles the parts the scraper reported as failed. See docs/scraper-backend-contract.md.
+ * (KAN-72), {@link CupFixturesSnapshot} (KAN-84), {@link GameDetails} and {@link
+ * GameDetailAttempts} (KAN-79), called only by the service-token ingest endpoint in {@code
+ * scrapingintegration}, which validated the input and handles the parts the scraper reported as
+ * failed. See docs/scraper-backend-contract.md.
  *
  * <p>Order: the standings first, so the fixtures can be resolved against them; then the fixtures;
- * then the player statistics; then the game details. The parts are independent — one rejected
- * doesn't stop another.
+ * then the player statistics; then the cup games; then the game details. The parts are independent
+ * — one rejected doesn't stop another.
  *
  * <ul>
  *   <li><b>Standings</b>: stored only if some club is currently mapped to the league and season
@@ -76,6 +79,17 @@ import org.springframework.stereotype.Service;
  *       GameDetailAttempts.RETRY_GIVEN_UP_AFTER} after its last counted failure. Never writes a
  *       {@code squad.Player}. Logged with ids and counts only: never a player's or team's name,
  *       never the scraper's {@code detail} above DEBUG.
+ *   <li><b>Cup games</b> (KAN-84): for every club mapped to exactly the scrape's three ids, each
+ *       inside {@link ClubContext#callAs}; no such club → every competition {@code NOT_MAPPED}.
+ *       <b>Per competition, independently</b>: a competition the scraper reported {@code FAILED}
+ *       never reaches here (the caller handles it; its stored games stay). A round / home / away
+ *       twice in one competition's list → that competition {@code DUPLICATE_GAME}, never a 400 (it
+ *       would lose the request's other parts). An empty list while the club's stored snapshot of
+ *       that competition has games → {@code EMPTY_REPLACES_GAMES} for that club, the games stay
+ *       (checked per club, after staleness). Otherwise the whole list replaces the competition's
+ *       snapshot. No ownership check, no team-name resolution and no team ids for cups: our side is
+ *       the scraper's {@code ownSide}. Never touches the league snapshot. Logged with ids,
+ *       competition and counts only: never a team name or a round.
  *   <li><b>Staleness</b>: a part whose {@code fetchedAt} isn't newer than the stored snapshot's is
  *       {@link IngestResult.Outcome#STALE}, nothing written — so neither a late old scrape nor a
  *       replay ever overwrites newer data. Load, compare, save, with {@code @Version}: on a lost
@@ -93,6 +107,7 @@ public class ScrapeIngestService {
   private final PlayerSeasonStatsSnapshotRepository playerStatsRepository;
   private final GameDetailsRepository gameDetailsRepository;
   private final GameDetailAttemptsRepository attemptsRepository;
+  private final CupFixturesSnapshotRepository cupRepository;
   private final ClubFootballMappings mappings;
   private final ClubContext clubContext;
   private final Clock clock;
@@ -104,6 +119,7 @@ public class ScrapeIngestService {
       PlayerSeasonStatsSnapshotRepository playerStatsRepository,
       GameDetailsRepository gameDetailsRepository,
       GameDetailAttemptsRepository attemptsRepository,
+      CupFixturesSnapshotRepository cupRepository,
       ClubFootballMappings mappings,
       ClubContext clubContext) {
     this(
@@ -112,6 +128,7 @@ public class ScrapeIngestService {
         playerStatsRepository,
         gameDetailsRepository,
         attemptsRepository,
+        cupRepository,
         mappings,
         clubContext,
         Clock.systemUTC());
@@ -124,6 +141,7 @@ public class ScrapeIngestService {
       PlayerSeasonStatsSnapshotRepository playerStatsRepository,
       GameDetailsRepository gameDetailsRepository,
       GameDetailAttemptsRepository attemptsRepository,
+      CupFixturesSnapshotRepository cupRepository,
       ClubFootballMappings mappings,
       ClubContext clubContext,
       Clock clock) {
@@ -132,6 +150,7 @@ public class ScrapeIngestService {
     this.playerStatsRepository = playerStatsRepository;
     this.gameDetailsRepository = gameDetailsRepository;
     this.attemptsRepository = attemptsRepository;
+    this.cupRepository = cupRepository;
     this.mappings = mappings;
     this.clubContext = clubContext;
     this.clock = clock;
@@ -142,6 +161,8 @@ public class ScrapeIngestService {
    * @param standings {@code null} if this scrape has no successful standings part
    * @param playerStats {@code null} if this scrape has no successful player statistics part
    * @param gameDetails {@code null} if this scrape has no successful game-details part
+   * @param cupGames {@code null} if this scrape has no successful cup-games part (KAN-84); only its
+   *     {@code OK} competitions
    */
   public IngestResult ingest(
       int teamId,
@@ -150,7 +171,8 @@ public class ScrapeIngestService {
       ScrapedFixtures fixtures,
       ScrapedStandings standings,
       ScrapedPlayerStats playerStats,
-      ScrapedGameDetails gameDetails) {
+      ScrapedGameDetails gameDetails,
+      ScrapedCupGames cupGames) {
     List<Warning> warnings = new ArrayList<>();
 
     PartResult standingsResult = PartResult.NOT_SENT;
@@ -194,6 +216,10 @@ public class ScrapeIngestService {
         playerStats == null
             ? PartResult.NOT_SENT
             : ingestPlayerStats(teamId, leagueId, seasonId, playerStats);
+    CupGamesResult cupGamesResult =
+        cupGames == null
+            ? CupGamesResult.NOT_SENT
+            : ingestCupGames(teamId, leagueId, seasonId, cupGames);
     PartResult gameDetailsResult =
         gameDetails == null
             ? PartResult.NOT_SENT
@@ -203,8 +229,145 @@ public class ScrapeIngestService {
         standingsResult,
         playerStatsResult,
         gameDetailsResult,
+        cupGamesResult,
         clubsUpdated,
         List.copyOf(warnings));
+  }
+
+  /** How one club's copy of one cup competition went. */
+  private enum CupClubOutcome {
+    WRITTEN,
+    STALE,
+    /** Empty list over stored games: {@link RejectionReason#EMPTY_REPLACES_GAMES}. */
+    REFUSED_EMPTY
+  }
+
+  private CupGamesResult ingestCupGames(
+      int teamId, int leagueId, int seasonId, ScrapedCupGames cupGames) {
+    List<String> clubIds = mappings.clubIdsMappedTo(teamId, leagueId, seasonId);
+    if (clubIds.isEmpty()) {
+      return new CupGamesResult(
+          PartResult.rejected(RejectionReason.NOT_MAPPED),
+          cupGames.competitions().stream()
+              .map(
+                  competition ->
+                      new CompetitionResult(
+                          competition.competition(),
+                          PartResult.rejected(RejectionReason.NOT_MAPPED)))
+              .toList());
+    }
+    List<CompetitionResult> results = new ArrayList<>();
+    for (ScrapedCupGames.Competition competition : cupGames.competitions()) {
+      PartResult result =
+          ingestCupCompetition(teamId, seasonId, cupGames.fetchedAt(), competition, clubIds);
+      log.info(
+          "Cup games {} for team {} season {}: {} games, {}{}",
+          competition.competition(),
+          teamId,
+          seasonId,
+          competition.games().size(),
+          result.outcome(),
+          result.reason() == null ? "" : " (" + result.reason() + ")");
+      results.add(new CompetitionResult(competition.competition(), result));
+    }
+    return new CupGamesResult(PartResult.STORED, List.copyOf(results));
+  }
+
+  /**
+   * One competition for every mapped club. A club that refused an empty list makes the competition
+   * {@code REJECTED} even if another club stored it (both mapped to the same team, so it shouldn't
+   * happen): the failure must be visible.
+   */
+  private PartResult ingestCupCompetition(
+      int teamId,
+      int seasonId,
+      Instant fetchedAt,
+      ScrapedCupGames.Competition competition,
+      List<String> clubIds) {
+    List<StoredCupGame> games = new ArrayList<>();
+    Set<String> keys = new HashSet<>();
+    for (ScrapedCupGames.Game game : competition.games()) {
+      String key = StoredCupGame.keyOf(game.round(), game.homeTeamName(), game.awayTeamName());
+      if (!keys.add(key)) {
+        // One game would silently overwrite the other: reject this competition, visibly.
+        return PartResult.rejected(RejectionReason.DUPLICATE_GAME);
+      }
+      games.add(
+          new StoredCupGame(
+              key,
+              game.gameId(),
+              game.round(),
+              game.date().toString(),
+              game.kickoffTime() == null ? null : game.kickoffTime().toString(),
+              game.homeTeamName(),
+              game.awayTeamName(),
+              game.ownSide(),
+              game.venue(),
+              game.homeScore(),
+              game.awayScore(),
+              game.extraTime(),
+              game.penalties()));
+    }
+    int written = 0;
+    boolean refused = false;
+    for (String clubId : clubIds) {
+      CupClubOutcome outcome =
+          clubContext.callAs(
+              clubId,
+              () ->
+                  storeCupCompetition(
+                      teamId, seasonId, competition.competition(), fetchedAt, games));
+      if (outcome == CupClubOutcome.WRITTEN) {
+        written++;
+      } else if (outcome == CupClubOutcome.REFUSED_EMPTY) {
+        refused = true;
+      }
+    }
+    if (refused) {
+      return PartResult.rejected(RejectionReason.EMPTY_REPLACES_GAMES);
+    }
+    return written > 0 ? PartResult.STORED : PartResult.STALE;
+  }
+
+  /**
+   * In the current club's context. Staleness first (an old replay is {@code STALE}, whatever it
+   * holds); then an empty list over stored games is refused, re-checked on every attempt of {@link
+   * #storeIfNewer} against the copy it loaded.
+   */
+  private CupClubOutcome storeCupCompetition(
+      int teamId,
+      int seasonId,
+      CupCompetition competition,
+      Instant fetchedAt,
+      List<StoredCupGame> games) {
+    String clubId = clubContext.requireClubId();
+    boolean[] refusedEmpty = {false};
+    boolean written =
+        storeIfNewer(
+            () ->
+                cupRepository.findByClubIdAndTeamIdAndSeasonIdAndCompetition(
+                    clubId, teamId, seasonId, competition),
+            CupFixturesSnapshot::getFetchedAt,
+            CupFixturesSnapshot::new,
+            snapshot -> {
+              refusedEmpty[0] =
+                  games.isEmpty() && snapshot.getGames() != null && !snapshot.getGames().isEmpty();
+              if (refusedEmpty[0]) {
+                return;
+              }
+              snapshot.setTeamId(teamId);
+              snapshot.setSeasonId(seasonId);
+              snapshot.setCompetition(competition);
+              snapshot.setFetchedAt(fetchedAt);
+              snapshot.setStoredAt(clock.instant());
+              snapshot.setGames(games);
+              cupRepository.save(snapshot);
+            },
+            fetchedAt);
+    if (!written) {
+      return CupClubOutcome.STALE;
+    }
+    return refusedEmpty[0] ? CupClubOutcome.REFUSED_EMPTY : CupClubOutcome.WRITTEN;
   }
 
   /** How one club's copy of a game-details part went: counts only. */

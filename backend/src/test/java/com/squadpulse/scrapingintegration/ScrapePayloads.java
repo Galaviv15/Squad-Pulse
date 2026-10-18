@@ -91,6 +91,129 @@ final class ScrapePayloads {
     return request;
   }
 
+  // --- cup games (KAN-84): full club names, in the shape of the KAN-76 capture
+  // ---------------------
+
+  /** Our full club name, as the cup list and the team page's h1 show it. */
+  static final String SDEROT_FULL_NAME = "מועדון כדורגל שדרות";
+
+  static final String SHIMSHON_FULL_NAME = "שמשון פזטל תל אביב";
+  static final String RAHAT_FULL_NAME = "הפועל רהט";
+
+  /** Sderot's 1-0 home win over Shimshon in the State Cup's regional round. */
+  static final int SHIMSHON_CUP_GAME = 1123491;
+
+  /** Sderot's 4-1 away win at Rahat in round ו. */
+  static final int RAHAT_CUP_GAME = 1142007;
+
+  /** Only the cup games, for Sderot. */
+  static Map<String, Object> cupGamesOnly(Map<String, Object> part) {
+    Map<String, Object> request = request(SDEROT, LEAGUE, SEASON, null, null, null, null);
+    request.put("cupGames", part);
+    return request;
+  }
+
+  @SafeVarargs
+  static Map<String, Object> cupGamesWith(Instant fetchedAt, Map<String, Object>... competitions) {
+    Map<String, Object> part = new LinkedHashMap<>();
+    part.put("status", "OK");
+    part.put("fetchedAt", fetchedAt.toString());
+    part.put("competitions", new ArrayList<>(Arrays.asList(competitions)));
+    return part;
+  }
+
+  /** The State Cup's list, {@code OK}. */
+  @SafeVarargs
+  static Map<String, Object> stateCup(Map<String, Object>... games) {
+    Map<String, Object> competition = new LinkedHashMap<>();
+    competition.put("competition", "STATE_CUP");
+    competition.put("status", "OK");
+    competition.put("games", new ArrayList<>(Arrays.asList(games)));
+    return competition;
+  }
+
+  static Map<String, Object> failedCompetition(String competition, String reason) {
+    Map<String, Object> entry = new LinkedHashMap<>();
+    entry.put("competition", competition);
+    entry.put("status", "FAILED");
+    entry.put("reason", reason);
+    entry.put("detail", "no h1 match");
+    return entry;
+  }
+
+  /** Home 1-0 over Shimshon, round ה' - ליגות א' דרום. */
+  static Map<String, Object> shimshonCupGame() {
+    return cupGame(
+        SHIMSHON_CUP_GAME,
+        "ה' - ליגות א' דרום",
+        "2026-08-27",
+        "19:00",
+        SDEROT_FULL_NAME,
+        SHIMSHON_FULL_NAME,
+        "HOME",
+        "שדרות אצטדיון שדרות",
+        1,
+        0,
+        null,
+        null);
+  }
+
+  /** Away 4-1 at Rahat (home first: 1-4), round ו. */
+  static Map<String, Object> rahatCupGame() {
+    return cupGame(
+        RAHAT_CUP_GAME,
+        "ו",
+        "2026-09-26",
+        "15:00",
+        RAHAT_FULL_NAME,
+        SDEROT_FULL_NAME,
+        "AWAY",
+        "רהט הפועל רהט",
+        1,
+        4,
+        null,
+        null);
+  }
+
+  static Map<String, Object> cupGame(
+      Integer gameId,
+      String round,
+      String date,
+      String kickoffTime,
+      String home,
+      String away,
+      String ownSide,
+      String venue,
+      Integer homeScore,
+      Integer awayScore,
+      String extraTime,
+      String penalties) {
+    Map<String, Object> game = new LinkedHashMap<>();
+    game.put("gameId", gameId);
+    game.put("round", round);
+    game.put("date", date);
+    game.put("kickoffTime", kickoffTime);
+    game.put("homeTeamName", home);
+    game.put("awayTeamName", away);
+    game.put("ownSide", ownSide);
+    game.put("venue", venue);
+    game.put("homeScore", homeScore);
+    game.put("awayScore", awayScore);
+    game.put("extraTime", extraTime);
+    game.put("penalties", penalties);
+    return game;
+  }
+
+  @SuppressWarnings("unchecked")
+  static List<Map<String, Object>> cupCompetitions(Map<String, Object> request) {
+    return (List<Map<String, Object>>) part(request, "cupGames").get("competitions");
+  }
+
+  @SuppressWarnings("unchecked")
+  static List<Map<String, Object>> cupGames(Map<String, Object> request, int competition) {
+    return (List<Map<String, Object>>) cupCompetitions(request).get(competition).get("games");
+  }
+
   // --- game details (KAN-79): made-up names and ids, first name first like the game page --------
 
   /** Sderot's 1-4 loss at Tira (fixtures' first game). */

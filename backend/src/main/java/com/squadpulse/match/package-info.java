@@ -31,6 +31,13 @@
  * and given-up games for {@code scrapingintegration}'s trigger; appearances reach the club's
  * players through the KAN-72 links.
  *
+ * <p>Cup games (KAN-84) are club-scoped too, with no new exception: one {@code CupFixturesSnapshot}
+ * per club, team, season and {@code CupCompetition} (no league: a cup belongs to the team and
+ * season), written only by the ingest, merged into the fixtures read. A cup row has no team id and
+ * full club names, so our side is the scraper's {@code ownSide}: no name matching, no team ids
+ * stored, and the cup {@code game_id} never leaves the backend. A game with extra time or penalties
+ * gets no win / draw / loss.
+ *
  * <p>See docs/spec.md section 07 (Matches, stats &amp; scraping). Tracked in Jira under KAN-14
  * (Match &amp; Scraping Integration).
  */

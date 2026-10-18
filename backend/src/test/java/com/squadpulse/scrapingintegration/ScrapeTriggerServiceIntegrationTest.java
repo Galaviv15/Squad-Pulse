@@ -166,7 +166,9 @@ class ScrapeTriggerServiceIntegrationTest {
         .containsEntry("source", "USER")
         .containsEntry("standings", "1")
         .containsEntry("playerStats", "1")
-        .containsEntry("gameDetails", "1");
+        .containsEntry("gameDetails", "1")
+        // KAN-84: not requested until KAN-85 (and not in the body above).
+        .containsEntry("cupGames", "0");
     // KAN-80: game details are requested; this club knows no games, so no knownGameIds are sent.
     assertThat(request.body().get("gameDetails").booleanValue()).isTrue();
     assertThat(request.body().has("knownGameIds")).isFalse();
@@ -223,8 +225,21 @@ class ScrapeTriggerServiceIntegrationTest {
     FakeScraper.Received request = scraper.received().getFirst();
     assertThat(request.body().get("gameDetails").booleanValue()).isTrue();
     assertThat(request.body().get("knownGameIds").toString()).isEqualTo("[1122634,1122670]");
+    // KAN-84: exactly the properties of the body before KAN-84; no cupGames yet.
+    assertThat(request.body().propertyNames())
+        .containsExactly(
+            "runId",
+            "teamId",
+            "leagueId",
+            "seasonId",
+            "fixtures",
+            "standings",
+            "playerStats",
+            "gameDetails",
+            "knownGameIds");
     assertThat(redis.opsForHash().entries(runKey(request.runId())))
-        .containsEntry("gameDetails", "1");
+        .containsEntry("gameDetails", "1")
+        .containsEntry("cupGames", "0");
   }
 
   @Test
@@ -267,7 +282,8 @@ class ScrapeTriggerServiceIntegrationTest {
                     true,
                     true,
                     true,
-                    longest));
+                    longest,
+                    false));
     assertThat(body.length).isLessThanOrEqualTo(4096);
   }
 

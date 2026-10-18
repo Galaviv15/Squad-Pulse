@@ -2,6 +2,7 @@ package com.squadpulse.match;
 
 import com.squadpulse.auth.ClubFootballMappings;
 import com.squadpulse.auth.FootballOrgIlIds;
+import com.squadpulse.common.ClubContext;
 import com.squadpulse.common.NotFoundException;
 import com.squadpulse.squad.Player;
 import java.util.Comparator;
@@ -18,6 +19,10 @@ import org.springframework.stereotype.Service;
  * the database but are never shown, like the snapshots. Linked players come from the KAN-72 links
  * ({@link PlayerStatsReadService#linkedPlayers()}), with the same rule for a link to a deleted
  * player.
+ *
+ * <p>The one thing it reads besides (KAN-84): the club's cup snapshots for the current team and
+ * season (club-scoped, one query), so a cup game whose cup list shows extra time or penalties gets
+ * no {@code result}, as on {@code GET /matches/fixtures}. Nothing else of the read changes.
  */
 @Service
 class GameDetailsReadService {
@@ -28,14 +33,20 @@ class GameDetailsReadService {
   private final ClubFootballMappings mappings;
   private final GameDetailsRepository repository;
   private final PlayerStatsReadService playerStatsReadService;
+  private final CupFixturesSnapshotRepository cupRepository;
+  private final ClubContext clubContext;
 
   GameDetailsReadService(
       ClubFootballMappings mappings,
       GameDetailsRepository repository,
-      PlayerStatsReadService playerStatsReadService) {
+      PlayerStatsReadService playerStatsReadService,
+      CupFixturesSnapshotRepository cupRepository,
+      ClubContext clubContext) {
     this.mappings = mappings;
     this.repository = repository;
     this.playerStatsReadService = playerStatsReadService;
+    this.cupRepository = cupRepository;
+    this.clubContext = clubContext;
   }
 
   /**
@@ -71,9 +82,23 @@ class GameDetailsReadService {
         home ? details.getAwayTeamName() : details.getHomeTeamName(),
         ownScore,
         opponentScore,
-        FixturesResponse.Result.of(ownScore, opponentScore),
+        decidedBeyondTheScore(ids, details.getGameId())
+            ? null
+            : FixturesResponse.Result.of(ownScore, opponentScore),
         details.getFetchedAt(),
         players);
+  }
+
+  /**
+   * Whether {@code gameId} is a cup game of the club's current team and season whose cup list shows
+   * extra time or penalties (KAN-84).
+   */
+  private boolean decidedBeyondTheScore(FootballOrgIlIds ids, Integer gameId) {
+    return cupRepository
+        .findByClubIdAndTeamIdAndSeasonId(clubContext.requireClubId(), ids.teamId(), ids.seasonId())
+        .stream()
+        .flatMap(snapshot -> snapshot.getGames().stream())
+        .anyMatch(game -> Objects.equals(game.gameId(), gameId) && game.decidedBeyondTheScore());
   }
 
   private static GameDetailsResponse.Appearance toResponse(
