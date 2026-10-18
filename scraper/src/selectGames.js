@@ -34,9 +34,10 @@ export function combineRows(leagueRows, cupRows) {
 }
 
 /**
- * From the rows ({@link combineRows}, or the team-games rows alone): games with a `gameId` and both scores, not in `knownGameIds`, whose
- * kickoff (Israel time) is at least 24 h before `now`; sorted by date, then kickoff time, then
- * `gameId` (ids aren't chronological); the first {@link MAX_GAMES_PER_SCRAPE}, oldest first.
+ * From the rows ({@link combineRows}, or the team-games rows alone): games with a `gameId` and
+ * both scores, not in `knownGameIds`, whose kickoff (Israel time) is at least 24 h before `now`;
+ * sorted by date, then kickoff time, then `gameId` (ids aren't chronological); the first
+ * {@link MAX_GAMES_PER_SCRAPE}, oldest first.
  */
 export function selectGames(rows, knownGameIds, now) {
   const known = new Set(knownGameIds);
