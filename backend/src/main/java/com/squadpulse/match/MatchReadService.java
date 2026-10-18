@@ -136,12 +136,14 @@ class MatchReadService {
     boolean home = game.homeTeamName().equals(ownName);
     Integer ownScore = home ? game.homeScore() : game.awayScore();
     Integer opponentScore = home ? game.awayScore() : game.homeScore();
+    // Played = both scores set, never "has a result": a result can be withheld for a played game.
+    boolean played = ownScore != null && opponentScore != null;
     FixturesResponse.Result result = FixturesResponse.Result.of(ownScore, opponentScore);
     GameDetails stored = game.gameId() == null ? null : details.get(game.gameId());
     FixturesResponse.DetailsState detailsState;
     if (stored != null) {
       detailsState = FixturesResponse.DetailsState.AVAILABLE;
-    } else if (result == null) {
+    } else if (!played) {
       detailsState = null; // not played yet
     } else if (game.gameId() != null && givenUp.contains(game.gameId())) {
       detailsState = FixturesResponse.DetailsState.UNAVAILABLE;
