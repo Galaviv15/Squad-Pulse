@@ -14,8 +14,13 @@ import java.util.List;
  *
  * @param kickoffTime {@code HH:mm}, {@code null} if the site gave none
  * @param competition as the page's heading shows it, e.g. {@code ליגה א' דרום}
- * @param result from our side; {@code null} for a cup game whose cup list shows extra time or
- *     penalties (KAN-84, as on {@code GET /matches/fixtures}); the scores are still shown
+ * @param ownScore the page's score (after 90 minutes)
+ * @param result from our side. For a cup game in the club's current cup snapshots (KAN-84), who
+ *     went through, by the same rule as {@code GET /matches/fixtures} ({@link MatchOutcome}); else
+ *     from the page's score
+ * @param extraTime / {@code penalties} / {@code decidedBy}: as on {@code GET /matches/fixtures},
+ *     from the cup snapshot's game with the same {@code game_id}; {@code null} for a league game or
+ *     a cup game not in the current snapshots
  * @param lastUpdatedAt when the scraper fetched the page
  * @param players starters, then substitutes who came on, then unused; within a role, as sent
  */
@@ -30,6 +35,9 @@ public record GameDetailsResponse(
     int ownScore,
     int opponentScore,
     FixturesResponse.Result result,
+    FixturesResponse.Score extraTime,
+    FixturesResponse.Score penalties,
+    FixturesResponse.DecidedBy decidedBy,
     Instant lastUpdatedAt,
     List<Appearance> players) {
 

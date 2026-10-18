@@ -442,9 +442,14 @@ public record ScrapeResultRequest(
    * the scraper's {@code ownSide} (exact match to the team page's {@code h1}); the backend does no
    * name matching for cups.
    *
-   * <p>{@code extraTime} / {@code penalties} are never interpreted (their format is unseen), so
-   * they're deliberately loose and not checked against the scores: one set while the scores are
-   * {@code null} is accepted.
+   * <p>Three scores, all <b>home first</b> (the list shows each away-first: the scraper swaps
+   * them): {@code homeScore} / {@code awayScore} after 90 minutes; {@code extraTimeHomeScore} /
+   * {@code extraTimeAwayScore} after extra time, cumulative (incl. the 90 minutes); {@code
+   * penaltiesHomeScore} / {@code penaltiesAwayScore} the shootout tally only. Each pair is both or
+   * neither, and a later stage needs the 90-minute score. Penalties without extra time are
+   * accepted. Nothing else is checked across them (not extra time ≥ the 90-minute score, not an
+   * unequal shootout): a violation is a 400 for the whole request, and real data breaks "obvious"
+   * rules.
    *
    * @param gameId the site's {@code game_id}, {@code null} without a link; an attribute, never the
    *     key; never leaves the backend
@@ -456,9 +461,9 @@ public record ScrapeResultRequest(
    * @param homeTeamName full club name; trimmed here
    * @param ownSide decided by the scraper
    * @param venue {@code null} when none; trimmed here
-   * @param homeScore both scores or neither (not played); home first
-   * @param extraTime the extra-time cell, raw; {@code null} when empty; trimmed here
-   * @param penalties the penalties cell, raw; {@code null} when empty; trimmed here
+   * @param homeScore after 90 minutes; both or neither (not played); home first
+   * @param extraTimeHomeScore after extra time, cumulative; both or neither (no extra time)
+   * @param penaltiesHomeScore the shootout tally only; both or neither (no shootout)
    */
   public record CupGame(
       @Positive Integer gameId,
@@ -471,21 +476,43 @@ public record ScrapeResultRequest(
       @Size(min = 1, max = 200) @NoControlCharacters String venue,
       @Min(0) @Max(99) Integer homeScore,
       @Min(0) @Max(99) Integer awayScore,
-      @Size(min = 1, max = 50) @NoControlCharacters String extraTime,
-      @Size(min = 1, max = 50) @NoControlCharacters String penalties) {
+      @Min(0) @Max(99) Integer extraTimeHomeScore,
+      @Min(0) @Max(99) Integer extraTimeAwayScore,
+      @Min(0) @Max(99) Integer penaltiesHomeScore,
+      @Min(0) @Max(99) Integer penaltiesAwayScore) {
 
     public CupGame {
       round = trim(round);
       homeTeamName = trim(homeTeamName);
       awayTeamName = trim(awayTeamName);
       venue = trim(venue);
-      extraTime = trim(extraTime);
-      penalties = trim(penalties);
     }
 
     @AssertTrue(message = "homeScore and awayScore must both be set or both be null")
     boolean isScoreComplete() {
       return (homeScore == null) == (awayScore == null);
+    }
+
+    @AssertTrue(
+        message = "extraTimeHomeScore and extraTimeAwayScore must both be set or both be null")
+    boolean isExtraTimeComplete() {
+      return (extraTimeHomeScore == null) == (extraTimeAwayScore == null);
+    }
+
+    @AssertTrue(
+        message = "penaltiesHomeScore and penaltiesAwayScore must both be set or both be null")
+    boolean isPenaltiesComplete() {
+      return (penaltiesHomeScore == null) == (penaltiesAwayScore == null);
+    }
+
+    @AssertTrue(message = "extra time or penalties need homeScore and awayScore")
+    boolean isPlayedIfDecidedLater() {
+      boolean later =
+          extraTimeHomeScore != null
+              || extraTimeAwayScore != null
+              || penaltiesHomeScore != null
+              || penaltiesAwayScore != null;
+      return !later || homeScore != null || awayScore != null;
     }
 
     @AssertTrue(message = "homeTeamName and awayTeamName must differ")

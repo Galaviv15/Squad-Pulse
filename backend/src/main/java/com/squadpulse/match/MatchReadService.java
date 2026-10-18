@@ -182,8 +182,9 @@ class MatchReadService {
             game.gameId(),
             FixturesResponse.Competition.LEAGUE,
             null,
-            null,
-            null),
+            MatchOutcome.ofScore(
+                home ? game.homeScore() : game.awayScore(),
+                home ? game.awayScore() : game.homeScore())),
         details,
         givenUp);
   }
@@ -207,8 +208,7 @@ class MatchReadService {
             game.gameId(),
             competition,
             game.round(),
-            game.extraTime(),
-            game.penalties()),
+            MatchOutcome.ofCup(game)),
         details,
         givenUp);
   }
@@ -225,21 +225,16 @@ class MatchReadService {
       Integer gameId,
       FixturesResponse.Competition competition,
       String round,
-      String extraTime,
-      String penalties) {}
+      MatchOutcome outcome) {}
 
   /**
-   * Played = <b>both scores set</b>, never "has a result": a cup game with extra time or penalties
-   * has scores but no {@code result} (KAN-76 decision 6), and is still played (its details state
-   * set).
+   * Played = <b>both 90-minute scores set</b>, never "has a result": a level shootout has scores
+   * but no {@code result}, and is still played (its details state set).
    */
   private static FixturesResponse.Game fromOurSide(
       OurSide game, Map<Integer, GameDetails> details, Set<Integer> givenUp) {
     boolean played = game.ownScore() != null && game.opponentScore() != null;
-    FixturesResponse.Result result =
-        game.extraTime() != null || game.penalties() != null
-            ? null
-            : FixturesResponse.Result.of(game.ownScore(), game.opponentScore());
+    MatchOutcome outcome = game.outcome();
     GameDetails stored = game.gameId() == null ? null : details.get(game.gameId());
     FixturesResponse.DetailsState detailsState;
     if (stored != null) {
@@ -259,12 +254,13 @@ class MatchReadService {
         game.venue(),
         game.ownScore(),
         game.opponentScore(),
-        result,
+        outcome.result(),
         stored == null ? null : stored.getId(),
         detailsState,
         game.competition(),
         game.round(),
-        game.extraTime(),
-        game.penalties());
+        outcome.extraTime(),
+        outcome.penalties(),
+        outcome.decidedBy());
   }
 }

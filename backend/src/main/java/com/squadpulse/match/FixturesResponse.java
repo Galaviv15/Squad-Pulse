@@ -31,10 +31,10 @@ public record FixturesResponse(
   /**
    * @param kickoffTime {@code HH:mm}, {@code null} while not set yet
    * @param venue {@code null} when the site shows none
-   * @param ownScore both scores {@code null} while not played
-   * @param result {@code null} while not played, and for a cup game with {@code extraTime} or
-   *     {@code penalties} (KAN-76 decision 6: a tie decided on penalties must never show as a draw,
-   *     nor a result computed from a score of unknown meaning); both scores are still shown
+   * @param ownScore the score after 90 minutes; both {@code null} while not played
+   * @param result who went through, from our side, by the last stage present ({@link
+   *     MatchOutcome}): the shootout, else extra time, else the 90 minutes; {@code null} while not
+   *     played (and for a level shootout, which is bad data)
    * @param detailsId our opaque id of the game's details (KAN-79), what {@code GET
    *     /matches/games/{id}} takes; {@code null} unless {@code detailsState} is {@code AVAILABLE}
    * @param detailsState whether the game's details are there; {@code null} for a game not played
@@ -42,9 +42,11 @@ public record FixturesResponse(
    * @param competition {@code LEAGUE} or the cup (KAN-84)
    * @param round a cup game's round as the cup list shows it (free text); {@code null} for a league
    *     game
-   * @param extraTime a cup game's extra-time cell, raw, never interpreted; {@code null} for a
-   *     league game or an empty cell
-   * @param penalties a cup game's penalties cell, raw, never interpreted; {@code null} likewise
+   * @param extraTime a cup game's score after extra time (cumulative, incl. the 90 minutes), from
+   *     our side; {@code null} for a league game or without extra time
+   * @param penalties a cup game's shootout tally only, from our side; {@code null} likewise
+   * @param decidedBy {@code PENALTIES} with a shootout, else {@code EXTRA_TIME} with extra time,
+   *     else {@code null} (decided in 90 minutes, not played, or a league game)
    */
   public record Game(
       LocalDate date,
@@ -59,8 +61,18 @@ public record FixturesResponse(
       DetailsState detailsState,
       Competition competition,
       String round,
-      String extraTime,
-      String penalties) {}
+      Score extraTime,
+      Score penalties,
+      DecidedBy decidedBy) {}
+
+  /** A score from our side (KAN-84: after extra time, or a shootout's tally). */
+  public record Score(int ownScore, int opponentScore) {}
+
+  /** The stage after the 90 minutes that decided a cup game (KAN-84). */
+  public enum DecidedBy {
+    EXTRA_TIME,
+    PENALTIES
+  }
 
   /** Which competition a game is in (KAN-84). Declaration order is the order on the same slot. */
   public enum Competition {

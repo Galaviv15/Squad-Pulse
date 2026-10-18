@@ -21,8 +21,9 @@ import org.springframework.stereotype.Service;
  * player.
  *
  * <p>The one thing it reads besides (KAN-84): the club's cup snapshots for the current team and
- * season (club-scoped, one query), so a cup game whose cup list shows extra time or penalties gets
- * no {@code result}, as on {@code GET /matches/fixtures}. Nothing else of the read changes.
+ * season (club-scoped, one query), so a cup game gets its {@code result}, {@code extraTime}, {@code
+ * penalties} and {@code decidedBy} by the same rule as on {@code GET /matches/fixtures} ({@link
+ * MatchOutcome}). Nothing else of the read changes.
  */
 @Service
 class GameDetailsReadService {
@@ -66,6 +67,7 @@ class GameDetailsReadService {
     boolean home = details.getOwnSide() == FixturesResponse.Side.HOME;
     int ownScore = home ? details.getHomeScore() : details.getAwayScore();
     int opponentScore = home ? details.getAwayScore() : details.getHomeScore();
+    MatchOutcome outcome = outcome(ids, details.getGameId(), ownScore, opponentScore);
     Map<Integer, Player> linked = playerStatsReadService.linkedPlayers();
     List<GameDetailsResponse.Appearance> players =
         details.getAppearances().stream()
@@ -82,23 +84,29 @@ class GameDetailsReadService {
         home ? details.getAwayTeamName() : details.getHomeTeamName(),
         ownScore,
         opponentScore,
-        decidedBeyondTheScore(ids, details.getGameId())
-            ? null
-            : FixturesResponse.Result.of(ownScore, opponentScore),
+        outcome.result(),
+        outcome.extraTime(),
+        outcome.penalties(),
+        outcome.decidedBy(),
         details.getFetchedAt(),
         players);
   }
 
   /**
-   * Whether {@code gameId} is a cup game of the club's current team and season whose cup list shows
-   * extra time or penalties (KAN-84).
+   * How the game ended (KAN-84): from the club's current cup snapshots' game with this {@code
+   * gameId} if there is one, by the shared rule ({@link MatchOutcome#ofCup}); otherwise (a league
+   * game) from the page's score.
    */
-  private boolean decidedBeyondTheScore(FootballOrgIlIds ids, Integer gameId) {
+  private MatchOutcome outcome(
+      FootballOrgIlIds ids, Integer gameId, int ownScore, int opponentScore) {
     return cupRepository
         .findByClubIdAndTeamIdAndSeasonId(clubContext.requireClubId(), ids.teamId(), ids.seasonId())
         .stream()
         .flatMap(snapshot -> snapshot.getGames().stream())
-        .anyMatch(game -> Objects.equals(game.gameId(), gameId) && game.decidedBeyondTheScore());
+        .filter(game -> Objects.equals(game.gameId(), gameId))
+        .findFirst()
+        .map(MatchOutcome::ofCup)
+        .orElseGet(() -> MatchOutcome.ofScore(ownScore, opponentScore));
   }
 
   private static GameDetailsResponse.Appearance toResponse(

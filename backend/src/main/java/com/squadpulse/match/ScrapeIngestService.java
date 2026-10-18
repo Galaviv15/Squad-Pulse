@@ -305,8 +305,10 @@ public class ScrapeIngestService {
               game.venue(),
               game.homeScore(),
               game.awayScore(),
-              game.extraTime(),
-              game.penalties()));
+              game.extraTimeHomeScore(),
+              game.extraTimeAwayScore(),
+              game.penaltiesHomeScore(),
+              game.penaltiesAwayScore()));
     }
     int written = 0;
     boolean refused = false;

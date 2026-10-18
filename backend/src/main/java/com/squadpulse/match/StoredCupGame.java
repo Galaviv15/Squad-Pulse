@@ -20,9 +20,10 @@ import java.time.LocalTime;
  * @param kickoffTime {@code null} while not set
  * @param homeTeamName full club name, as the cup list shows it
  * @param venue {@code null} when the site shows none
- * @param homeScore both scores {@code null} while not played
- * @param extraTime the extra-time cell as sent, never interpreted; {@code null} when empty
- * @param penalties the penalties cell as sent, never interpreted; {@code null} when empty
+ * @param homeScore the score after 90 minutes; both {@code null} while not played
+ * @param extraTimeHomeScore the score after extra time, cumulative (incl. the 90 minutes), home
+ *     first; both {@code null} without extra time
+ * @param penaltiesHomeScore the shootout tally only, home first; both {@code null} without one
  */
 record StoredCupGame(
     String key,
@@ -36,8 +37,10 @@ record StoredCupGame(
     String venue,
     Integer homeScore,
     Integer awayScore,
-    String extraTime,
-    String penalties) {
+    Integer extraTimeHomeScore,
+    Integer extraTimeAwayScore,
+    Integer penaltiesHomeScore,
+    Integer penaltiesAwayScore) {
 
   /**
    * The key of a cup game within its competition (the competition is the snapshot's own key):
@@ -54,10 +57,5 @@ record StoredCupGame(
 
   LocalTime localKickoffTime() {
     return kickoffTime == null ? null : LocalTime.parse(kickoffTime);
-  }
-
-  /** Whether the result can't be read as a plain win, draw or loss (KAN-76 decision 6). */
-  boolean decidedBeyondTheScore() {
-    return extraTime != null || penalties != null;
   }
 }

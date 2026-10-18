@@ -80,9 +80,9 @@ import tools.jackson.databind.JsonNode;
  * validation (a 400 writes nothing, not even the request's league part), the per-competition ingest
  * (replace, staleness, a failed competition, a duplicate, the empty-list rule, isolation, the
  * league snapshot untouched), the response, the merged {@code GET /matches/fixtures} (order, our
- * side, no result with extra time or penalties, details state, {@code state} / {@code
- * lastUpdatedAt} / {@code teamName}, no football.org.il id), {@code GET /matches/games/{id}}'s
- * result rule, and the known-games list.
+ * side, the result by the deciding stage with {@code decidedBy}, details state, {@code state} /
+ * {@code lastUpdatedAt} / {@code teamName}, no football.org.il id), {@code GET
+ * /matches/games/{id}}'s result rule, and the known-games list.
  */
 @SpringBootTest(
     properties = {
@@ -215,13 +215,33 @@ class CupGamesIntegrationTest {
     cases.put("a blank round", b -> cupGames(b, 0).getFirst().put("round", "  "));
     cases.put("a null round", b -> cupGames(b, 0).getFirst().put("round", null));
     cases.put("a 101-char round", b -> cupGames(b, 0).getFirst().put("round", "ו".repeat(101)));
-    cases.put("51-char extraTime", b -> cupGames(b, 0).getFirst().put("extraTime", "1".repeat(51)));
-    cases.put("51-char penalties", b -> cupGames(b, 0).getFirst().put("penalties", "1".repeat(51)));
-    cases.put("an empty extraTime", b -> cupGames(b, 0).getFirst().put("extraTime", " "));
-    cases.put("a control character in round", b -> cupGames(b, 0).getFirst().put("round", "ו\t"));
+    for (String field :
+        List.of(
+            "extraTimeHomeScore",
+            "extraTimeAwayScore",
+            "penaltiesHomeScore",
+            "penaltiesAwayScore")) {
+      cases.put("half a pair: " + field, b -> cupGames(b, 0).getFirst().put(field, 2));
+      cases.put("100 in " + field, b -> setPairOf(cupGames(b, 0).getFirst(), field, 100));
+      cases.put("-1 in " + field, b -> setPairOf(cupGames(b, 0).getFirst(), field, -1));
+    }
     cases.put(
-        "a control character in extraTime",
-        b -> cupGames(b, 0).getFirst().put("extraTime", "\u00071-1"));
+        "extra time without the 90-minute score",
+        b -> {
+          Map<String, Object> game = cupGames(b, 0).getFirst();
+          game.put("homeScore", null);
+          game.put("awayScore", null);
+          setPairOf(game, "extraTimeHomeScore", 1);
+        });
+    cases.put(
+        "penalties without the 90-minute score",
+        b -> {
+          Map<String, Object> game = cupGames(b, 0).getFirst();
+          game.put("homeScore", null);
+          game.put("awayScore", null);
+          setPairOf(game, "penaltiesHomeScore", 1);
+        });
+    cases.put("a control character in round", b -> cupGames(b, 0).getFirst().put("round", "ו\t"));
     cases.put(
         "a control character in a name",
         b -> cupGames(b, 0).getFirst().put("homeTeamName", SDEROT_FULL_NAME + "\u001F"));
@@ -276,22 +296,52 @@ class CupGamesIntegrationTest {
         .andExpect(jsonPath("$.fixtures.outcome").value("NOT_SENT"));
   }
 
-  /** Not a 400 on purpose: extra time / penalties without scores (an unseen format). */
+  /** Verification: a string where a number belongs is a 400 naming the field, never parsed. */
   @Test
-  void extraTimeOrPenaltiesWithoutScoresAreAccepted() throws Exception {
-    Map<String, Object> game = shimshonCupGame();
-    game.put("homeScore", null);
-    game.put("awayScore", null);
-    game.put("extraTime", " 120' ");
-    game.put("penalties", "x");
+  void aScoreSentAsTextIsA400NamingTheField() throws Exception {
+    Map<String, Object> body = cupGamesOnly(cupGamesWith(FETCHED_AT, stateCup(shimshonCupGame())));
+    cupGames(body, 0).getFirst().put("extraTimeHomeScore", "2-3");
+    cupGames(body, 0).getFirst().put("extraTimeAwayScore", 2);
 
-    ingest(cupGamesOnly(cupGamesWith(FETCHED_AT, stateCup(game))))
+    ingest(body)
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.details[0]")
+                .value("cupGames.competitions[0].games[0].extraTimeHomeScore: invalid value"));
+    assertThat(rawDocuments(CUPS)).isEmpty();
+  }
+
+  /**
+   * Valid: extra time only, penalties only (unseen, but not ruled out), both; the four values
+   * round-trip into the stored document, home first, and nothing else is checked across them.
+   */
+  @Test
+  void extraTimeOnlyPenaltiesOnlyOrBothAreValidAndStoredHomeFirst() throws Exception {
+    Map<String, Object> extraTimeOnly =
+        cup(1150011, "2026-09-01", "HOME", 2, 2, new int[] {3, 2}, null);
+    Map<String, Object> penaltiesOnly =
+        cup(1150012, "2026-09-02", "HOME", 1, 1, null, new int[] {4, 5});
+    // Extra time below the 90-minute score: odd, still accepted (no such check).
+    Map<String, Object> both =
+        cup(1150013, "2026-09-03", "AWAY", 3, 3, new int[] {1, 0}, new int[] {3, 1});
+
+    ingest(cupGamesOnly(cupGamesWith(FETCHED_AT, stateCup(extraTimeOnly, penaltiesOnly, both))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.cupGames.competitions[0].outcome").value("STORED"));
 
-    Document stored = storedGames(clubA).getFirst();
-    assertThat(stored.getString("extraTime")).isEqualTo("120'");
-    assertThat(stored.getString("penalties")).isEqualTo("x");
+    List<Document> stored = storedGames(clubA);
+    assertThat(stored.get(0).getInteger("extraTimeHomeScore")).isEqualTo(3);
+    assertThat(stored.get(0).getInteger("extraTimeAwayScore")).isEqualTo(2);
+    assertThat(stored.get(0).get("penaltiesHomeScore")).isNull();
+    assertThat(stored.get(0).get("penaltiesAwayScore")).isNull();
+    assertThat(stored.get(1).get("extraTimeHomeScore")).isNull();
+    assertThat(stored.get(1).getInteger("penaltiesHomeScore")).isEqualTo(4);
+    assertThat(stored.get(1).getInteger("penaltiesAwayScore")).isEqualTo(5);
+    assertThat(stored.get(2).getInteger("extraTimeHomeScore")).isEqualTo(1);
+    assertThat(stored.get(2).getInteger("extraTimeAwayScore")).isEqualTo(0);
+    assertThat(stored.get(2).getInteger("penaltiesHomeScore")).isEqualTo(3);
+    assertThat(stored.get(2).getInteger("penaltiesAwayScore")).isEqualTo(1);
+    assertThat(stored.get(2)).doesNotContainKeys("extraTime", "penalties");
   }
 
   // --- the ingest
@@ -654,6 +704,7 @@ class CupGamesIntegrationTest {
     assertThat(league.get("round").isNull()).isTrue();
     assertThat(league.get("extraTime").isNull()).isTrue();
     assertThat(league.get("penalties").isNull()).isTrue();
+    assertThat(league.get("decidedBy").isNull()).isTrue();
     assertThat(fixtures.get("games").get(0).get("round").stringValue())
         .isEqualTo("ה' - ליגות א' דרום");
   }
@@ -689,37 +740,65 @@ class CupGamesIntegrationTest {
             "competition",
             "round",
             "extraTime",
-            "penalties");
+            "penalties",
+            "decidedBy");
   }
 
   /**
-   * A cup game decided on penalties: both scores shown, no result, and still played — its details
-   * state is {@code PENDING}, then {@code AVAILABLE} once stored; one with extra time, given up,
-   * {@code UNAVAILABLE}. A played league game keeps its result and details state (regression).
+   * {@code result} is who went through, from the last stage present (penalties, else extra time,
+   * else the 90 minutes), with {@code decidedBy}; {@code extraTime} / {@code penalties} from our
+   * side, flipped when we're away; the 90-minute score unchanged. Synthetic data.
    */
   @Test
-  void aCupGameWithExtraTimeOrPenaltiesHasNoResultButIsPlayed() throws Exception {
+  void theResultIsWhoWentThroughByTheDecidingStage() throws Exception {
     ingest(request(SDEROT, LEAGUE, SEASON, fixtures(FETCHED_AT), standings(FETCHED_AT)));
-    Map<String, Object> penalties = penaltiesGame();
-    Map<String, Object> extraTime = shimshonCupGame();
-    extraTime.put("extraTime", "2-1");
-    ingest(cupGamesOnly(cupGamesWith(FETCHED_AT, stateCup(extraTime, penalties))));
-
+    ingest(
+        cupGamesOnly(
+            cupGamesWith(
+                FETCHED_AT,
+                stateCup(
+                    cup(1150021, "2026-08-01", "HOME", 2, 2, new int[] {3, 2}, null),
+                    cup(1150022, "2026-08-02", "AWAY", 2, 2, new int[] {3, 2}, null),
+                    cup(1150023, "2026-08-03", "HOME", 3, 3, new int[] {3, 3}, new int[] {3, 1}),
+                    cup(1150024, "2026-08-04", "AWAY", 3, 3, new int[] {3, 3}, new int[] {3, 1}),
+                    cup(1150025, "2026-08-05", "AWAY", 1, 1, null, new int[] {4, 5}),
+                    cup(1150026, "2026-08-06", "HOME", 0, 0, null, new int[] {2, 2}),
+                    cup(1150027, "2026-08-07", "HOME", 1, 1, new int[] {2, 2}, null),
+                    shimshonCupGame()))));
     JsonNode games = fixturesOf(clubA).get("games");
-    JsonNode onPenalties = gameAgainst(games, RAHAT_FULL_NAME);
-    assertThat(onPenalties.get("ownScore").intValue()).isEqualTo(1);
-    assertThat(onPenalties.get("opponentScore").intValue()).isEqualTo(1);
-    assertThat(onPenalties.get("result").isNull()).isTrue();
-    assertThat(onPenalties.get("penalties").stringValue()).isEqualTo("4-5");
-    assertThat(onPenalties.get("extraTime").isNull()).isTrue();
-    assertThat(onPenalties.get("detailsState").stringValue()).isEqualTo("PENDING");
-    JsonNode afterExtraTime = gameAgainst(games, SHIMSHON_FULL_NAME);
-    assertThat(afterExtraTime.get("result").isNull()).isTrue();
-    assertThat(afterExtraTime.get("extraTime").stringValue()).isEqualTo("2-1");
-    assertThat(afterExtraTime.get("detailsState").stringValue()).isEqualTo("PENDING");
-    JsonNode malachi = gameAgainst(games, KIRYAT_MALACHI_NAME);
-    assertThat(malachi.get("result").stringValue()).isEqualTo("WIN");
-    assertThat(malachi.get("detailsState").stringValue()).isEqualTo("PENDING");
+
+    assertOutcome(onDate(games, "2026-08-01"), 2, 2, "WIN", "EXTRA_TIME", "{3,2}", null);
+    assertOutcome(onDate(games, "2026-08-02"), 2, 2, "LOSS", "EXTRA_TIME", "{2,3}", null);
+    assertOutcome(onDate(games, "2026-08-03"), 3, 3, "WIN", "PENALTIES", "{3,3}", "{3,1}");
+    assertOutcome(onDate(games, "2026-08-04"), 3, 3, "LOSS", "PENALTIES", "{3,3}", "{1,3}");
+    assertOutcome(onDate(games, "2026-08-05"), 1, 1, "WIN", "PENALTIES", null, "{5,4}");
+    assertOutcome(onDate(games, "2026-08-06"), 0, 0, null, "PENALTIES", null, "{2,2}");
+    assertOutcome(onDate(games, "2026-08-07"), 1, 1, "DRAW", "EXTRA_TIME", "{2,2}", null);
+    assertOutcome(onDate(games, "2026-08-27"), 1, 0, "WIN", null, null, null);
+    assertOutcome(gameAgainst(games, KIRYAT_MALACHI_NAME), 2, 1, "WIN", null, null, null);
+  }
+
+  /** A penalties game, and a level shootout (no result), are played: their details state is set. */
+  @Test
+  void aGameDecidedOnPenaltiesIsPlayed() throws Exception {
+    ingest(
+        cupGamesOnly(
+            cupGamesWith(
+                FETCHED_AT,
+                stateCup(
+                    cup(
+                        PENALTIES_CUP_GAME,
+                        PENALTIES_CUP_DATE,
+                        "AWAY",
+                        1,
+                        1,
+                        null,
+                        new int[] {4, 5}),
+                    cup(SHIMSHON_CUP_GAME, "2026-08-27", "HOME", 0, 0, null, new int[] {2, 2})))));
+    JsonNode games = fixturesOf(clubA).get("games");
+    assertThat(onDate(games, PENALTIES_CUP_DATE).get("detailsState").stringValue())
+        .isEqualTo("PENDING");
+    assertThat(onDate(games, "2026-08-27").get("detailsState").stringValue()).isEqualTo("PENDING");
 
     ingest(gameDetailsOnly(gameDetailsWith(FETCHED_AT, List.of(), cupDetails(PENALTIES_CUP_GAME))));
     for (int i = 1; i <= 3; i++) {
@@ -729,15 +808,12 @@ class CupGamesIntegrationTest {
                   FETCHED_AT.plusSeconds(i),
                   List.of(gameFailure(SHIMSHON_CUP_GAME, "PARSE_ERROR")))));
     }
-
     games = fixturesOf(clubA).get("games");
-    onPenalties = gameAgainst(games, RAHAT_FULL_NAME);
-    assertThat(onPenalties.get("detailsState").stringValue()).isEqualTo("AVAILABLE");
-    assertThat(onPenalties.get("detailsId").isString()).isTrue();
-    assertThat(gameAgainst(games, SHIMSHON_FULL_NAME).get("detailsState").stringValue())
+    assertThat(onDate(games, PENALTIES_CUP_DATE).get("detailsState").stringValue())
+        .isEqualTo("AVAILABLE");
+    assertThat(onDate(games, PENALTIES_CUP_DATE).get("detailsId").isString()).isTrue();
+    assertThat(onDate(games, "2026-08-27").get("detailsState").stringValue())
         .isEqualTo("UNAVAILABLE");
-    assertThat(gameAgainst(games, KIRYAT_MALACHI_NAME).get("detailsState").stringValue())
-        .isEqualTo("PENDING");
   }
 
   @Test
@@ -769,6 +845,7 @@ class CupGamesIntegrationTest {
       assertThat(game.get("round").isNull()).isTrue();
       assertThat(game.get("extraTime").isNull()).isTrue();
       assertThat(game.get("penalties").isNull()).isTrue();
+      assertThat(game.get("decidedBy").isNull()).isTrue();
     }
 
     // A cup snapshot fetched before the league: lastUpdatedAt is now the older, the cup's.
@@ -820,38 +897,66 @@ class CupGamesIntegrationTest {
   // --------------------------------------------------------------------
 
   /**
-   * A cup game's details: no result if its cup list shows penalties (scores unchanged); as before
-   * without them; a league game's as before.
+   * A cup game's details take {@code result}, {@code extraTime}, {@code penalties} and {@code
+   * decidedBy} from the cup snapshot, by the same rule as the fixtures (home and away); the page's
+   * score stays; a league game's are {@code null}, its result as before; no game id in the JSON.
    */
   @Test
-  void theGameDetailsHaveNoResultForACupGameDecidedOnPenalties() throws Exception {
-    ingest(leagueAndCup(FETCHED_AT, FETCHED_AT));
-    Map<String, Object> cup =
+  void theGameDetailsTakeTheDecidingStageFromTheCupSnapshot() throws Exception {
+    ingest(request(SDEROT, LEAGUE, SEASON, fixtures(FETCHED_AT), standings(FETCHED_AT)));
+    ingest(
         cupGamesOnly(
             cupGamesWith(
-                FETCHED_AT.plusSeconds(1),
-                stateCup(shimshonCupGame(), rahatCupGame(), penaltiesGame())));
-    ingest(cup);
+                FETCHED_AT,
+                stateCup(
+                    cup(
+                        PENALTIES_CUP_GAME,
+                        PENALTIES_CUP_DATE,
+                        "AWAY",
+                        3,
+                        3,
+                        new int[] {3, 3},
+                        new int[] {3, 1}),
+                    cup(
+                        RAHAT_CUP_GAME,
+                        "2026-09-26",
+                        "HOME",
+                        3,
+                        3,
+                        new int[] {3, 3},
+                        new int[] {3, 1})))));
     ingest(
         gameDetailsOnly(
             gameDetailsWith(
                 FETCHED_AT,
                 List.of(),
-                cupDetails(PENALTIES_CUP_GAME),
-                cupDetails(RAHAT_CUP_GAME),
+                level(cupDetails(PENALTIES_CUP_GAME), "AWAY"),
+                level(cupDetails(RAHAT_CUP_GAME), "HOME"),
                 tiraGame())));
-
     JsonNode games = fixturesOf(clubA).get("games");
-    JsonNode penalties = details(gameAgainst(games, RAHAT_FULL_NAME, PENALTIES_CUP_DATE));
-    assertThat(penalties.get("result").isNull()).isTrue();
-    assertThat(penalties.get("ownScore").intValue()).isEqualTo(1);
-    assertThat(penalties.get("opponentScore").intValue()).isEqualTo(1);
 
-    JsonNode plain = details(gameAgainst(games, RAHAT_FULL_NAME, "2026-09-26"));
-    assertThat(plain.get("result").stringValue()).isEqualTo("WIN");
+    for (String date : List.of(PENALTIES_CUP_DATE, "2026-09-26")) {
+      JsonNode fixture = onDate(games, date);
+      JsonNode details = details(fixture);
+      for (String field : List.of("result", "extraTime", "penalties", "decidedBy")) {
+        assertThat(details.get(field)).as(date + " " + field).isEqualTo(fixture.get(field));
+      }
+      assertThat(details.get("decidedBy").stringValue()).isEqualTo("PENALTIES");
+      // The page's (90-minute) score, as stored with the details.
+      assertThat(details.get("ownScore").intValue()).isEqualTo(3);
+    }
+    assertThat(details(onDate(games, PENALTIES_CUP_DATE)).get("result").stringValue())
+        .isEqualTo("LOSS");
+    assertThat(details(onDate(games, "2026-09-26")).get("result").stringValue()).isEqualTo("WIN");
 
     JsonNode league = details(gameAgainst(games, TIRA_NAME, "2026-09-05"));
     assertThat(league.get("result").stringValue()).isEqualTo("LOSS");
+    for (String field : List.of("extraTime", "penalties", "decidedBy")) {
+      assertThat(league.get(field).isNull()).as(field).isTrue();
+    }
+
+    String raw = rawDetails(onDate(games, PENALTIES_CUP_DATE));
+    assertThat(raw).doesNotContain("gameId", String.valueOf(PENALTIES_CUP_GAME));
   }
 
   // --- known games
@@ -883,21 +988,87 @@ class CupGamesIntegrationTest {
 
   private static final String PENALTIES_CUP_DATE = "2026-10-10";
 
-  /** At Rahat, 1-1, decided on penalties. */
-  private static Map<String, Object> penaltiesGame() {
+  /**
+   * A synthetic cup game of ours against a made-up opponent, home first: the 90-minute score, then
+   * extra time and penalties ({@code {home, away}} or {@code null}).
+   */
+  private static Map<String, Object> cup(
+      int gameId,
+      String date,
+      String ownSide,
+      int homeScore,
+      int awayScore,
+      int[] extraTime,
+      int[] penalties) {
+    boolean home = ownSide.equals("HOME");
+    String opponent = "יריבה " + gameId;
     return cupGame(
-        PENALTIES_CUP_GAME,
+        gameId,
         "ז",
-        PENALTIES_CUP_DATE,
+        date,
         "17:00",
-        RAHAT_FULL_NAME,
-        SDEROT_FULL_NAME,
-        "AWAY",
+        home ? SDEROT_FULL_NAME : opponent,
+        home ? opponent : SDEROT_FULL_NAME,
+        ownSide,
         null,
-        1,
-        1,
-        null,
-        "4-5");
+        homeScore,
+        awayScore,
+        extraTime,
+        penalties);
+  }
+
+  /** Sets {@code field} and its pair's other half to {@code value}. */
+  private static void setPairOf(Map<String, Object> game, String field, int value) {
+    String stage = field.startsWith("extraTime") ? "extraTime" : "penalties";
+    game.put(stage + "HomeScore", value);
+    game.put(stage + "AwayScore", value);
+  }
+
+  private static JsonNode onDate(JsonNode games, String date) {
+    for (JsonNode game : games) {
+      if (game.get("date").stringValue().equals(date)) {
+        return game;
+      }
+    }
+    throw new AssertionError("No game on " + date);
+  }
+
+  /** {@code extraTime} / {@code penalties} as {@code "{own,opponent}"}, or {@code null}. */
+  private static void assertOutcome(
+      JsonNode game,
+      int ownScore,
+      int opponentScore,
+      String result,
+      String decidedBy,
+      String extraTime,
+      String penalties) {
+    String at = game.get("date").stringValue();
+    assertThat(game.get("ownScore").intValue()).as(at).isEqualTo(ownScore);
+    assertThat(game.get("opponentScore").intValue()).as(at).isEqualTo(opponentScore);
+    assertThat(game.get("result").isNull() ? null : game.get("result").stringValue())
+        .as(at + " result")
+        .isEqualTo(result);
+    assertThat(game.get("decidedBy").isNull() ? null : game.get("decidedBy").stringValue())
+        .as(at + " decidedBy")
+        .isEqualTo(decidedBy);
+    assertThat(score(game.get("extraTime"))).as(at + " extraTime").isEqualTo(extraTime);
+    assertThat(score(game.get("penalties"))).as(at + " penalties").isEqualTo(penalties);
+  }
+
+  private static String score(JsonNode node) {
+    if (node.isNull()) {
+      return null;
+    }
+    assertThat(new ArrayList<>(node.propertyNames())).containsExactly("ownScore", "opponentScore");
+    return "{" + node.get("ownScore").intValue() + "," + node.get("opponentScore").intValue() + "}";
+  }
+
+  /** The game page's 3-3 (after 90 minutes), with our side as given. */
+  private static Map<String, Object> level(Map<String, Object> details, String ownSide) {
+    details.put("homeScore", 3);
+    details.put("awayScore", 3);
+    details.put("ownSide", ownSide);
+    return details;
   }
 
   /**
@@ -953,16 +1124,19 @@ class CupGamesIntegrationTest {
   }
 
   private JsonNode details(JsonNode fixture) throws Exception {
+    return ScrapePayloads.JSON.readTree(rawDetails(fixture));
+  }
+
+  private String rawDetails(JsonNode fixture) throws Exception {
     assertThat(fixture.get("detailsState").stringValue()).isEqualTo("AVAILABLE");
-    return ScrapePayloads.JSON.readTree(
-        mockMvc
-            .perform(
-                get("/matches/games/" + fixture.get("detailsId").stringValue())
-                    .header("Authorization", tokens.bearer(clubA, PermissionLevel.VIEW_ONLY)))
-            .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString());
+    return mockMvc
+        .perform(
+            get("/matches/games/" + fixture.get("detailsId").stringValue())
+                .header("Authorization", tokens.bearer(clubA, PermissionLevel.VIEW_ONLY)))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
   }
 
   private static JsonNode gameAgainst(JsonNode games, String opponent) {

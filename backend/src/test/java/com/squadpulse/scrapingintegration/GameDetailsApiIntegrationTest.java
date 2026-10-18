@@ -231,6 +231,9 @@ class GameDetailsApiIntegrationTest {
             "ownScore",
             "opponentScore",
             "result",
+            "extraTime",
+            "penalties",
+            "decidedBy",
             "lastUpdatedAt",
             "players");
 

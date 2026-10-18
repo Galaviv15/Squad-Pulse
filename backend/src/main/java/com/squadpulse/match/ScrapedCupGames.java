@@ -27,9 +27,9 @@ public record ScrapedCupGames(Instant fetchedAt, List<Competition> competitions)
    * @param homeTeamName full club name, as the list shows it
    * @param ownSide decided by the scraper; the backend does no name matching for cups
    * @param venue {@code null} when none
-   * @param homeScore both scores {@code null} while not played
-   * @param extraTime raw, never interpreted; {@code null} when empty
-   * @param penalties raw, never interpreted; {@code null} when empty
+   * @param homeScore the score after 90 minutes; both {@code null} while not played
+   * @param extraTimeHomeScore after extra time, cumulative, home first; both {@code null} without
+   * @param penaltiesHomeScore the shootout tally only, home first; both {@code null} without
    */
   public record Game(
       Integer gameId,
@@ -42,6 +42,8 @@ public record ScrapedCupGames(Instant fetchedAt, List<Competition> competitions)
       String venue,
       Integer homeScore,
       Integer awayScore,
-      String extraTime,
-      String penalties) {}
+      Integer extraTimeHomeScore,
+      Integer extraTimeAwayScore,
+      Integer penaltiesHomeScore,
+      Integer penaltiesAwayScore) {}
 }

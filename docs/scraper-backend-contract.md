@@ -45,7 +45,7 @@ The first six properties are required (`runId` may be `null`); `playerStats`, `g
 
 **`gameDetails` and `knownGameIds` (KAN-79, sent since KAN-80).** The backend sets `gameDetails` from one constant, `ScrapeTriggerService.REQUEST_GAME_DETAILS`, which is `true` since KAN-80, and leaves a `false` `gameDetails` and an empty `knownGameIds` out of the JSON (its trigger record: `NON_DEFAULT` / `NON_EMPTY`). A scraper without KAN-80 rejects both properties as unknown (`400`, so every refresh would be `SCRAPER_UNAVAILABLE`), so, as for `playerStats`: **deploy the scraper first, or together with the backend.** The backend builds `knownGameIds` from the triggering club's own data only (club-scoped reads inside its `ClubContext`, the HTTP and a scheduled path alike), for the club's current team and season: its stored games and its given-up games, ascending, without duplicates. With more than 200 such ids it doesn't ask for `gameDetails` at all for that trigger (a WARN with ids and counts): a cut list would make the scraper fetch stored games again. 200 ten-digit ids fit the 4 KB body limit with everything else. The run record keeps the flag (`gameDetails` `"1"` / `"0"`; `"1"` for every trigger since KAN-80, `"0"` only when the club has more than 200 known games).
 
-**`cupGames` (KAN-84): defined, not sent yet.** The backend's trigger record has the property, sets it from one constant, `ScrapeTriggerService.REQUEST_CUP_GAMES`, which is **`false`**, and leaves a `false` out of the JSON (`NON_DEFAULT`), so today's trigger body is unchanged. Today's scraper (`scraper/src/server.js`) rejects it as an unknown property (`400`, so every refresh would be `SCRAPER_UNAVAILABLE`). KAN-85 teaches the scraper the property and flips the constant. The run record keeps the flag (`cupGames` `"0"` today; a record without it, i.e. written before KAN-84, means not requested). **Deploy order for the flip:** turning it on puts cup games into `GET /matches/fixtures`, and today's frontend decides "played" from `result`, which is `null` for a cup game with extra time or penalties. So: the frontend (KAN-86) first, or together; then the scraper (KAN-85); then the backend with the constant `true` — or all together.
+**`cupGames` (KAN-84): defined, not sent yet.** The backend's trigger record has the property, sets it from one constant, `ScrapeTriggerService.REQUEST_CUP_GAMES`, which is **`false`**, and leaves a `false` out of the JSON (`NON_DEFAULT`), so today's trigger body is unchanged. Today's scraper (`scraper/src/server.js`) rejects it as an unknown property (`400`, so every refresh would be `SCRAPER_UNAVAILABLE`). KAN-85 teaches the scraper the property and flips the constant. The run record keeps the flag (`cupGames` `"0"` today; a record without it, i.e. written before KAN-84, means not requested). **Deploy order for the flip:** turning it on puts cup games into `GET /matches/fixtures`, and today's frontend knows nothing of cup games (no competition or round, no extra time or penalties, and a tie won on penalties shows its level 90-minute score next to a `WIN`). So: the frontend (KAN-86) first, or together; then the scraper (KAN-85); then the backend with the constant `true` — or all together.
 
 A trigger with game details and two known games. The scraper's tests check `parseTrigger` accepts this block; `ScraperClientTest` checks the backend's body for the same inputs has exactly these properties and values:
 
@@ -302,11 +302,14 @@ The team's **State Cup** games, from the team's cup list on football.org.il (the
 | `homeTeamName`, `awayTeamName` | string | 1–100 chars after trimming, different | — **Full club names**, as the list shows them (not the league's short names). |
 | `ownSide` | `HOME` \| `AWAY` | required | — Decided by the scraper (exact match to the team page's `h1`). |
 | `venue` | string or `null` | 1–200 chars after trimming | None shown. |
-| `homeScore`, `awayScore` | int or `null` | 0–99; both or neither; **home first** (the list shows away-first: the scraper swaps it) | Not played. |
-| `extraTime`, `penalties` | string or `null` | 1–**50** chars after trimming; **never interpreted** | Empty cell. |
+| `homeScore`, `awayScore` | int or `null` | 0–99; both or neither; **home first** (the list shows away-first: the scraper swaps it) | Not played. The score **after 90 minutes** (the list's result cell). |
+| `extraTimeHomeScore`, `extraTimeAwayScore` | int or `null` | 0–99; both or neither; **home first** (the list's extra-time cell is away-first `a-b`, like the result: the scraper swaps it) | No extra time. The score **after extra time, cumulative** (it includes the 90 minutes). |
+| `penaltiesHomeScore`, `penaltiesAwayScore` | int or `null` | 0–99; both or neither; **home first** (the scraper swaps the list's cell like the others) | No shootout. The **shootout tally only**, never added to any score. |
 
 - **No team ids and no name matching for cups.** A cup row has no team id, and its full names can't be matched against the standings: the backend stores the names as sent and takes our side from `ownSide`. Cup games get no ownership check (no `INVALID`, no `OWN_TEAM_UNKNOWN`) and no `UNRESOLVED_TEAM_NAMES` warning.
-- **`extraTime` / `penalties`** format is unseen (both cells were empty in every captured row): the limit is deliberately loose, because any field violation is a `400` for the **whole** request. One set while the scores are `null` is accepted (no cross-field check on an unseen format). The backend stores them raw and shows them raw; a game with either set gets **no** win / draw / loss on the backend's read API.
+- **Extra time and penalties** are numbers, never text. The extra-time cell's format was seen on game `1123493` (list `2-2`, extra time `2-3`, away-first; its game page `2 : 2`, `הארכה : 3 : 2`, home first); the penalties cell's isn't yet (KAN-85 pins it with a fixture). Parsing and swapping are the scraper's job, as for the result. A cell's `sr-only` label (`הארכה`, `ב.הכרעה`) is never a value: an empty cell (only its label) is `null`, and a cell that isn't a score is that competition's `PARSE_ERROR`, never a guess.
+- **`400` rules for them:** each pair both or neither; 0–99; a number, never a string (`"2-3"` is a `400` naming the field); either pair set while `homeScore` / `awayScore` are `null` (a game that went to extra time or a shootout was played). Penalties without extra time are accepted (unseen, but the competition's rules aren't assumed). **Nothing else is checked across them** — not extra time ≥ the 90-minute score, not an unequal shootout: any violation is a `400` for the whole request, and real data breaks "obvious" rules.
+- **On the backend's read API** (`GET /matches/fixtures`, `GET /matches/games/{id}`), `result` is who went through: the shootout, else extra time, else the 90 minutes, with `decidedBy`.
 - **Identity:** `(competition, round, homeTeamName, awayTeamName)` within the club's cup snapshot for `(teamId, seasonId)`. `gameId` is an attribute only (`game_id` is unique across the site, league and cup, so game details keyed by it can't collide).
 - **Not a `400`: a duplicate key within one competition** (the same round, home and away twice). That competition is `REJECTED DUPLICATE_GAME` instead, and the request's other parts and competitions are processed: a `400` would lose its league fixtures, standings, statistics and game details too. The same pairing in two different rounds is two games.
 - Every other rule above is checked as a whole before anything is written: a violation is a `400`, and nothing from the request is written.
@@ -532,7 +535,7 @@ A game-details part (KAN-79; names and ids made up; cut down to four of our play
   "clubsUpdated": 0, "warnings": [] }
 ```
 
-A cup-games part alone (KAN-84; names, rounds and ids made up in the shape of the KAN-76 capture): two State Cup games, the second decided on penalties (the cell's text is a placeholder: the real format is unseen). `ContractExampleIntegrationTest` posts it to the real backend and checks the answer below:
+A cup-games part alone (KAN-84; names, rounds, ids and scores made up in the shape of the KAN-76 capture): two State Cup games, the second level after 90 minutes and extra time and won on penalties (all home first). `ContractExampleIntegrationTest` posts it to the real backend and checks the answer below:
 
 <!-- contract-example-cup-games -->
 ```json
@@ -543,11 +546,13 @@ A cup-games part alone (KAN-84; names, rounds and ids made up in the shape of th
         { "gameId": 1123491, "round": "ה' - ליגות א' דרום", "date": "2026-08-27",
           "kickoffTime": "19:00", "homeTeamName": "מועדון כדורגל שדרות",
           "awayTeamName": "שמשון פזטל תל אביב", "ownSide": "HOME", "venue": "שדרות אצטדיון שדרות",
-          "homeScore": 1, "awayScore": 0, "extraTime": null, "penalties": null },
+          "homeScore": 1, "awayScore": 0, "extraTimeHomeScore": null, "extraTimeAwayScore": null,
+          "penaltiesHomeScore": null, "penaltiesAwayScore": null },
         { "gameId": 1142007, "round": "ו", "date": "2026-10-12", "kickoffTime": "15:00",
           "homeTeamName": "הפועל רהט", "awayTeamName": "מועדון כדורגל שדרות", "ownSide": "AWAY",
           "venue": "רהט הפועל רהט", "homeScore": 1, "awayScore": 1,
-          "extraTime": null, "penalties": "4-5" } ] } ] } }
+          "extraTimeHomeScore": 2, "extraTimeAwayScore": 2,
+          "penaltiesHomeScore": 4, "penaltiesAwayScore": 5 } ] } ] } }
 ```
 
 <!-- contract-example-cup-games-response -->

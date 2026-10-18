@@ -186,8 +186,8 @@ final class ScrapePayloads {
       String venue,
       Integer homeScore,
       Integer awayScore,
-      String extraTime,
-      String penalties) {
+      int[] extraTime,
+      int[] penalties) {
     Map<String, Object> game = new LinkedHashMap<>();
     game.put("gameId", gameId);
     game.put("round", round);
@@ -199,8 +199,10 @@ final class ScrapePayloads {
     game.put("venue", venue);
     game.put("homeScore", homeScore);
     game.put("awayScore", awayScore);
-    game.put("extraTime", extraTime);
-    game.put("penalties", penalties);
+    game.put("extraTimeHomeScore", extraTime == null ? null : extraTime[0]);
+    game.put("extraTimeAwayScore", extraTime == null ? null : extraTime[1]);
+    game.put("penaltiesHomeScore", penalties == null ? null : penalties[0]);
+    game.put("penaltiesAwayScore", penalties == null ? null : penalties[1]);
     return game;
   }
 
