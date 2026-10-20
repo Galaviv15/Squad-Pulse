@@ -108,7 +108,9 @@ test("a block page with 403: SOURCE_BLOCKED after 1 request", async () => {
 
 test("a navigation timeout is TIMEOUT, after one retry", async () => {
   hang = "/team-details/team-games/";
-  const payload = await scrape(createMemoryLogger(), { navigationTimeoutMs: 300 });
+  // The timeout applies to every navigation, and the league page must still load: a non-hung
+  // navigation took up to 1.7 s under parallel load (KAN-88), so 5 s, not a few hundred ms.
+  const payload = await scrape(createMemoryLogger(), { navigationTimeoutMs: 5_000 });
   assert.equal(payload.fixtures.reason, "TIMEOUT");
   assert.equal(payload.standings.status, "OK");
   assert.equal(received.filter((r) => r.includes("/team-games/")).length, 2);
