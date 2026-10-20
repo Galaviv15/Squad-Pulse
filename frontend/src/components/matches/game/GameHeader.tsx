@@ -30,7 +30,7 @@ export function GameHeader({
         </h2>
         <div className="flex items-center gap-2">
           <SideBadge game={game} />
-          <ResultBadge result={game.result} />
+          {game.result !== null && <ResultBadge result={game.result} />}
         </div>
       </div>
       <Scoreline game={game} ownTeamName={ownTeamName} size="large" />

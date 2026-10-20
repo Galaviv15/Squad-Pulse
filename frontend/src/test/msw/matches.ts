@@ -19,7 +19,7 @@ import { apiError } from "./auth";
  * when empty (an unset kickoffTime or venue is null, never absent).
  */
 
-/** A game of GET /matches/fixtures: an upcoming home game with a time and a venue. */
+/** A game of GET /matches/fixtures: an upcoming home league game with a time and a venue. */
 export function gameBody(overrides: Partial<Game> = {}): Game {
   return {
     date: "2026-10-17",
@@ -32,6 +32,11 @@ export function gameBody(overrides: Partial<Game> = {}): Game {
     result: null,
     detailsId: null,
     detailsState: null,
+    competition: "LEAGUE",
+    round: null,
+    extraTime: null,
+    penalties: null,
+    decidedBy: null,
     ...overrides,
   };
 }
@@ -44,6 +49,67 @@ export const playedGame = (overrides: Partial<Game> = {}) =>
     result: "WIN",
     detailsState: "AVAILABLE",
     detailsId: `details-${overrides.date ?? "2026-10-17"}`,
+    ...overrides,
+  });
+
+/*
+ * State Cup games (KAN-84 / KAN-86), made-up opponents. Scores are from our side, as the backend
+ * sends them (ownScore / opponentScore the 90 minutes; extraTime, penalties likewise); a test that
+ * cares about home / away order passes `ownSide`. Each played one has its details stored.
+ */
+
+/** An upcoming State Cup game at home, round "ו". */
+export const cupGame = (overrides: Partial<Game> = {}) =>
+  gameBody({
+    competition: "STATE_CUP",
+    round: "ו",
+    opponentName: "Hapoel Netivot",
+    venue: null,
+    ...overrides,
+  });
+
+const playedCupGame = (overrides: Partial<Game>) =>
+  cupGame({
+    detailsState: "AVAILABLE",
+    detailsId: `details-${overrides.date ?? "2026-10-17"}`,
+    ...overrides,
+  });
+
+/** Won 2–0 in 90 minutes. */
+export const cupGameIn90 = (overrides: Partial<Game> = {}) =>
+  playedCupGame({ ownScore: 2, opponentScore: 0, result: "WIN", ...overrides });
+
+/** 2–2 after 90 minutes, won 3–2 after extra time. */
+export const cupGameAfterExtraTime = (overrides: Partial<Game> = {}) =>
+  playedCupGame({
+    ownScore: 2,
+    opponentScore: 2,
+    extraTime: { ownScore: 3, opponentScore: 2 },
+    decidedBy: "EXTRA_TIME",
+    result: "WIN",
+    ...overrides,
+  });
+
+/** 3–3 after 90 minutes and after extra time, lost 1–3 on penalties. */
+export const cupGameOnPenalties = (overrides: Partial<Game> = {}) =>
+  playedCupGame({
+    ownScore: 3,
+    opponentScore: 3,
+    extraTime: { ownScore: 3, opponentScore: 3 },
+    penalties: { ownScore: 1, opponentScore: 3 },
+    decidedBy: "PENALTIES",
+    result: "LOSS",
+    ...overrides,
+  });
+
+/** Played (1–1) but without a result: a level shootout, which the backend sends as null (bad data). */
+export const cupGameWithoutResult = (overrides: Partial<Game> = {}) =>
+  playedCupGame({
+    ownScore: 1,
+    opponentScore: 1,
+    penalties: { ownScore: 4, opponentScore: 4 },
+    decidedBy: "PENALTIES",
+    result: null,
     ...overrides,
   });
 
@@ -152,6 +218,11 @@ export function gameDetailsBody(overrides: Partial<PlayedGameDetails> = {}): Pla
     ownScore: 3,
     opponentScore: 1,
     result: "WIN",
+    extraTime: null,
+    penalties: null,
+    decidedBy: null,
+    competitionType: null,
+    cupRound: null,
     lastUpdatedAt: "2026-10-12T15:30:45.635Z",
     players: [
       starter(1, "Avi Golan", { goalkeeper: true }),
@@ -199,6 +270,26 @@ export function gameDetailsBody(overrides: Partial<PlayedGameDetails> = {}): Pla
     ...overrides,
   };
 }
+
+/**
+ * A State Cup game's details (KAN-86): the page's own heading (with the sponsor) and "מחזור 4",
+ * the cup list's round "ו", 2–2 after 90 minutes, our 1–3 shootout loss after a 3–3 extra time.
+ */
+export const cupGameDetailsBody = (overrides: Partial<PlayedGameDetails> = {}) =>
+  gameDetailsBody({
+    competition: "גביע המדינה ווינר",
+    round: 4,
+    opponentName: "Hapoel Netivot",
+    ownScore: 2,
+    opponentScore: 2,
+    extraTime: { ownScore: 3, opponentScore: 3 },
+    penalties: { ownScore: 1, opponentScore: 3 },
+    decidedBy: "PENALTIES",
+    result: "LOSS",
+    competitionType: "STATE_CUP",
+    cupRound: "ו",
+    ...overrides,
+  });
 
 /**
  * GET /matches/games/:id: `answer` (a body or a function) for every id, or (without one) the

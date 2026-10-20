@@ -87,10 +87,7 @@ export function ResultBadge({ result }: { result: Result }) {
 }
 
 /** What Scoreline reads: a fixture's game and a played game's details (KAN-81) both have it. */
-export type ScorelineGame = Pick<
-  Game,
-  "ownSide" | "opponentName" | "ownScore" | "opponentScore" | "result"
->;
+export type ScorelineGame = Pick<Game, "ownSide" | "opponentName" | "ownScore" | "opponentScore">;
 
 /**
  * The two teams and, once played, the two scores: home team · home score · separator · away score
@@ -98,7 +95,8 @@ export type ScorelineGame = Pick<
  * string: a run of digits is laid out left to right inside RTL text, which would put the home
  * score on the left while the home team's name is on the right. As a grid in DOM order, RTL puts
  * the home side on the right, its score next to it. Our team is in bold. `large`: the game page's
- * header (KAN-81).
+ * header (KAN-81). Played = both scores set (the 90-minute score), never read from `result`: a cup
+ * game's can be null with scores (KAN-86).
  */
 export function Scoreline({
   game,
@@ -123,7 +121,7 @@ export function Scoreline({
       score: home ? game.opponentScore : game.ownScore,
     },
   ];
-  const played = game.result !== null && sides.every(({ score }) => score !== null);
+  const played = sides.every(({ score }) => score !== null);
   const scoreSize = size === "large" ? "text-2xl sm:text-3xl" : "text-base";
 
   return (
