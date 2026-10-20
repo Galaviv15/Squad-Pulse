@@ -8,6 +8,7 @@ import { deferred } from "@/test/deferred";
 import { apiError, meReturns, refreshReturns } from "@/test/msw/auth";
 import {
   appearanceBody,
+  cupGameDetailsBody,
   fixturesBody,
   fixturesReturns,
   gameDetailsBody,
@@ -163,6 +164,106 @@ describe("the game page's header", () => {
     await renderLoaded();
 
     expect(screen.getByRole("link", { name: G.back })).toHaveAttribute("href", "/app/matches");
+  });
+});
+
+describe("the game page's header for a cup game (KAN-86)", () => {
+  const CUP_HEADING = `${M.competition.STATE_CUP} · סיבוב ו`;
+
+  /** Renders a cup game's details and waits for its header. */
+  async function renderCup(game: Partial<PlayedGameDetails> = {}) {
+    const rendered = await renderGame({ game: cupGameDetailsBody(game) });
+    return { ...rendered, header: await screen.findByRole("region", { name: CUP_HEADING }) };
+  }
+
+  /** The secondary line's stage: home score, then away score (in the DOM). */
+  const stage = (header: HTMLElement, name: "extra-time" | "penalties") => {
+    const element = header.querySelector(`[data-slot=decided-by] [data-slot=${name}]`)!;
+    const scores = [...element.querySelectorAll("[data-slot^=stage-]")];
+    expect(scores.map((e) => e.getAttribute("data-slot"))).toEqual([
+      "stage-home-score",
+      "stage-away-score",
+    ]);
+    return { element, scores: scores.map((e) => e.textContent) };
+  };
+
+  it("is headed with our cup label and the cup list's round, never the page's מחזור", async () => {
+    const { header } = await renderCup();
+
+    expect(screen.getByRole("heading", { level: 2, name: CUP_HEADING })).toBeVisible();
+    expect(header).not.toHaveTextContent("מחזור");
+    expect(header).not.toHaveTextContent("ווינר");
+    expect(
+      within(header).getByText(
+        i18n.t("matches.game.scopeNote", { competition: M.competition.STATE_CUP }),
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows our cup label alone when the round is missing", async () => {
+    await renderGame({ game: cupGameDetailsBody({ cupRound: null }) });
+
+    const heading = await screen.findByRole("heading", { level: 2, name: M.competition.STATE_CUP });
+    expect(heading).toHaveTextContent(new RegExp(`^${M.competition.STATE_CUP}$`));
+  });
+
+  it("keeps the 90-minute score and shows the extra time and the shootout under it, home first", async () => {
+    const { header } = await renderCup();
+
+    expect([slot("home-score"), slot("away-score")]).toEqual(["2", "2"]);
+    const extraTime = stage(header, "extra-time");
+    const penalties = stage(header, "penalties");
+    expect(extraTime.element).toHaveTextContent(M.decidedBy.EXTRA_TIME);
+    expect(extraTime.scores).toEqual(["3", "3"]);
+    expect(penalties.element).toHaveTextContent(M.decidedBy.PENALTIES);
+    expect(penalties.scores).toEqual(["1", "3"]);
+    expect(within(header).getByText(M.result.LOSS)).toBeVisible();
+  });
+
+  it("puts the opponent's shootout tally first for an away game", async () => {
+    const { header } = await renderCup({ ownSide: "AWAY" });
+    expect(stage(header, "penalties").scores).toEqual(["3", "1"]);
+  });
+
+  it("shows only the extra time for a game decided in extra time", async () => {
+    const { header } = await renderCup({
+      penalties: null,
+      extraTime: { ownScore: 3, opponentScore: 2 },
+      decidedBy: "EXTRA_TIME",
+      result: "WIN",
+    });
+
+    expect(stage(header, "extra-time").scores).toEqual(["3", "2"]);
+    expect(header.querySelector("[data-slot=penalties]")).toBeNull();
+    expect(within(header).getByText(M.result.WIN)).toBeVisible();
+  });
+
+  it("shows the scores and no result badge without a result, with no console error", async () => {
+    // The console guard fails the test on any console.error / warn.
+    const { header } = await renderCup({ result: null });
+
+    expect([slot("home-score"), slot("away-score")]).toEqual(["2", "2"]);
+    for (const text of [M.result.WIN, M.result.DRAW, M.result.LOSS]) {
+      expect(within(header).queryByText(text)).toBeNull();
+    }
+    expect(within(header).getByText(M.side.HOME)).toBeVisible();
+  });
+});
+
+describe("the game page's header for a game not in the cup data", () => {
+  it("is headed and scoped exactly as before, with no secondary line", async () => {
+    await renderLoaded({ competitionType: null, cupRound: null });
+
+    const header = screen.getByRole("region", { name: "ליגה א' דרום · מחזור 6" });
+    expect(
+      within(header).getByText(i18n.t("matches.game.scopeNote", { competition: "ליגה א' דרום" })),
+    ).toBeVisible();
+    expect(header.querySelector("[data-slot=decided-by]")).toBeNull();
+  });
+
+  it("treats a LEAGUE type like null: the page's heading and round", async () => {
+    await renderLoaded({ competitionType: "LEAGUE", cupRound: null });
+    expect(screen.getByRole("heading", { level: 2, name: "ליגה א' דרום · מחזור 6" })).toBeVisible();
   });
 });
 
