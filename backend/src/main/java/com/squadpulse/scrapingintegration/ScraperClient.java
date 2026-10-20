@@ -49,9 +49,9 @@ class ScraperClient {
    * ScrapeTriggerService#REQUEST_GAME_DETAILS} is {@code true}, so every trigger asks for game
    * details unless the club has too many known games.
    *
-   * <p>{@code cupGames} (KAN-84) likewise only when {@code true}: defined, but not sent yet — a
-   * scraper without KAN-85 rejects it as unknown, so {@link ScrapeTriggerService#REQUEST_CUP_GAMES}
-   * is {@code false} until KAN-85 flips it.
+   * <p>{@code cupGames} (KAN-84) likewise only when {@code true}: a scraper without KAN-85 rejects
+   * it as unknown. Since KAN-86 {@link ScrapeTriggerService#REQUEST_CUP_GAMES} is {@code true}, so
+   * every trigger asks for cup games.
    *
    * @param knownGameIds the games the scraper must not fetch (stored or given up); empty unless
    *     {@code gameDetails}

@@ -71,7 +71,7 @@ There's no container for it yet (Phase 6): the backend runs on the host in devel
 
 **Deploy order (KAN-73, KAN-80).** The backend always sends `"playerStats": true` and, since KAN-80, `"gameDetails": true` (with `knownGameIds` when the club has any). A scraper older than KAN-73 rejects the first, one older than KAN-80 the other two, as unknown properties (`400`, so every refresh is `SCRAPER_UNAVAILABLE`). Deploy the scraper first, or together with the backend.
 
-**`cupGames` (KAN-85).** The scraper accepts it; the backend doesn't send it yet (`ScrapeTriggerService.REQUEST_CUP_GAMES = false` until KAN-86, whose frontend shows cup games). Deploy order for that flip: the frontend (KAN-86) and this scraper first (or together), then the backend with the constant `true`.
+**`cupGames` (KAN-85).** The scraper accepts it; since KAN-86 the backend sends it on every trigger (`ScrapeTriggerService.REQUEST_CUP_GAMES = true`, with the frontend that shows cup games). Deploy this scraper first, or together with the backend: an older scraper rejects the property, and every refresh is `SCRAPER_UNAVAILABLE`.
 
 **Deduplication and `knownGameIds`.** A trigger deduplicated against a queued or running scrape (same team, league and season) changes nothing, not even `knownGameIds`: the queued job keeps its own list. That's harmless: a game fetched although another club already has it is stored for every mapped club, and a game the backend gave up on is at worst fetched once more and counted again.
 

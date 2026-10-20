@@ -150,7 +150,8 @@ class ScrapeTriggerServiceIntegrationTest {
             "fixtures",
             "standings",
             "playerStats",
-            "gameDetails");
+            "gameDetails",
+            "cupGames");
     assertThat(request.body().get("teamId").intValue()).isEqualTo(7617);
     assertThat(request.body().get("leagueId").intValue()).isEqualTo(1010);
     assertThat(request.body().get("seasonId").intValue()).isEqualTo(28);
@@ -167,8 +168,8 @@ class ScrapeTriggerServiceIntegrationTest {
         .containsEntry("standings", "1")
         .containsEntry("playerStats", "1")
         .containsEntry("gameDetails", "1")
-        // KAN-84: not requested until KAN-85 (and not in the body above).
-        .containsEntry("cupGames", "0");
+        // KAN-86: requested by every trigger.
+        .containsEntry("cupGames", "1");
     // KAN-80: game details are requested; this club knows no games, so no knownGameIds are sent.
     assertThat(request.body().get("gameDetails").booleanValue()).isTrue();
     assertThat(request.body().has("knownGameIds")).isFalse();
@@ -225,7 +226,7 @@ class ScrapeTriggerServiceIntegrationTest {
     FakeScraper.Received request = scraper.received().getFirst();
     assertThat(request.body().get("gameDetails").booleanValue()).isTrue();
     assertThat(request.body().get("knownGameIds").toString()).isEqualTo("[1122634,1122670]");
-    // KAN-84: exactly the properties of the body before KAN-84; no cupGames yet.
+    // KAN-86: every part, cupGames last, as a boolean true.
     assertThat(request.body().propertyNames())
         .containsExactly(
             "runId",
@@ -236,10 +237,12 @@ class ScrapeTriggerServiceIntegrationTest {
             "standings",
             "playerStats",
             "gameDetails",
-            "knownGameIds");
+            "knownGameIds",
+            "cupGames");
+    assertThat(request.body().get("cupGames").booleanValue()).isTrue();
     assertThat(redis.opsForHash().entries(runKey(request.runId())))
         .containsEntry("gameDetails", "1")
-        .containsEntry("cupGames", "0");
+        .containsEntry("cupGames", "1");
   }
 
   @Test
