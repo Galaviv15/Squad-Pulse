@@ -134,14 +134,26 @@ test("a timeout counts as a network error (retried once)", async () => {
   const log = createMemoryLogger();
   const clock = fakeClock();
   let calls = 0;
+  let firstReason;
+  let secondAbortedWhenSent;
   const fetchImpl = async (url, init) => {
     calls += 1;
     if (calls === 1) {
+      // A real timeout: wait for the client's own AbortSignal.timeout to fire.
       await new Promise((resolve, reject) =>
-        init.signal.addEventListener("abort", () => reject(init.signal.reason)),
+        init.signal.addEventListener("abort", () => {
+          firstReason = init.signal.reason;
+          reject(init.signal.reason);
+        }),
       );
     }
-    return fetch(url, init);
+    // The retry is answered in-process (KAN-88): a real request had to beat the same short
+    // timeout, and lost it under load. Read at the call, so the retry's own timer can't race it.
+    secondAbortedWhenSent = init.signal.aborted;
+    return new Response(JSON.stringify(STORED), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   const result = await postScrapeResult(contractExample(), {
     backendUrl,
@@ -152,6 +164,10 @@ test("a timeout counts as a network error (retried once)", async () => {
     timeoutMs: 20,
   });
   assert.equal(calls, 2);
+  assert.equal(firstReason.name, "TimeoutError");
+  assert.equal(secondAbortedWhenSent, false, "the retry must get a fresh timeout");
+  assert.equal(received.length, 0);
+  assert.deepEqual(clock.sleeps, [5000]);
   assert.deepEqual(result, { delivered: true });
   assert.ok(log.lines.some((l) => / WARN .*retrying error=timeout$/.test(l)));
 });
