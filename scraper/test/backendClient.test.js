@@ -130,7 +130,6 @@ for (const status of [400, 401, 413, 415]) {
 }
 
 test("a timeout counts as a network error (retried once)", async () => {
-  answers = [{ status: 200, body: STORED }];
   const log = createMemoryLogger();
   const clock = fakeClock();
   let calls = 0;
