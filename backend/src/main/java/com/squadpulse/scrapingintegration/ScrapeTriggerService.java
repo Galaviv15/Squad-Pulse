@@ -143,19 +143,20 @@ public class ScrapeTriggerService {
   static final boolean REQUEST_GAME_DETAILS = true;
 
   /**
-   * Whether a trigger asks for the team's cup games (KAN-84): the scraper would load the team page
-   * and fetch the team's cup lists. <b>{@code false} until KAN-85</b>, which teaches the scraper
-   * the property: {@code scraper/src/server.js} rejects unknown properties with a 400, which the
-   * backend treats as "scraper unavailable" — sending it now would break every refresh. KAN-85
-   * flips it together with the scraper, like {@link #REQUEST_PLAYER_STATS} and {@link
-   * #REQUEST_GAME_DETAILS}.
+   * Whether a trigger asks for the team's cup games (KAN-84): the scraper loads the team page and
+   * fetches the team's State Cup list. {@code true} since KAN-86, so every refresh requests them
+   * and the fixtures show cup games: the frontend of KAN-86 labels them (competition, round, extra
+   * time / penalties) and decides "played" from the scores, never from {@code result}.
    *
-   * <p><b>Deploy order</b>: flipping it puts cup games into {@code GET /matches/fixtures}, and
-   * today's frontend decides "played" from {@code result}, which is {@code null} for a cup game
-   * with extra time or penalties. So the frontend (KAN-86) must be live first, or together; then
-   * the scraper (KAN-85); then the backend with this {@code true} — or all together.
+   * <p><b>Deploy order</b>: the scraper must be at KAN-85 or later, which teaches it the property:
+   * an older {@code scraper/src/server.js} rejects unknown properties with a 400, which the backend
+   * treats as "scraper unavailable", so every refresh would be {@code SCRAPER_UNAVAILABLE}. Deploy
+   * the scraper first, or together with the backend, as for {@link #REQUEST_PLAYER_STATS} and
+   * {@link #REQUEST_GAME_DETAILS}; and the KAN-86 frontend with this backend, never after it (an
+   * older frontend would show cup games unlabelled, and a played one with a {@code null} result as
+   * not played).
    */
-  static final boolean REQUEST_CUP_GAMES = false;
+  static final boolean REQUEST_CUP_GAMES = true;
 
   /**
    * The most {@code knownGameIds} a trigger carries (≈ 1.8 KB, inside the scraper's 4 KB body

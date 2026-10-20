@@ -111,9 +111,9 @@ class ScraperClientTest {
   }
 
   /**
-   * KAN-84: {@code cupGames} is defined but not sent yet — a {@code false} is left out of the body
-   * ({@code NON_DEFAULT}, verified here with this Jackson version) and {@link
-   * ScrapeTriggerService#REQUEST_CUP_GAMES} is {@code false} — and a {@code true} is sent as such.
+   * KAN-84: a {@code false} {@code cupGames} is left out of the body ({@code NON_DEFAULT}, verified
+   * here with this Jackson version), a {@code true} is sent as such, and since KAN-86 {@link
+   * ScrapeTriggerService#REQUEST_CUP_GAMES} is {@code true}.
    */
   @Test
   void cupGamesIsInTheBodyOnlyWhenTrue() {
@@ -144,7 +144,7 @@ class ScraperClientTest {
     assertThat(asked.get("cupGames").isBoolean()).isTrue();
     assertThat(asked.get("cupGames").booleanValue()).isTrue();
 
-    assertThat(ScrapeTriggerService.REQUEST_CUP_GAMES).isFalse();
+    assertThat(ScrapeTriggerService.REQUEST_CUP_GAMES).isTrue();
   }
 
   /**

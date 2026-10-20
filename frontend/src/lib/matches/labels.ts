@@ -1,5 +1,8 @@
+import type { TFunction } from "i18next";
 import type {
   AppearanceRole,
+  Competition,
+  DecidedBy,
   DetailsState,
   FailureReason,
   GameEventKind,
@@ -16,6 +19,27 @@ import type { MatchesTab } from "./tab";
 export const SIDE_KEYS: Record<Side, string> = {
   HOME: "matches.side.HOME",
   AWAY: "matches.side.AWAY",
+};
+
+/** Our own name of each competition (KAN-86), never the site's text (which has the sponsor). */
+export const COMPETITION_KEYS: Record<Competition, string> = {
+  LEAGUE: "matches.competition.LEAGUE",
+  STATE_CUP: "matches.competition.STATE_CUP",
+};
+
+/**
+ * Our own name of the competition (KAN-86), never the site's text, with a cup's round as the cup
+ * list gives it: "ליגה", "גביע המדינה · סיבוב ו". The game page's cup heading uses it too.
+ */
+export function competitionText(t: TFunction, competition: Competition, round: string | null) {
+  const label = t(COMPETITION_KEYS[competition]);
+  return round === null ? label : t("matches.competitionWithRound", { competition: label, round });
+}
+
+/** The label of a stage after the 90 minutes, before its score (KAN-86). */
+export const DECIDED_BY_KEYS: Record<DecidedBy, string> = {
+  EXTRA_TIME: "matches.decidedBy.EXTRA_TIME",
+  PENALTIES: "matches.decidedBy.PENALTIES",
 };
 
 export const RESULT_KEYS: Record<Result, string> = {

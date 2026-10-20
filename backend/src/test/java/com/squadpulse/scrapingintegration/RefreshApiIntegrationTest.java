@@ -243,7 +243,7 @@ class RefreshApiIntegrationTest {
     String runA = SCRAPER.received().getFirst().runId();
 
     statusOf(clubB).andExpect(jsonPath("$.state").value("IDLE"));
-    ingest(withRunId(runA, allFour())).andExpect(status().isOk());
+    ingest(withRunId(runA, allFive())).andExpect(status().isOk());
 
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
     statusOf(clubB)
@@ -313,7 +313,7 @@ class RefreshApiIntegrationTest {
   void aRefreshWithinTheCooldownIsRefusedAndOneAfterItStarts() throws Exception {
     refresh(clubA, PermissionLevel.EDIT_FULL).andExpect(status().isAccepted());
     String first = SCRAPER.received().getFirst().runId();
-    ingest(withRunId(first, allFour())).andExpect(status().isOk());
+    ingest(withRunId(first, allFive())).andExpect(status().isOk());
 
     Instant before = Instant.now();
     String cooldown = refreshBody(clubA);
@@ -338,7 +338,7 @@ class RefreshApiIntegrationTest {
 
     // The same data again: every part STALE, which is still a success.
     String second = SCRAPER.received().get(1).runId();
-    ingest(withRunId(second, allFour()))
+    ingest(withRunId(second, allFive()))
         .andExpect(jsonPath("$.fixtures.outcome").value("STALE"))
         .andExpect(jsonPath("$.standings.outcome").value("STALE"))
         .andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
@@ -369,7 +369,7 @@ class RefreshApiIntegrationTest {
     String runId = start(clubA);
     Instant before = Instant.now();
 
-    ingest(withRunId(runId, allFour())).andExpect(status().isOk());
+    ingest(withRunId(runId, allFive())).andExpect(status().isOk());
 
     JsonNode node = JSON.readTree(statusBody(clubA));
     assertThat(node.get("state").stringValue()).isEqualTo("SUCCEEDED");
@@ -520,14 +520,15 @@ class RefreshApiIntegrationTest {
     ingest(
             withRunId(
                 runId,
-                request(
-                    SDEROT,
-                    LEAGUE,
-                    SEASON,
-                    fixtures(FETCHED_AT),
-                    null,
-                    ScrapePayloads.playerStats(FETCHED_AT),
-                    noGames())))
+                withCupGames(
+                    request(
+                        SDEROT,
+                        LEAGUE,
+                        SEASON,
+                        fixtures(FETCHED_AT),
+                        null,
+                        ScrapePayloads.playerStats(FETCHED_AT),
+                        noGames()))))
         .andExpect(jsonPath("$.fixtures.outcome").value("STORED"));
 
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
@@ -558,7 +559,7 @@ class RefreshApiIntegrationTest {
     assertThat(logs.events())
         .anyMatch(e -> e.getFormattedMessage().contains(runId + " is now FAILED (NO_RESULT)"));
 
-    ingest(withRunId(runId, allFour())).andExpect(status().isOk());
+    ingest(withRunId(runId, allFive())).andExpect(status().isOk());
 
     statusOf(clubA)
         .andExpect(jsonPath("$.state").value("SUCCEEDED"))
@@ -569,7 +570,7 @@ class RefreshApiIntegrationTest {
   void aResultBeforeTheTriggerReturnsIsNotOverwritten() throws Exception {
     SCRAPER.answer(
         FakeScraper.after(
-            request -> ingest(withRunId(request.runId(), allFour())).andExpect(status().isOk()),
+            request -> ingest(withRunId(request.runId(), allFive())).andExpect(status().isOk()),
             FakeScraper.queued()));
 
     refresh(clubA, PermissionLevel.EDIT_FULL)
@@ -642,7 +643,8 @@ class RefreshApiIntegrationTest {
             "fixtures",
             "standings",
             "playerStats",
-            "gameDetails");
+            "gameDetails",
+            "cupGames");
     assertThat(body.get("playerStats").booleanValue()).isTrue();
     assertThat(redis.opsForHash().get(runKey(runId), "playerStats")).isEqualTo("1");
   }
@@ -650,13 +652,13 @@ class RefreshApiIntegrationTest {
   @Test
   void aRunThatRequestedStatsSucceedsWhenTheyreStoredOrAlreadyUpToDate() throws Exception {
     String runId = start(clubA);
-    ingest(withRunId(runId, allFour()))
+    ingest(withRunId(runId, allFive()))
         .andExpect(jsonPath("$.playerStats.outcome").value("STORED"));
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
 
     redis.getConnectionFactory().getConnection().serverCommands().flushAll();
     String again = start(clubA);
-    ingest(withRunId(again, allFour())).andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
+    ingest(withRunId(again, allFive())).andExpect(jsonPath("$.playerStats.outcome").value("STALE"));
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
   }
 
@@ -737,7 +739,7 @@ class RefreshApiIntegrationTest {
   void aRunThatDidntRequestStatsIgnoresThem() throws Exception {
     String runId = start(clubA);
     redis.opsForHash().put(runKey(runId), "playerStats", "0");
-    Map<String, Object> result = allFour();
+    Map<String, Object> result = allFive();
     result.put("playerStats", failed("SOURCE_BLOCKED", null));
 
     ingest(withRunId(runId, result)).andExpect(status().isOk());
@@ -750,7 +752,7 @@ class RefreshApiIntegrationTest {
   void anOldRunRecordWithoutTheFlagIgnoresTheStats() throws Exception {
     String withStats = start(clubA);
     redis.opsForHash().delete(runKey(withStats), "playerStats");
-    Map<String, Object> result = allFour();
+    Map<String, Object> result = allFive();
     result.put("playerStats", failed("TIMEOUT", null));
     ingest(withRunId(withStats, result)).andExpect(status().isOk());
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
@@ -758,7 +760,7 @@ class RefreshApiIntegrationTest {
     redis.getConnectionFactory().getConnection().serverCommands().flushAll();
     String withoutStats = start(clubA);
     redis.opsForHash().delete(runKey(withoutStats), "playerStats");
-    Map<String, Object> withoutStatsResult = ScrapePayloads.full();
+    Map<String, Object> withoutStatsResult = withCupGames(ScrapePayloads.full());
     withoutStatsResult.put("gameDetails", noGames());
     ingest(withRunId(withoutStats, withoutStatsResult)).andExpect(status().isOk());
     statusOf(clubA).andExpect(jsonPath("$.state").value("SUCCEEDED"));
@@ -783,7 +785,8 @@ class RefreshApiIntegrationTest {
             "fixtures",
             "standings",
             "playerStats",
-            "gameDetails");
+            "gameDetails",
+            "cupGames");
     assertThat(SCRAPER.received().getFirst().body().get("gameDetails").booleanValue()).isTrue();
     assertThat(redis.opsForHash().get(runKey(runId), "gameDetails")).isEqualTo("1");
   }
@@ -792,7 +795,7 @@ class RefreshApiIntegrationTest {
   @Test
   void aRunThatRequestedGameDetailsSucceedsWithPerGameFailures() throws Exception {
     String runId = startWithGameDetails();
-    Map<String, Object> result = allFour();
+    Map<String, Object> result = allFive();
     ScrapePayloads.part(result, "gameDetails")
         .put("failures", List.of(ScrapePayloads.gameFailure(1122603, "PARSE_ERROR")));
 
@@ -804,7 +807,7 @@ class RefreshApiIntegrationTest {
   @Test
   void aFailedGameDetailsPartFailsARunThatRequestedIt() throws Exception {
     String runId = startWithGameDetails();
-    Map<String, Object> result = allFour();
+    Map<String, Object> result = allFive();
     result.put("gameDetails", failed("PARSE_ERROR", null));
 
     ingest(withRunId(runId, result)).andExpect(status().isOk());
@@ -818,7 +821,7 @@ class RefreshApiIntegrationTest {
   void requestedGameDetailsThatWerentSentFailTheRun() throws Exception {
     String runId = startWithGameDetails();
 
-    ingest(withRunId(runId, allThree())).andExpect(status().isOk());
+    ingest(withRunId(runId, withCupGames(allThree()))).andExpect(status().isOk());
 
     statusOf(clubA)
         .andExpect(jsonPath("$.state").value("FAILED"))
@@ -851,7 +854,7 @@ class RefreshApiIntegrationTest {
             new ScrapeResultResponse.PartOutcome(
                 ScrapeResultResponse.Outcome.REJECTED,
                 com.squadpulse.match.IngestResult.RejectionReason.NOT_MAPPED),
-            ScrapeResultResponse.CupGamesOutcome.NOT_SENT,
+            storedCupGames(),
             1,
             List.of()));
 
@@ -876,7 +879,7 @@ class RefreshApiIntegrationTest {
         } else {
           redis.opsForHash().put(runKey(runId), "gameDetails", "0");
         }
-        Map<String, Object> result = allThree();
+        Map<String, Object> result = withCupGames(allThree());
         if (sent) {
           result.put("gameDetails", failed("PARSE_ERROR", null));
         }
@@ -890,15 +893,15 @@ class RefreshApiIntegrationTest {
     }
   }
 
-  // --- cup games (KAN-84; not requested by the trigger until KAN-85) --------------------------
+  // --- cup games (KAN-84; requested by every trigger since KAN-86) ----------------------------
 
-  /** Today's trigger doesn't request cup games, and its run record says so. */
+  /** Every trigger requests cup games (KAN-86), and its run record says so. */
   @Test
-  void theTriggerDoesntAskForCupGamesYet() throws Exception {
+  void theTriggerAsksForCupGames() throws Exception {
     String runId = start(clubA);
 
-    assertThat(SCRAPER.received().getFirst().body().has("cupGames")).isFalse();
-    assertThat(redis.opsForHash().get(runKey(runId), "cupGames")).isEqualTo("0");
+    assertThat(SCRAPER.received().getFirst().body().get("cupGames").booleanValue()).isTrue();
+    assertThat(redis.opsForHash().get(runKey(runId), "cupGames")).isEqualTo("1");
   }
 
   @Test
@@ -987,7 +990,7 @@ class RefreshApiIntegrationTest {
   }
 
   /**
-   * A run that didn't request cup games — flag {@code "0"} (every trigger until KAN-85) or no flag
+   * A run that didn't request cup games — flag {@code "0"} (every trigger until KAN-86) or no flag
    * (a record written before KAN-84, i.e. a run in flight at deploy) — ignores a failing cup part.
    */
   @Test
@@ -998,6 +1001,8 @@ class RefreshApiIntegrationTest {
       redis.opsForHash().put(runKey(runId), "gameDetails", "1");
       if (oldRecord) {
         redis.opsForHash().delete(runKey(runId), "cupGames");
+      } else {
+        redis.opsForHash().put(runKey(runId), "cupGames", "0");
       }
       Map<String, Object> result = allFour();
       result.put("cupGames", failed("PARSE_ERROR", null));
@@ -1012,20 +1017,37 @@ class RefreshApiIntegrationTest {
 
   // --- helpers -------------------------------------------------------------------------------
 
-  /** A started run whose record says game details and cup games were requested (KAN-85's). */
+  /** A started run whose record says game details and cup games were requested (KAN-86's). */
   private String startWithCupGames() throws Exception {
     String runId = startWithGameDetails();
     redis.opsForHash().put(runKey(runId), "cupGames", "1");
     return runId;
   }
 
+  /** Every part, as a run requested since KAN-86 gets it when all goes well. */
   private static Map<String, Object> allFive() {
-    Map<String, Object> request = allFour();
-    request.put(
+    return withCupGames(allFour());
+  }
+
+  /** {@code result} with an {@code OK} State Cup part of one game (every trigger asks, KAN-86). */
+  private static Map<String, Object> withCupGames(Map<String, Object> result) {
+    result.put(
         "cupGames",
         ScrapePayloads.cupGamesWith(
             FETCHED_AT, ScrapePayloads.stateCup(ScrapePayloads.shimshonCupGame())));
-    return request;
+    return result;
+  }
+
+  /** A cup part whose one competition was stored, for the hook called directly. */
+  private static ScrapeResultResponse.CupGamesOutcome storedCupGames() {
+    return new ScrapeResultResponse.CupGamesOutcome(
+        ScrapeResultResponse.Outcome.STORED,
+        null,
+        List.of(
+            new ScrapeResultResponse.CompetitionOutcome(
+                com.squadpulse.match.CupCompetition.STATE_CUP,
+                ScrapeResultResponse.Outcome.STORED,
+                null)));
   }
 
   /**

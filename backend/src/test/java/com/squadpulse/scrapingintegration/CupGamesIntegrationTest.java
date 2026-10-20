@@ -959,6 +959,114 @@ class CupGamesIntegrationTest {
     assertThat(raw).doesNotContain("gameId", String.valueOf(PENALTIES_CUP_GAME));
   }
 
+  /**
+   * KAN-86: a cup game in the current snapshot carries {@code competitionType} (the enum's name)
+   * and {@code cupRound} (the list's round, not the page's {@code מחזור}); a league game has both,
+   * written as JSON {@code null}.
+   */
+  @Test
+  void theGameDetailsNameTheCupAndItsRoundFromTheSnapshot() throws Exception {
+    ingest(request(SDEROT, LEAGUE, SEASON, fixtures(FETCHED_AT), standings(FETCHED_AT)));
+    ingest(
+        cupGamesOnly(
+            cupGamesWith(
+                FETCHED_AT,
+                stateCup(cup(RAHAT_CUP_GAME, "2026-09-26", "HOME", 1, 0, null, null)))));
+    ingest(
+        gameDetailsOnly(
+            gameDetailsWith(FETCHED_AT, List.of(), cupDetails(RAHAT_CUP_GAME), tiraGame())));
+    JsonNode games = fixturesOf(clubA).get("games");
+
+    JsonNode cupGame = details(onDate(games, "2026-09-26"));
+    assertThat(cupGame.get("competitionType").stringValue()).isEqualTo("STATE_CUP");
+    assertThat(cupGame.get("cupRound").stringValue()).isEqualTo("ז");
+    // The page's own heading and round stay as they were.
+    assertThat(cupGame.get("competition").stringValue()).isEqualTo("גביע המדינה ווינר");
+    assertThat(cupGame.get("round").isInt()).isTrue();
+
+    JsonNode league = details(gameAgainst(games, TIRA_NAME, "2026-09-05"));
+    for (String field : List.of("competitionType", "cupRound")) {
+      assertThat(league.has(field)).as(field).isTrue();
+      assertThat(league.get(field).isNull()).as(field).isTrue();
+    }
+  }
+
+  /**
+   * A cup game no longer in the current snapshot can't be told from a league game: both new fields
+   * are {@code null}, and the result is the page's score again.
+   */
+  @Test
+  void aCupGameNoLongerInTheSnapshotHasNoCupFields() throws Exception {
+    ingest(
+        cupGamesOnly(
+            cupGamesWith(
+                FETCHED_AT,
+                stateCup(
+                    cup(
+                        RAHAT_CUP_GAME,
+                        "2026-09-26",
+                        "AWAY",
+                        3,
+                        3,
+                        new int[] {3, 3},
+                        new int[] {1, 3})))));
+    ingest(
+        gameDetailsOnly(
+            gameDetailsWith(FETCHED_AT, List.of(), level(cupDetails(RAHAT_CUP_GAME), "AWAY"))));
+    String detailsId =
+        onDate(fixturesOf(clubA).get("games"), "2026-09-26").get("detailsId").stringValue();
+    assertThat(detailsAs(clubA, detailsId).get("competitionType").stringValue())
+        .isEqualTo("STATE_CUP");
+
+    ingest(cupGamesOnly(cupGamesWith(FETCHED_AT.plusSeconds(60), stateCup(shimshonCupGame()))));
+
+    JsonNode details = detailsAs(clubA, detailsId);
+    for (String field :
+        List.of("competitionType", "cupRound", "extraTime", "penalties", "decidedBy")) {
+      assertThat(details.get(field).isNull()).as(field).isTrue();
+    }
+    assertThat(details.get("result").stringValue()).isEqualTo("DRAW");
+  }
+
+  /**
+   * The cup lookup is the club's own: with A's cup snapshot gone, A's details of a cup game are
+   * never taken from B's snapshot of the same team, season and game.
+   */
+  @Test
+  void theCupLookupNeverUsesAnotherClubsSnapshot() throws Exception {
+    String clubB = clubs.createClub("Sderot fans", SDEROT, LEAGUE, SEASON);
+    ingest(
+        cupGamesOnly(
+            cupGamesWith(
+                FETCHED_AT,
+                stateCup(
+                    cup(
+                        RAHAT_CUP_GAME,
+                        "2026-09-26",
+                        "AWAY",
+                        3,
+                        3,
+                        new int[] {3, 3},
+                        new int[] {1, 3})))));
+    ingest(
+        gameDetailsOnly(
+            gameDetailsWith(FETCHED_AT, List.of(), level(cupDetails(RAHAT_CUP_GAME), "AWAY"))));
+    String idOfA =
+        onDate(fixturesOf(clubA).get("games"), "2026-09-26").get("detailsId").stringValue();
+    String idOfB =
+        onDate(fixturesOf(clubB).get("games"), "2026-09-26").get("detailsId").stringValue();
+
+    mongoTemplate.getCollection(CUPS).deleteMany(new Document("clubId", clubA));
+
+    JsonNode a = detailsAs(clubA, idOfA);
+    for (String field : List.of("competitionType", "cupRound", "decidedBy")) {
+      assertThat(a.get(field).isNull()).as(field).isTrue();
+    }
+    JsonNode b = detailsAs(clubB, idOfB);
+    assertThat(b.get("competitionType").stringValue()).isEqualTo("STATE_CUP");
+    assertThat(b.get("cupRound").stringValue()).isEqualTo("ז");
+  }
+
   // --- known games
   // --------------------------------------------------------------------------------
 
@@ -1137,6 +1245,18 @@ class CupGamesIntegrationTest {
         .andReturn()
         .getResponse()
         .getContentAsString();
+  }
+
+  private JsonNode detailsAs(String clubId, String detailsId) throws Exception {
+    return ScrapePayloads.JSON.readTree(
+        mockMvc
+            .perform(
+                get("/matches/games/" + detailsId)
+                    .header("Authorization", tokens.bearer(clubId, PermissionLevel.VIEW_ONLY)))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString());
   }
 
   private static JsonNode gameAgainst(JsonNode games, String opponent) {

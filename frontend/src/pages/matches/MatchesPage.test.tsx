@@ -5,6 +5,11 @@ import he from "@/i18n/locales/he.json";
 import type { PermissionLevel } from "@/lib/auth/permissions";
 import { apiError, meReturns, refreshReturns } from "@/test/msw/auth";
 import {
+  cupGame,
+  cupGameAfterExtraTime,
+  cupGameIn90,
+  cupGameOnPenalties,
+  cupGameWithoutResult,
   emptyFixtures,
   emptyLeagueTable,
   fixturesBody,
@@ -486,5 +491,144 @@ describe("a played game's details on the matches screen (KAN-81)", () => {
       await screen.findByRole("heading", { level: 2, name: "ליגה א' דרום · מחזור 6" }),
     ).toBeVisible();
     expect(details.requests.ids).toEqual(["details-2026-09-05"]);
+  });
+});
+
+describe("cup games on the games tab (KAN-86)", () => {
+  const LONG_ROUND = "ה' - ליגות א' דרום";
+  const cupFixtures = () =>
+    fixturesBody({
+      games: [
+        playedGame({ date: "2026-09-05", opponentName: "Maccabi Yavne" }),
+        cupGameIn90({ date: "2026-09-08", opponentName: "Cup In 90" }),
+        cupGameIn90({ date: "2026-09-09", opponentName: "Cup Long Round", round: LONG_ROUND }),
+        cupGameAfterExtraTime({ date: "2026-09-15", opponentName: "ET Home" }),
+        cupGameAfterExtraTime({ date: "2026-09-16", opponentName: "ET Away", ownSide: "AWAY" }),
+        cupGameOnPenalties({ date: "2026-09-22", opponentName: "Pen Home" }),
+        cupGameOnPenalties({ date: "2026-09-23", opponentName: "Pen Away", ownSide: "AWAY" }),
+        cupGameOnPenalties({
+          date: "2026-09-24",
+          opponentName: "Pen Win",
+          extraTime: null,
+          penalties: { ownScore: 5, opponentScore: 4 },
+          result: "WIN",
+        }),
+        cupGameWithoutResult({ date: "2026-09-30", opponentName: "No Result" }),
+        cupGame({ date: "2026-10-14", opponentName: "Cup Next" }),
+      ],
+    });
+  const cupLabel = `${M.competition.STATE_CUP} · סיבוב ו`;
+  const competition = (row: Element) => row.querySelector("[data-slot=competition]")!;
+  /** The secondary line's stage: its label, then the home score, then the away score. */
+  const stage = (row: Element, name: "extra-time" | "penalties") => {
+    const element = row.querySelector(`[data-slot=decided-by] [data-slot=${name}]`)!;
+    const home = element.querySelector("[data-slot=stage-home-score]")!;
+    const away = element.querySelector("[data-slot=stage-away-score]")!;
+    expect(before(home, away)).toBe(true);
+    return { element, home: home.textContent, away: away.textContent };
+  };
+
+  it("labels every row with our competition name, a cup's with its round as given", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+
+    expect(competition(await gameOf("Maccabi Yavne"))).toHaveTextContent(
+      new RegExp(`^${M.competition.LEAGUE}$`),
+    );
+    expect(competition(await gameOf("Cup In 90"))).toHaveTextContent(new RegExp(`^${cupLabel}$`));
+    expect(competition(await gameOf("Cup Next"))).toHaveTextContent(new RegExp(`^${cupLabel}$`));
+    expect(competition(await gameOf("Cup Long Round")).textContent).toBe(
+      `${M.competition.STATE_CUP} · סיבוב ${LONG_ROUND}`,
+    );
+  });
+
+  it("shows no secondary line for a game decided in 90 minutes, league or cup", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+    for (const opponent of ["Maccabi Yavne", "Cup In 90", "Cup Next"]) {
+      expect((await gameOf(opponent)).querySelector("[data-slot=decided-by]")).toBeNull();
+    }
+    expect(within(await gameOf("Cup In 90")).getByText(M.result.WIN)).toBeInTheDocument();
+  });
+
+  it("keeps the 90-minute score and adds the extra-time score under it, home first", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+
+    // At home: Hapoel Sderot 2–2, after extra time 3–2 to us.
+    const home = await gameOf("ET Home");
+    expect(home.querySelector("[data-slot=scoreline] [data-slot=home-score]")).toHaveTextContent(
+      /^2$/,
+    );
+    const homeStage = stage(home, "extra-time");
+    expect(homeStage.element).toHaveTextContent(M.decidedBy.EXTRA_TIME);
+    expect([homeStage.home, homeStage.away]).toEqual(["3", "2"]);
+    expect(home.querySelector("[data-slot=penalties]")).toBeNull();
+    expect(within(home).getByText(M.result.WIN)).toBeInTheDocument();
+
+    // Away: the opponent is home, so its 2 comes first.
+    const away = stage(await gameOf("ET Away"), "extra-time");
+    expect([away.home, away.away]).toEqual(["2", "3"]);
+  });
+
+  it("shows the extra time, then the shootout tally, home first, for home and away", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+
+    const home = await gameOf("Pen Home");
+    const extraTime = stage(home, "extra-time");
+    const penalties = stage(home, "penalties");
+    expect(before(extraTime.element, penalties.element)).toBe(true);
+    expect([extraTime.home, extraTime.away]).toEqual(["3", "3"]);
+    expect(penalties.element).toHaveTextContent(M.decidedBy.PENALTIES);
+    expect([penalties.home, penalties.away]).toEqual(["1", "3"]);
+    expect(within(home).getByText(M.result.LOSS)).toBeInTheDocument();
+
+    const away = stage(await gameOf("Pen Away"), "penalties");
+    expect([away.home, away.away]).toEqual(["3", "1"]);
+  });
+
+  it("never writes a stage's score as one string", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+    const line = (await gameOf("Pen Away")).querySelector("[data-slot=decided-by]")!;
+    // No element holding just "x–y", and no text node with a digit and the separator together.
+    for (const element of line.querySelectorAll("*")) {
+      expect(element.textContent).not.toMatch(/^\s*\d+\s*[–-]\s*\d+\s*$/);
+    }
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      expect(node.textContent).not.toMatch(/\d.*[–-]|[–-].*\d/);
+    }
+  });
+
+  it("shows a shootout win next to a level 90-minute score as a win, explained", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+    const row = await gameOf("Pen Win");
+
+    expect(row.querySelector("[data-slot=scoreline] [data-slot=home-score]")).toHaveTextContent(
+      /^3$/,
+    );
+    expect(row.querySelector("[data-slot=scoreline] [data-slot=away-score]")).toHaveTextContent(
+      /^3$/,
+    );
+    expect(within(row).getByText(M.result.WIN)).toBeInTheDocument();
+    const penalties = stage(row, "penalties");
+    expect([penalties.home, penalties.away]).toEqual(["5", "4"]);
+    expect(row.querySelector("[data-slot=extra-time]")).toBeNull();
+  });
+
+  it("shows a played game without a result with its scores and no result badge", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+    const row = await gameOf("No Result");
+
+    expect(row.querySelector("[data-slot=home-score]")).toHaveTextContent(/^1$/);
+    expect(row.querySelector("[data-slot=away-score]")).toHaveTextContent(/^1$/);
+    for (const text of [M.result.WIN, M.result.DRAW, M.result.LOSS, M.noResult, M.versus]) {
+      expect(within(row).queryByText(text)).toBeNull();
+    }
+    expect(row).not.toHaveAttribute("data-next");
+  });
+
+  it("highlights an upcoming cup game as the next one", async () => {
+    await renderMatches("/app/matches", { fixtures: cupFixtures() });
+    const next = await gameOf("Cup Next");
+    expect(next).toHaveAttribute("data-next");
+    expect(within(next).getByText(M.versus)).toBeInTheDocument();
   });
 });

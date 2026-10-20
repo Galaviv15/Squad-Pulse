@@ -23,7 +23,8 @@ import org.springframework.stereotype.Service;
  * <p>The one thing it reads besides (KAN-84): the club's cup snapshots for the current team and
  * season (club-scoped, one query), so a cup game gets its {@code result}, {@code extraTime}, {@code
  * penalties} and {@code decidedBy} by the same rule as on {@code GET /matches/fixtures} ({@link
- * MatchOutcome}). Nothing else of the read changes.
+ * MatchOutcome}), and (KAN-86) its {@code competitionType} and {@code cupRound}. Nothing else of
+ * the read changes.
  */
 @Service
 class GameDetailsReadService {
@@ -67,7 +68,11 @@ class GameDetailsReadService {
     boolean home = details.getOwnSide() == FixturesResponse.Side.HOME;
     int ownScore = home ? details.getHomeScore() : details.getAwayScore();
     int opponentScore = home ? details.getAwayScore() : details.getHomeScore();
-    MatchOutcome outcome = outcome(ids, details.getGameId(), ownScore, opponentScore);
+    CupMatch cup = cupGame(ids, details.getGameId());
+    MatchOutcome outcome =
+        cup == null
+            ? MatchOutcome.ofScore(ownScore, opponentScore)
+            : MatchOutcome.ofCup(cup.game());
     Map<Integer, Player> linked = playerStatsReadService.linkedPlayers();
     List<GameDetailsResponse.Appearance> players =
         details.getAppearances().stream()
@@ -88,26 +93,33 @@ class GameDetailsReadService {
         outcome.extraTime(),
         outcome.penalties(),
         outcome.decidedBy(),
+        cup == null ? null : FixturesResponse.Competition.of(cup.competition()),
+        cup == null ? null : cup.game().round(),
         details.getFetchedAt(),
         players);
   }
 
   /**
-   * How the game ended (KAN-84): from the club's current cup snapshots' game with this {@code
-   * gameId} if there is one, by the shared rule ({@link MatchOutcome#ofCup}); otherwise (a league
-   * game) from the page's score.
+   * The club's current cup snapshots' game with this {@code gameId} (KAN-84), with its snapshot's
+   * competition, or {@code null} (a league game, or a cup game no longer in the current snapshots).
+   * One club-scoped query; its game gives the outcome by the shared rule ({@link
+   * MatchOutcome#ofCup}) and, since KAN-86, the competition and the cup round.
    */
-  private MatchOutcome outcome(
-      FootballOrgIlIds ids, Integer gameId, int ownScore, int opponentScore) {
+  private CupMatch cupGame(FootballOrgIlIds ids, Integer gameId) {
     return cupRepository
         .findByClubIdAndTeamIdAndSeasonId(clubContext.requireClubId(), ids.teamId(), ids.seasonId())
         .stream()
-        .flatMap(snapshot -> snapshot.getGames().stream())
-        .filter(game -> Objects.equals(game.gameId(), gameId))
+        .flatMap(
+            snapshot ->
+                snapshot.getGames().stream()
+                    .map(game -> new CupMatch(snapshot.getCompetition(), game)))
+        .filter(match -> Objects.equals(match.game().gameId(), gameId))
         .findFirst()
-        .map(MatchOutcome::ofCup)
-        .orElseGet(() -> MatchOutcome.ofScore(ownScore, opponentScore));
+        .orElse(null);
   }
+
+  /** A cup game found by {@link #cupGame}, with the competition of the snapshot it's in. */
+  private record CupMatch(CupCompetition competition, StoredCupGame game) {}
 
   private static GameDetailsResponse.Appearance toResponse(
       GameDetails.StoredAppearance appearance, Player linkedPlayer) {

@@ -151,8 +151,10 @@ describe("POST /scrape", () => {
 
   test("the contract's trigger example parses", () => {
     const example = contractExample("contract-example-trigger");
-    assert.deepEqual(parseTrigger(example), { ...example, cupGames: false });
+    // Every optional property is present, so parseTrigger adds no default.
+    assert.deepEqual(parseTrigger(example), example);
     assert.equal(example.gameDetails, true);
+    assert.equal(example.cupGames, true);
     assert.equal(example.knownGameIds.length, 2);
   });
 

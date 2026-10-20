@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import i18n from "@/i18n/i18n";
 import he from "@/i18n/locales/he.json";
-import { APPEARANCE_ROLE_KEYS, DETAILS_STATE_TEXT_KEYS, GAME_EVENT_KEYS } from "./labels";
+import {
+  APPEARANCE_ROLE_KEYS,
+  COMPETITION_KEYS,
+  DECIDED_BY_KEYS,
+  DETAILS_STATE_TEXT_KEYS,
+  GAME_EVENT_KEYS,
+} from "./labels";
 
 describe("the cooldown's Hebrew plurals (i18next with Intl.PluralRules)", () => {
   it("resolves he's one / two / other forms", () => {
@@ -33,5 +39,22 @@ describe("the game details' keys (KAN-81)", () => {
     expect(i18n.t("matches.game.eventAt", { event: he.matches.game.event.GOAL, minute: 93 })).toBe(
       "שער בדקה 93",
     );
+  });
+});
+
+describe("the cup games' keys (KAN-86)", () => {
+  it("has a Hebrew text for every competition and deciding stage", () => {
+    for (const key of [...Object.values(COMPETITION_KEYS), ...Object.values(DECIDED_BY_KEYS)]) {
+      expect(i18n.exists(key), key).toBe(true);
+    }
+  });
+
+  it("writes a cup's round as given, apostrophes unescaped", () => {
+    expect(
+      i18n.t("matches.competitionWithRound", {
+        competition: he.matches.competition.STATE_CUP,
+        round: "ה' - ליגות א' דרום",
+      }),
+    ).toBe("גביע המדינה · סיבוב ה' - ליגות א' דרום");
   });
 });

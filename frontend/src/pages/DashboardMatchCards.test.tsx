@@ -3,6 +3,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import he from "@/i18n/locales/he.json";
 import { apiError, loggedIn } from "@/test/msw/auth";
 import {
+  cupGame,
+  cupGameWithoutResult,
   emptyFixtures,
   emptyLeagueTable,
   fixturesBody,
@@ -69,6 +71,35 @@ const scrollContainer = () =>
 const M = he.matches;
 
 describe("the next-match card", () => {
+  it("names the competition of a league game that is next", async () => {
+    await renderDashboard();
+    const card = nextMatchCard();
+
+    expect(await within(card).findByText("Hapoel Ashdod")).toBeInTheDocument();
+    expect(card.querySelector("[data-slot=competition]")).toHaveTextContent(
+      new RegExp(`^${M.competition.LEAGUE}$`),
+    );
+  });
+
+  it("shows a cup game that is next with the cup and its round, past a played one without a result", async () => {
+    await renderDashboard(
+      fixturesBody({
+        games: [
+          cupGameWithoutResult({ date: "2026-10-12", opponentName: "Played Today" }),
+          cupGame({ date: "2026-10-14", opponentName: "Cup Opponent", round: "ז" }),
+          gameBody({ date: "2026-10-17", opponentName: "Hapoel Ashdod" }),
+        ],
+      }),
+    );
+    const card = nextMatchCard();
+
+    expect(await within(card).findByText("Cup Opponent")).toBeInTheDocument();
+    expect(within(card).getByText(`${M.competition.STATE_CUP} · סיבוב ז`)).toBeInTheDocument();
+    expect(within(card).getByText(M.side.HOME)).toBeInTheDocument();
+    expect(within(card).queryByText("Played Today")).toBeNull();
+    expect(within(card).queryByText("Hapoel Ashdod")).toBeNull();
+  });
+
   it("shows the next home game: opponent, home, date with weekday, time, venue, last updated", async () => {
     await renderDashboard();
     const card = nextMatchCard();

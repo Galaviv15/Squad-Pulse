@@ -28,6 +28,20 @@ export type Result = (typeof RESULTS)[number];
 export const DETAILS_STATES = ["AVAILABLE", "UNAVAILABLE", "PENDING"] as const;
 export type DetailsState = (typeof DETAILS_STATES)[number];
 
+/** match.FixturesResponse.Competition (KAN-84): which competition a game is in. */
+export const COMPETITIONS = ["LEAGUE", "STATE_CUP"] as const;
+export type Competition = (typeof COMPETITIONS)[number];
+
+/** match.FixturesResponse.DecidedBy (KAN-84): the stage after the 90 minutes that decided a cup game. */
+export const DECIDED_BY = ["EXTRA_TIME", "PENALTIES"] as const;
+export type DecidedBy = (typeof DECIDED_BY)[number];
+
+/** match.FixturesResponse.Score: a score from our side (after extra time, or a shootout's tally). */
+export interface Score {
+  ownScore: number;
+  opponentScore: number;
+}
+
 /** match.FixturesResponse.Game. */
 export interface Game {
   /** Israel-local yyyy-MM-dd. */
@@ -38,14 +52,30 @@ export interface Game {
   opponentName: string;
   /** null when the site shows none. */
   venue: string | null;
-  /** Both scores and `result` are null while not played. */
+  /**
+   * The score after 90 minutes. Both are null while not played: "played" means both set (league or
+   * cup), never read from `result`.
+   */
   ownScore: number | null;
   opponentScore: number | null;
+  /**
+   * Who went through, from our side, by the last stage present: the shootout, else extra time, else
+   * the 90 minutes. null while not played, and for a level shootout (bad data) even with scores.
+   */
   result: Result | null;
   /** Our opaque id of the game's details (GET /matches/games/{id}); null unless AVAILABLE. */
   detailsId: string | null;
   /** null for a game not played yet. */
   detailsState: DetailsState | null;
+  competition: Competition;
+  /** A cup game's round as the cup list shows it (free text, e.g. "ו"); null for a league game. */
+  round: string | null;
+  /** A cup game's score after extra time (cumulative, incl. the 90 minutes); null without one. */
+  extraTime: Score | null;
+  /** A cup game's shootout tally only; null without one. */
+  penalties: Score | null;
+  /** PENALTIES with a shootout, else EXTRA_TIME with extra time, else null. */
+  decidedBy: DecidedBy | null;
 }
 
 /** match.FixturesResponse: GET /matches/fixtures. */
@@ -172,14 +202,28 @@ export interface PlayedGameDetails {
   date: string;
   /** Israel-local HH:mm; null if the site gave none. */
   kickoffTime: string | null;
-  /** As the page's heading shows it, e.g. "ליגה א' דרום". */
+  /** As the page's heading shows it, e.g. "ליגה א' דרום" (a cup's includes the sponsor). */
   competition: string;
+  /** The page's own "מחזור N"; never shown for a cup game (it isn't the cup list's round). */
   round: number;
   ownSide: Side;
   opponentName: string;
+  /** The page's score, after 90 minutes. */
   ownScore: number;
   opponentScore: number;
-  result: Result;
+  /** As on the fixtures: who went through; null for a level shootout (bad data). */
+  result: Result | null;
+  /** As on the fixtures, for a cup game in the club's current cup data; else null. */
+  extraTime: Score | null;
+  penalties: Score | null;
+  decidedBy: DecidedBy | null;
+  /**
+   * The cup (KAN-86) when the game is in the club's current cup data; null for a league game or a
+   * cup game no longer in it (the two can't be told apart).
+   */
+  competitionType: Competition | null;
+  /** That cup game's round as the cup list shows it; null whenever `competitionType` is. */
+  cupRound: string | null;
   /** When the scraper fetched the page. */
   lastUpdatedAt: string;
   /** Starters, then substitutes who came on, then unused; within a role as sent. */
