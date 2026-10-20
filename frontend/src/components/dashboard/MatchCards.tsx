@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { GameDetails, SideBadge } from "@/components/matches/GameRow";
+import { CompetitionBadge, GameDetails, SideBadge } from "@/components/matches/GameRow";
 import { OWN_ROW_CLASSES, TeamName } from "@/components/matches/LeagueTable";
 import {
   LastUpdated,
@@ -47,8 +47,9 @@ function MatchCard({
 const LINK_CLASSES = "text-sm font-medium text-primary hover:underline";
 
 /**
- * The next game (the first not played from Israel's today on): opponent, home / away, date and
- * weekday, kickoff time or "not set yet", venue; "אין משחקים קרובים" without one.
+ * The next game (the first not played from Israel's today on, league or cup): opponent, its
+ * competition (and a cup's round, as on the matches screen), home / away, date and weekday,
+ * kickoff time or "not set yet", venue; "אין משחקים קרובים" without one.
  */
 export function NextMatchCard() {
   const { t } = useTranslation();
@@ -84,6 +85,7 @@ function NextMatchContent({ fixtures }: { fixtures: Fixtures }) {
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-lg font-bold">{game.opponentName}</p>
+            <CompetitionBadge game={game} />
             <SideBadge game={game} />
           </div>
           <GameDetails game={game} />

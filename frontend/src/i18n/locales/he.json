@@ -270,6 +270,15 @@
     "gamesLabel": "משחקי העונה",
     "noGames": "אין משחקים בעונה הזו.",
     "round": "מחזור {{round}}",
+    "competition": {
+      "LEAGUE": "ליגה",
+      "STATE_CUP": "גביע המדינה"
+    },
+    "competitionWithRound": "{{competition}} · סיבוב {{round}}",
+    "decidedBy": {
+      "EXTRA_TIME": "אחרי הארכה",
+      "PENALTIES": "בפנדלים"
+    },
     "table": {
       "position": "מקום",
       "team": "קבוצה",
