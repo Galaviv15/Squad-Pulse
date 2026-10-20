@@ -21,6 +21,13 @@ import java.util.List;
  * @param extraTime / {@code penalties} / {@code decidedBy}: as on {@code GET /matches/fixtures},
  *     from the cup snapshot's game with the same {@code game_id}; {@code null} for a league game or
  *     a cup game not in the current snapshots
+ * @param competitionType (KAN-86) the cup, e.g. {@code STATE_CUP}, when the game is in the club's
+ *     current cup snapshots; otherwise {@code null}: a league game, or a cup game no longer in the
+ *     current snapshots (the two can't be told apart reliably, and {@code competition}'s text is
+ *     never parsed for it)
+ * @param cupRound (KAN-86) the cup list's round for that game, as the list shows it (free text,
+ *     e.g. {@code ו}), never the page's {@code round}; {@code null} whenever {@code
+ *     competitionType} is
  * @param lastUpdatedAt when the scraper fetched the page
  * @param players starters, then substitutes who came on, then unused; within a role, as sent
  */
@@ -38,6 +45,8 @@ public record GameDetailsResponse(
     FixturesResponse.Score extraTime,
     FixturesResponse.Score penalties,
     FixturesResponse.DecidedBy decidedBy,
+    FixturesResponse.Competition competitionType,
+    String cupRound,
     Instant lastUpdatedAt,
     List<Appearance> players) {
 

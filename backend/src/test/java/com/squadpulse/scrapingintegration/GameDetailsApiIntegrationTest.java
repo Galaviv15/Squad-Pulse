@@ -234,8 +234,13 @@ class GameDetailsApiIntegrationTest {
             "extraTime",
             "penalties",
             "decidedBy",
+            "competitionType",
+            "cupRound",
             "lastUpdatedAt",
             "players");
+    // KAN-86: a league game is in no cup snapshot; both are written as JSON null.
+    assertThat(details.get("competitionType").isNull()).isTrue();
+    assertThat(details.get("cupRound").isNull()).isTrue();
 
     JsonNode players = details.get("players");
     assertThat(players).hasSize(12);
